@@ -1947,17 +1947,40 @@ function frame(t){
       gl.uniform4fv(uPaint.uLCol, r.lcol);
       mulT(M_MV, M_V, ox, 0, oz);
       gl.uniformMatrix4fv(uPaint.uMV, false, M_MV);
-      /* contact shadows first — they ground the frames and furniture */
+      /* ————— contact shadows —————
+         They used to be centred under whatever cast them and drawn at a fixed
+         strength whatever the lamps were doing, which is a smudge rather than
+         a shadow: a bench in the corner threw its darkness straight down while
+         the only light in the room was overhead at the centre, and every blob
+         stayed exactly as dark with the lamps out.
+
+         There is no shadow atlas here and there should not be. The only things
+         standing on a floor are one bench and one pedestal, both axis-aligned
+         boxes at known positions under a known light — the offset and scale a
+         shadow map would compute can be computed directly, for none of the
+         cost. What an atlas would add over this is self-shadowing on moulding
+         and chandelier arms, which at these sizes is not worth a depth pass
+         per room. */
       gl.uniform1f(uPaint.uAT, 1);
       gl.uniform1f(uPaint.uEm, 0);
       gl.uniform1f(uPaint.uGlaze, 0);
       gl.uniform1i(uPaint.uNL, 0);
       gl.bindTexture(gl.TEXTURE_2D, shadowTex);
+      /* How much shadow there is to cast at all. With the lamps out only the
+         candles burn, and a candle at the ceiling throws almost nothing. */
+      const shLit = lightsOn ? 1 : 0.28;
+      /* The room's own downlight, which is what grounds anything on the floor.
+         Its height above the floor sets how far a shadow is thrown outward. */
+      const fill = r.ownLights.find(l => l.fill && !l.off);
+      const lx = fill ? fill.p[0] : 0, ly = fill ? fill.p[1] : H - 1.15, lz = fill ? fill.p[2] : 0;
       for (const A of r.artworks){
         SHA.wall = A.wall; SHA.u = A.u; SHA.hangY = A.hangY;
         SHA.w = A.w + 0.44; SHA.h = A.h + 0.44;
         paintBasis(SHA, PB, 0.006);
-        PB.o[1] -= 0.055;
+        /* A picture light hangs above the work and slightly out from the wall,
+           so a frame throws downward. It used to be a halo sitting dead centre
+           behind the frame. */
+        PB.o[1] -= 0.115;
         gl.uniform3f(uPaint.uN,
           M_V[0]*PB.n[0] + M_V[8]*PB.n[2],
           M_V[1]*PB.n[0] + M_V[9]*PB.n[2],
@@ -1965,26 +1988,30 @@ function frame(t){
         gl.uniform3f(uPaint.uO, PB.o[0], PB.o[1], PB.o[2]);
         gl.uniform3f(uPaint.uU, PB.u[0], PB.u[1], PB.u[2]);
         gl.uniform3f(uPaint.uV, PB.v[0], PB.v[1], PB.v[2]);
-        gl.uniform1f(uPaint.uFade, 0.55);
+        gl.uniform1f(uPaint.uFade, 0.55 * shLit);
         gl.drawArrays(gl.TRIANGLES, 0, 6);
       }
       gl.uniform3f(uPaint.uN, M_V[4], M_V[5], M_V[6]);   // floor blobs face up
-      if (r.bench){
-        const sx = (r.bench.alongZ ? 0.24 : 0.90)*2 + 0.5;
-        const sz = (r.bench.alongZ ? 0.90 : 0.24)*2 + 0.5;
-        gl.uniform3f(uPaint.uO, r.bench.x - sx/2, 0.006, r.bench.z - sz/2);
+      /* Where a box of height `top` standing at (x,z) throws its shadow, and
+         how much it spreads: straight down beneath the lamp, stretching away
+         from it and softening as the object sits further out. */
+      function floorBlob(x, z, hx, hz, top, alpha){
+        const k = top / Math.max(0.35, ly - top);      // similar triangles
+        const cx = x + (x - lx)*k, cz = z + (z - lz)*k;
+        const spread = 1 + k*0.9;
+        const sx = (hx*2 + 0.42) * spread, sz = (hz*2 + 0.42) * spread;
+        /* Thrown further means softer and fainter — a real penumbra widens
+           with distance from what casts it. */
+        gl.uniform3f(uPaint.uO, cx - sx/2, 0.006, cz - sz/2);
         gl.uniform3f(uPaint.uU, sx, 0, 0);
         gl.uniform3f(uPaint.uV, 0, 0, sz);
-        gl.uniform1f(uPaint.uFade, 0.5);
+        gl.uniform1f(uPaint.uFade, alpha * shLit / (1 + k*1.5));
         gl.drawArrays(gl.TRIANGLES, 0, 6);
       }
-      if (r.pedestal){
-        gl.uniform3f(uPaint.uO, r.pedestal.x - 0.52, 0.006, r.pedestal.z - 0.52);
-        gl.uniform3f(uPaint.uU, 1.04, 0, 0);
-        gl.uniform3f(uPaint.uV, 0, 0, 1.04);
-        gl.uniform1f(uPaint.uFade, 0.5);
-        gl.drawArrays(gl.TRIANGLES, 0, 6);
-      }
+      if (r.bench)
+        floorBlob(r.bench.x, r.bench.z,
+                  r.bench.alongZ ? 0.24 : 0.90, r.bench.alongZ ? 0.90 : 0.24, 0.46, 0.62);
+      if (r.pedestal) floorBlob(r.pedestal.x, r.pedestal.z, 0.26, 0.26, 1.05, 0.66);
       gl.uniform1f(uPaint.uAT, 0);
       gl.uniform1i(uPaint.uNL, nl);
       for (const A of r.artworks){
