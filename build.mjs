@@ -56,6 +56,24 @@ const stubCloudPlugin = {
   },
 };
 
+/* trace() is already a no-op outside local development, but its call sites and
+   their template-literal arguments still ship — and esbuild will not drop them
+   on its own, because the interpolations read properties, which could in
+   principle trigger a getter. Marking it `pure` therefore does nothing. Strip
+   the statements instead. Deliberately narrow: whole-line calls only, so a
+   trace() used as an expression or spanning lines is left alone rather than
+   half-removed. */
+const TRACE_LINE = /^[ \t]*trace\((?:`[^`]*`|'[^']*'|"[^"]*")\);?[ \t]*$/gm;
+const stripTracePlugin = {
+  name: 'strip-trace',
+  setup(b) {
+    b.onLoad({ filter: /src[/\\].*\.js$/ }, async (args) => ({
+      contents: (await readFile(args.path, 'utf8')).replace(TRACE_LINE, ''),
+      loader: 'js',
+    }));
+  },
+};
+
 const buildOptions = {
   entryPoints: [join(ROOT, 'src/main.js')],
   bundle: true,
@@ -64,7 +82,7 @@ const buildOptions = {
   charset: 'utf8',        /* keep È — · ’ as UTF-8 bytes; the default \uXXXX escaping doubles them */
   minify: MINIFY,
   legalComments: 'none',
-  plugins: ARCHIVE ? [glslPlugin, stubCloudPlugin] : [glslPlugin],
+  plugins: [glslPlugin, ...(MINIFY ? [stripTracePlugin] : []), ...(ARCHIVE ? [stubCloudPlugin] : [])],
   write: false,
 };
 

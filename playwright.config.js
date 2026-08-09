@@ -1,4 +1,3 @@
-import os from 'node:os';
 import { defineConfig, devices } from '@playwright/test';
 
 /* The determinism hashes are Canvas2D pixel hashes. They are stable across
@@ -7,12 +6,17 @@ import { defineConfig, devices } from '@playwright/test';
    Never hard-code a golden hash recorded elsewhere. */
 export default defineConfig({
   testDir: './test',
-  /* Each worker runs its own software-rendered browser, so this is CPU-bound
-     rather than IO-bound — half the cores is about the sweet spot before the
-     workers start starving each other. The `inside the gallery` group is
-     describe.serial and stays pinned to a single worker regardless. */
-  fullyParallel: true,
-  workers: process.env.CI ? 2 : Math.max(2, Math.floor((os.cpus().length || 4) / 2)),
+  /* Serial. Parallel workers were tried on an 8-core machine and did not
+     clearly help: every worker runs its own software-rendered browser and
+     SwiftShader already spreads rasterisation across all cores, so they
+     compete for the same CPU rather than overlapping.
+
+     The suite takes ~8 minutes here, and most of that is the renderer itself —
+     4× MSAA into an RGBA16F buffer is genuinely expensive without a GPU. That
+     is the cost of testing what actually ships. Use `npm run test:fast` (~1
+     min) while working and save this for checkpoints. */
+  fullyParallel: false,
+  workers: 1,
   reporter: [['list']],
   /* Headless CI runs on SwiftShader, where entering the gallery (25 room
      meshes + the first wing of artwork) costs ~12s at 720x405 and ~32s at

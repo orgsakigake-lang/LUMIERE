@@ -338,44 +338,133 @@ function setShutters(on, quiet){
 let progBright, progBlur, progComp, uBright = {}, uBlur = {}, uComp = {};
 const post = { on: true, ready: false, w: 0, h: 0, qw: 0, qh: 0,
                fboScene: null, texScene: null, depthRb: null,
+               fboMS: null, msColor: null, msDepth: null,
+               samples: 0, hdr: false,
                fboA: null, texA: null, fboB: null, texB: null,
                pendingAt: 0 };
-function makePostTex(w, h){
+
+/* Two capabilities decide how the scene buffer is built. Probed once, because
+   getExtension allocates on first call and this runs on every resize. */
+let CAPS = null;
+function postCaps(){
+  if (CAPS) return CAPS;
+  CAPS = {
+    /* Without this, RGBA16F is not colour-renderable and everything above 1.0
+       is clipped by the framebuffer before the tonemapper ever sees it —
+       which is what made the ACES curve decorative for so long. */
+    hdr: !!gl.getExtension('EXT_color_buffer_float'),
+    maxSamples: gl.getParameter(gl.MAX_SAMPLES) | 0,
+  };
+  trace(`[post] hdr=${CAPS.hdr} maxSamples=${CAPS.maxSamples}`);
+  return CAPS;
+}
+
+/* The context is created with antialias:true, but that only ever applied to
+   the default framebuffer — and the only thing drawn there is the fullscreen
+   composite triangle, which has no interior edges. Every frame bar, cornice
+   and chandelier arm was hard-aliased. MSAA has to live on the scene FBO. */
+let forceSamples = null;          // DBG override, for A/B measurement
+function wantSamples(){
+  const max = postCaps().maxSamples;
+  if (max < 2) return 0;
+  if (forceSamples !== null) return Math.min(forceSamples, max);
+  return PERF.q >= 2 ? Math.min(4, max) : PERF.q === 1 ? Math.min(2, max) : 0;
+}
+function setForcedSamples(n){ forceSamples = (n === null || n === undefined) ? null : (n | 0); }
+
+function makePostTex(w, h, float){
   const t = gl.createTexture();
   gl.bindTexture(gl.TEXTURE_2D, t);
-  gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, w, h, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
+  gl.texImage2D(gl.TEXTURE_2D, 0, float ? gl.RGBA16F : gl.RGBA8, w, h, 0, gl.RGBA,
+                float ? gl.HALF_FLOAT : gl.UNSIGNED_BYTE, null);
   gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
   gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
   gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
   gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
   return t;
 }
+
+function freePost(){
+  for (const k of ['texScene','texA','texB']) if (post[k]){ gl.deleteTexture(post[k]); post[k] = null; }
+  for (const k of ['fboScene','fboA','fboB','fboMS']) if (post[k]){ gl.deleteFramebuffer(post[k]); post[k] = null; }
+  for (const k of ['depthRb','msColor','msDepth']) if (post[k]){ gl.deleteRenderbuffer(post[k]); post[k] = null; }
+}
+
 function allocPost(){
-  for (const k of ['texScene','texA','texB']) if (post[k]) gl.deleteTexture(post[k]);
-  for (const k of ['fboScene','fboA','fboB']) if (post[k]) gl.deleteFramebuffer(post[k]);
-  if (post.depthRb) gl.deleteRenderbuffer(post.depthRb);
+  freePost();
+  const caps = postCaps();
   post.w = vpW; post.h = vpH;
   post.qw = Math.max(1, vpW >> 2); post.qh = Math.max(1, vpH >> 2);
-  post.texScene = makePostTex(post.w, post.h);
-  post.depthRb = gl.createRenderbuffer();
-  gl.bindRenderbuffer(gl.RENDERBUFFER, post.depthRb);
-  gl.renderbufferStorage(gl.RENDERBUFFER, gl.DEPTH_COMPONENT24, post.w, post.h);
+  post.hdr = caps.hdr;
+  post.samples = wantSamples();
+  const colorFmt = post.hdr ? gl.RGBA16F : gl.RGBA8;
+
+  /* The resolve target: a plain texture, because post-processing has to sample
+     it and you cannot sample a multisampled renderbuffer. */
+  post.texScene = makePostTex(post.w, post.h, post.hdr);
   post.fboScene = gl.createFramebuffer();
   gl.bindFramebuffer(gl.FRAMEBUFFER, post.fboScene);
   gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, post.texScene, 0);
-  gl.framebufferRenderbuffer(gl.FRAMEBUFFER, gl.DEPTH_ATTACHMENT, gl.RENDERBUFFER, post.depthRb);
-  post.texA = makePostTex(post.qw, post.qh);
+
+  if (post.samples > 0){
+    post.msColor = gl.createRenderbuffer();
+    gl.bindRenderbuffer(gl.RENDERBUFFER, post.msColor);
+    gl.renderbufferStorageMultisample(gl.RENDERBUFFER, post.samples, colorFmt, post.w, post.h);
+    post.msDepth = gl.createRenderbuffer();
+    gl.bindRenderbuffer(gl.RENDERBUFFER, post.msDepth);
+    gl.renderbufferStorageMultisample(gl.RENDERBUFFER, post.samples, gl.DEPTH_COMPONENT24, post.w, post.h);
+    post.fboMS = gl.createFramebuffer();
+    gl.bindFramebuffer(gl.FRAMEBUFFER, post.fboMS);
+    gl.framebufferRenderbuffer(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.RENDERBUFFER, post.msColor);
+    gl.framebufferRenderbuffer(gl.FRAMEBUFFER, gl.DEPTH_ATTACHMENT, gl.RENDERBUFFER, post.msDepth);
+    if (gl.checkFramebufferStatus(gl.FRAMEBUFFER) !== gl.FRAMEBUFFER_COMPLETE){
+      console.warn('[post] multisample target incomplete — falling back to 1 sample');
+      gl.deleteFramebuffer(post.fboMS); post.fboMS = null;
+      gl.deleteRenderbuffer(post.msColor); post.msColor = null;
+      gl.deleteRenderbuffer(post.msDepth); post.msDepth = null;
+      post.samples = 0;
+    }
+  }
+  if (post.samples === 0){
+    /* No MSAA: depth hangs off the resolve FBO and the scene renders straight
+       into it, exactly as before. */
+    post.depthRb = gl.createRenderbuffer();
+    gl.bindRenderbuffer(gl.RENDERBUFFER, post.depthRb);
+    gl.renderbufferStorage(gl.RENDERBUFFER, gl.DEPTH_COMPONENT24, post.w, post.h);
+    gl.bindFramebuffer(gl.FRAMEBUFFER, post.fboScene);
+    gl.framebufferRenderbuffer(gl.FRAMEBUFFER, gl.DEPTH_ATTACHMENT, gl.RENDERBUFFER, post.depthRb);
+  }
+
+  /* Bloom targets are float too. The bright pass exists to isolate values the
+     display cannot show; rounding them to 8 bits on the way into the blur
+     throws away the very range that makes a highlight bloom. */
+  post.texA = makePostTex(post.qw, post.qh, post.hdr);
   post.fboA = gl.createFramebuffer();
   gl.bindFramebuffer(gl.FRAMEBUFFER, post.fboA);
   gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, post.texA, 0);
-  post.texB = makePostTex(post.qw, post.qh);
+  post.texB = makePostTex(post.qw, post.qh, post.hdr);
   post.fboB = gl.createFramebuffer();
   gl.bindFramebuffer(gl.FRAMEBUFFER, post.fboB);
   gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, post.texB, 0);
+
   gl.bindFramebuffer(gl.FRAMEBUFFER, null);
   post.ready = true;
+  trace(`[post] ${post.w}×${post.h} ${post.hdr ? 'RGBA16F' : 'RGBA8'} ${post.samples || 1}× samples`);
+}
+
+/** Resolve the multisampled target into the sampleable one. No-op without MSAA. */
+function resolveScene(){
+  if (!post.fboMS) return;
+  gl.bindFramebuffer(gl.READ_FRAMEBUFFER, post.fboMS);
+  gl.bindFramebuffer(gl.DRAW_FRAMEBUFFER, post.fboScene);
+  /* Same rectangle and NEAREST — both are required for a multisample resolve. */
+  gl.blitFramebuffer(0, 0, post.w, post.h, 0, 0, post.w, post.h,
+                     gl.COLOR_BUFFER_BIT, gl.NEAREST);
+  gl.bindFramebuffer(gl.READ_FRAMEBUFFER, null);
+  gl.bindFramebuffer(gl.DRAW_FRAMEBUFFER, null);
 }
 function runPost(){
+  resolveScene();
   gl.disable(gl.DEPTH_TEST);
   gl.bindVertexArray(quadVAO);
   gl.activeTexture(gl.TEXTURE0);
@@ -1534,8 +1623,13 @@ function frame(t){
     else if (vpW !== post.w || vpH !== post.h){
       if (!post.pendingAt) post.pendingAt = performance.now();
       if (performance.now() - post.pendingAt > 200){ allocPost(); post.pendingAt = 0; }
+    } else if (post.samples !== wantSamples()){
+      allocPost();          // the quality tier moved; rebuild at the new sample count
+      post.pendingAt = 0;
     } else post.pendingAt = 0;
-    gl.bindFramebuffer(gl.FRAMEBUFFER, post.fboScene);
+    /* Draw into the multisampled target when there is one; runPost resolves it
+       into texScene before sampling. */
+    gl.bindFramebuffer(gl.FRAMEBUFFER, post.fboMS || post.fboScene);
     gl.viewport(0, 0, post.w, post.h);
   } else {
     gl.bindFramebuffer(gl.FRAMEBUFFER, null);
@@ -2068,6 +2162,14 @@ window.DBG = {
   /* Cloud test seams. The layer returns data instead of writing into the UI,
      so it can be driven against a stubbed transport with no live project.
      Pass null to cloudFetch to restore the real one. */
+  /* What the scene buffer actually is, so the renderer's claims are checkable
+     rather than assumed — antialias:true was silently doing nothing for months. */
+  postInfo(){
+    return { on: post.on, ready: post.ready, hdr: post.hdr, samples: post.samples,
+             w: post.w, h: post.h, q: PERF.q, caps: postCaps() };
+  },
+  /** Pin the MSAA sample count (null restores tier control), for A/B tests. */
+  samples(n){ setForcedSamples(n); allocPost(); return DBG.postInfo(); },
   cloudFetch(fn){ setFetch(fn); return { stubbed: !!fn }; },
   cloudLoadGallery(slug){ return cloudLoadGallery(slug); },
   cloudState(){ return { on: cloud.on, signedIn: !!cloud.sess, viewing: cloud.viewing, slug: cloud.slug }; },
