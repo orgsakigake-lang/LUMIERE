@@ -130,6 +130,66 @@ test.describe('determinism', () => {
   });
 });
 
+test.describe('the cloud layer', () => {
+  /* The point of decoupling it: the read calls return plain data and touch
+     neither the DOM nor the render scheduler, so they can be driven against a
+     stubbed transport with no Supabase project in the loop. */
+  test('reads return data against a stubbed transport', async ({ page }) => {
+    await boot(page);
+    const result = await page.evaluate(async () => {
+      const json = (body) => Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve(body) });
+      const seen = [];
+      window.DBG.cloudFetch((url) => {
+        seen.push(String(url).replace(/^https?:\/\/[^/]+/, ''));
+        if (url.includes('/profiles?slug=')) return json([{ id: 'owner-1' }]);
+        if (url.includes('/uploads?owner=')) return json([{ id: 'u1', name: 'Study', path: 'owner-1/u1.jpg' }]);
+        if (url.includes('/placements?owner=')) return json([{ k: '0,0:2', upload_id: 'u1' }]);
+        return json([]);
+      });
+      const data = await window.DBG.cloudLoadGallery('somebody');
+      window.DBG.cloudFetch(null);
+      return { data, seen };
+    });
+
+    expect(result.data.slug).toBe('somebody');
+    expect(result.data.owner).toBe('owner-1');
+    expect(result.data.uploads).toHaveLength(1);
+    expect(result.data.uploads[0].name).toBe('Study');
+    expect(result.data.uploads[0].url).toContain('/storage/v1/object/public/loans/owner-1/u1.jpg');
+    expect(result.data.placements).toEqual([['0,0:2', 'u1']]);
+    expect(result.seen.some((u) => u.includes('/rest/v1/profiles?slug=eq.somebody'))).toBe(true);
+  });
+
+  test('an unknown gallery name resolves to null, not an exception', async ({ page }) => {
+    await boot(page);
+    const data = await page.evaluate(async () => {
+      window.DBG.cloudFetch(() => Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve([]) }));
+      const out = await window.DBG.cloudLoadGallery('nobody');
+      window.DBG.cloudFetch(null);
+      return out;
+    });
+    expect(data).toBeNull();
+  });
+
+  test('the seeded gallery is unaffected when the cloud is unreachable', async ({ page }) => {
+    await boot(page);
+    // The archival case: no backend at all. Every seeded work is generated
+    // locally, so the museum itself must not depend on the network.
+    const out = await page.evaluate(async () => {
+      const before = window.DBG.artHash(0, 0, 0).hash;
+      window.DBG.cloudFetch(() => Promise.reject(new Error('offline')));
+      let threw = null;
+      try { await window.DBG.cloudLoadGallery('anything'); } catch (e) { threw = String(e.message); }
+      const after = window.DBG.artHash(0, 0, 0).hash;
+      window.DBG.cloudFetch(null);
+      return { before, after, threw, rooms: window.DBG.stats().cached, doors: window.DBG.doors(1, 0) };
+    });
+    expect(out.after).toBe(out.before);      // the art is untouched by the outage
+    expect(out.rooms).toBeGreaterThan(0);
+    expect(out.doors).toHaveProperty('e');
+  });
+});
+
 /* One shared page: entering costs ~12s under SwiftShader, so paying it once
    for the whole group keeps the suite tractable. */
 test.describe.serial('inside the gallery', () => {

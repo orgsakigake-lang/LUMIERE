@@ -17,6 +17,9 @@ import { storageOK, persist, savePersist } from './persist.js';
 import { flashHint } from './ui/hint.js';
 import { audio, initAudio, bell, footstep, toggleMute, setAudioActive } from './audio.js';
 import { SPECIAL, rooms, roomKey, getRoom, spotAt, specialAt } from './world/rooms.js';
+import { cloud, setFetch, cloudSaveSess, cloudSendCode, cloudVerify, cloudPublicURL,
+         cloudUploadBlob, cloudDeleteUpload, cloudSetPlacement, cloudDelPlacement,
+         cloudClaimSlug, cloudLoadMine, cloudLoadGallery, cloudBoot } from './cloud/client.js';
 
 import VS_ARCH from './render/shaders/arch.vert';
 import FS_ARCH from './render/shaders/arch.frag';
@@ -1464,7 +1467,8 @@ function curatorRemove(id){
   for (const [k, uid] of [...curator.placements]) if (uid === id) curatorClearPlacement(k);
   if (rec.url && !rec.cloudRec) URL.revokeObjectURL(rec.url);
   curator.uploads.delete(id);
-  if (rec.cloudRec && cloud.sess) cloudDeleteUpload(rec).catch(()=>{});
+  if (rec.cloudRec && cloud.sess)
+    reportWrite(cloudDeleteUpload(rec), 'the cloud kept its copy — the work returns on reload');
   else if (curator.db){
     try { curator.db.transaction('images', 'readwrite').objectStore('images').delete(id); } catch(e){}
   }
@@ -1474,7 +1478,8 @@ function curatorRemove(id){
 }
 function curatorClearPlacement(k){
   curator.placements.delete(k);
-  if (cloud.sess && !cloud.viewing) cloudDelPlacement(k).catch(()=>{});
+  if (cloud.sess && !cloud.viewing)
+    reportWrite(cloudDelPlacement(k), 'the cloud still holds that hanging — it returns on reload');
   const o = curator.overrides.get(k);
   if (o){
     gl.deleteTexture(o.tex);
@@ -1540,7 +1545,8 @@ function curatorHang(){
   }
   curator.placements.set(k, curator.sel);
   savePlacements();
-  if (cloud.sess && !cloud.viewing) cloudSetPlacement(k, curator.sel).catch(()=>flashHint('cloud did not answer — the hang is local for now'));
+  if (cloud.sess && !cloud.viewing)
+    reportWrite(cloudSetPlacement(k, curator.sel), 'cloud did not answer — the hang is local for now');
   applyPlacement(t.r, t.A, i);
   flashHint('hung — a private loan to the endless gallery');
 }
@@ -1693,7 +1699,7 @@ document.getElementById('curator').addEventListener('keydown', (e) => {
     try {
       await cloudVerify(emailIn.value.trim(), codeIn.value.trim());
       cloudNote.textContent = '';
-      await cloudLoadMine();
+      await loadMyCollection();
       curatorRefresh();
       flashHint('welcome, curator — your loans follow you now');
     } catch(e){ cloudNote.textContent = String(e.message || e); }
@@ -1735,157 +1741,50 @@ document.getElementById('curator').addEventListener('keydown', (e) => {
   });
 }
 
-/* ————— §14 The cloud (Supabase over plain fetch — no SDK) —————
-   Auth is a six-digit email code; the session refreshes itself; every
-   write is guarded server-side by row level security. When unconfigured
-   this whole section stays dormant and the gallery is purely local.  */
-const cloud = (() => {
-  let url = CLOUD_URL, key = CLOUD_KEY;
-  try {
-    const o = JSON.parse(localStorage.getItem('lumiere_cloud') || 'null');
-    if (o && o.url && o.key){ url = o.url; key = o.key; }
-  } catch(e){}
-  return { url: url.replace(/\/+$/, ''), key, on: !!(url && key),
-           sess: null, viewing: null, slug: null };
-})();
-function cloudSaveSess(d){
-  if (!d){ cloud.sess = null; try { localStorage.removeItem('lumiere_sess'); } catch(e){} return; }
-  cloud.sess = {
-    access_token: d.access_token, refresh_token: d.refresh_token,
-    expires_at: Date.now() + (d.expires_in || 3600)*1000 - 90000,
-    uid: d.user ? d.user.id : cloud.sess && cloud.sess.uid,
-    email: d.user ? d.user.email : cloud.sess && cloud.sess.email,
-  };
-  try { localStorage.setItem('lumiere_sess', JSON.stringify(cloud.sess)); } catch(e){}
+
+/* cfetch resolves on HTTP errors rather than rejecting, so a write the server
+   turned down used to disappear into an empty catch and leave the local Map
+   quietly disagreeing with the database until the next reload. Say so. */
+function reportWrite(promise, msg){
+  promise.then((r) => { if (!r || !r.ok) flashHint(msg); })
+         .catch(() => flashHint(msg));
 }
-async function cloudRefresh(){
-  if (!cloud.sess) return false;
-  try {
-    const rs = await fetch(cloud.url + '/auth/v1/token?grant_type=refresh_token', {
-      method: 'POST',
-      headers: { apikey: cloud.key, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ refresh_token: cloud.sess.refresh_token }),
-    });
-    if (!rs.ok) throw 0;
-    const d = await rs.json();
-    d.user = d.user || { id: cloud.sess.uid, email: cloud.sess.email };
-    cloudSaveSess(d);
-    return true;
-  } catch(e){ cloudSaveSess(null); return false; }
+
+/* ————— cloud adapters —————
+   The cloud module returns data; this is where it becomes state. Keeping the
+   direction one-way — network → here → UI, never the reverse — is what lets
+   an archived copy with no backend still run: the seeded gallery does not
+   depend on any of this. */
+function applyCloudUploads(list){
+  for (const rec of list) if (!curator.uploads.has(rec.id)) curator.uploads.set(rec.id, rec);
 }
-async function cfetch(path, opts = {}, retry = true){
-  if (cloud.sess && Date.now() > cloud.sess.expires_at) await cloudRefresh();
-  const headers = Object.assign({
-    apikey: cloud.key,
-    Authorization: 'Bearer ' + (cloud.sess ? cloud.sess.access_token : cloud.key),
-  }, opts.headers || {});
-  const rs = await fetch(cloud.url + path, Object.assign({}, opts, { headers }));
-  if (rs.status === 401 && cloud.sess && retry && await cloudRefresh())
-    return cfetch(path, opts, false);
-  return rs;
+function applyCloudPlacements(pairs){
+  for (const [k, id] of pairs) curator.placements.set(k, id);
 }
-async function cloudSendCode(email){
-  const rs = await cfetch('/auth/v1/otp', {
-    method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ email, create_user: true }),
-  });
-  if (!rs.ok) throw new Error((await rs.json().catch(()=>({}))).msg || 'could not send the code');
+async function loadMyCollection(){
+  const data = await cloudLoadMine();
+  if (!data) return;
+  applyCloudUploads(data.uploads);
+  applyCloudPlacements(data.placements);
+  syncArtJobs();
 }
-async function cloudVerify(email, token){
-  const rs = await cfetch('/auth/v1/verify', {
-    method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ type: 'email', email, token }),
-  });
-  const d = await rs.json().catch(() => ({}));
-  if (!rs.ok || !d.access_token) throw new Error(d.msg || d.error_description || 'that code was not accepted');
-  cloudSaveSess(d);
-}
-function cloudPublicURL(path){
-  return cloud.url + '/storage/v1/object/public/loans/' + path;
-}
-async function cloudUploadBlob(name, blob){
-  const id = crypto.randomUUID();
-  const path = cloud.sess.uid + '/' + id + '.jpg';
-  let rs = await cfetch('/storage/v1/object/loans/' + path, {
-    method: 'POST', headers: { 'Content-Type': 'image/jpeg' }, body: blob,
-  });
-  if (!rs.ok) throw new Error('image upload failed');
-  rs = await cfetch('/rest/v1/uploads', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', Prefer: 'return=minimal' },
-    body: JSON.stringify({ id, owner: cloud.sess.uid, name, path }),
-  });
-  if (!rs.ok) throw new Error('could not record the upload');
-  return { id, path };
-}
-async function cloudDeleteUpload(rec){
-  await cfetch('/storage/v1/object/loans/' + rec.path, { method: 'DELETE' }).catch(()=>{});
-  await cfetch('/rest/v1/uploads?id=eq.' + rec.id, { method: 'DELETE' }).catch(()=>{});
-}
-async function cloudSetPlacement(k, uploadId){
-  await cfetch('/rest/v1/placements', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json',
-               Prefer: 'resolution=merge-duplicates,return=minimal' },
-    body: JSON.stringify({ owner: cloud.sess.uid, k, upload_id: uploadId }),
-  });
-}
-async function cloudDelPlacement(k){
-  await cfetch('/rest/v1/placements?owner=eq.' + cloud.sess.uid +
-               '&k=eq.' + encodeURIComponent(k), { method: 'DELETE' });
-}
-async function cloudClaimSlug(slug){
-  const rs = await cfetch('/rest/v1/profiles', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json',
-               Prefer: 'resolution=merge-duplicates,return=minimal' },
-    body: JSON.stringify({ id: cloud.sess.uid, slug }),
-  });
-  if (!rs.ok) throw new Error('that name is taken or invalid (a–z, 0–9, dashes)');
-  cloud.slug = slug;
-}
-async function cloudLoadMine(){
-  if (!cloud.sess) return;
-  const [ur, pr, sr] = await Promise.all([
-    cfetch('/rest/v1/uploads?owner=eq.' + cloud.sess.uid + '&select=id,name,path&order=created_at'),
-    cfetch('/rest/v1/placements?owner=eq.' + cloud.sess.uid + '&select=k,upload_id'),
-    cfetch('/rest/v1/profiles?id=eq.' + cloud.sess.uid + '&select=slug'),
-  ]);
-  if (ur.ok) for (const row of await ur.json()){
-    if (!curator.uploads.has(row.id))
-      curator.uploads.set(row.id, { id: row.id, name: row.name, path: row.path,
-                                    url: cloudPublicURL(row.path), cloudRec: true });
+async function bootCloud(){
+  const { mode, data } = await cloudBoot();
+  if (mode === 'off') return;
+  if (mode === 'guest'){
+    curator.placements.clear();            // a guest sees only their host's hanging
+    applyCloudUploads(data.uploads);
+    applyCloudPlacements(data.placements);
+    updateHudStat();
+    flashHint('you are walking <b>' + data.slug + '</b>’s gallery — their loans hang here');
+    syncArtJobs();
+  } else if (mode === 'missing'){
+    flashHint('no gallery answers to that name');
+  } else if (mode === 'mine' && data){
+    applyCloudUploads(data.uploads);
+    applyCloudPlacements(data.placements);
+    syncArtJobs();
   }
-  if (pr.ok) for (const row of await pr.json()) curator.placements.set(row.k, row.upload_id);
-  if (sr.ok){ const rows = await sr.json(); cloud.slug = rows[0] ? rows[0].slug : null; }
-  syncArtJobs();
-}
-async function cloudLoadGallery(slug){
-  const rr = await cfetch('/rest/v1/profiles?slug=eq.' + encodeURIComponent(slug) + '&select=id');
-  const rows = rr.ok ? await rr.json() : [];
-  if (!rows[0]){ flashHint('no gallery answers to that name'); return; }
-  const owner = rows[0].id;
-  const [ur, pr] = await Promise.all([
-    cfetch('/rest/v1/uploads?owner=eq.' + owner + '&select=id,name,path'),
-    cfetch('/rest/v1/placements?owner=eq.' + owner + '&select=k,upload_id'),
-  ]);
-  curator.placements.clear();
-  if (ur.ok) for (const row of await ur.json())
-    curator.uploads.set(row.id, { id: row.id, name: row.name, path: row.path,
-                                  url: cloudPublicURL(row.path), cloudRec: true });
-  if (pr.ok) for (const row of await pr.json()) curator.placements.set(row.k, row.upload_id);
-  cloud.viewing = { slug, owner };
-  updateHudStat();
-  flashHint('you are walking <b>' + slug + '</b>’s gallery — their loans hang here');
-  syncArtJobs();
-}
-async function cloudBoot(){
-  if (!cloud.on) return;
-  try { const s = JSON.parse(localStorage.getItem('lumiere_sess') || 'null'); if (s) cloud.sess = s; } catch(e){}
-  if (cloud.sess && Date.now() > cloud.sess.expires_at) await cloudRefresh();
-  const gallery = new URLSearchParams(location.search).get('gallery');
-  if (gallery) await cloudLoadGallery(gallery.toLowerCase());
-  else if (cloud.sess) await cloudLoadMine();
   curatorRefresh();
 }
 
@@ -2454,6 +2353,12 @@ window.DBG = {
     } catch(e){ return 'storage unavailable'; }
     location.reload();
   },
+  /* Cloud test seams. The layer returns data instead of writing into the UI,
+     so it can be driven against a stubbed transport with no live project.
+     Pass null to cloudFetch to restore the real one. */
+  cloudFetch(fn){ setFetch(fn); return { stubbed: !!fn }; },
+  cloudLoadGallery(slug){ return cloudLoadGallery(slug); },
+  cloudState(){ return { on: cloud.on, signedIn: !!cloud.sess, viewing: cloud.viewing, slug: cloud.slug }; },
 };
 
 /* ————— boot ————— */
@@ -2514,7 +2419,7 @@ if (gl){
   swUI();
   ensureBuilt();
   onRoomChanged();
-  curatorBoot().then(cloudBoot);
+  curatorBoot().then(bootCloud);
   requestAnimationFrame((t)=>{ lastT = t; requestAnimationFrame(frame); });
 }
 document.getElementById('sw-lights').addEventListener('click', () => setLights(!lightsOn));
