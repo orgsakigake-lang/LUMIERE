@@ -393,30 +393,38 @@ test.describe.serial('inside the gallery', () => {
   });
 
   test('lamps, daylight and darkness each change the exposure', async () => {
+    /* DBG.luma reads a 32x32 patch at the reticle, so what it reports depends
+       on what the camera happens to be pointed at. Whole-frame statistics are
+       what tell you the lamps did something, so the darkness check uses those
+       and luma is left to carry the daylight comparison. */
     const luma = async () => {
       await page.evaluate(() => window.DBG.frame(12, 16.7));
       return page.evaluate(() => window.DBG.luma());
     };
-    const lit = await luma();
+    const frame = async () => page.evaluate(() => window.DBG.histogram(12));
+
+    const lit = await luma(), litH = await frame();
     expect(lit).toBeGreaterThan(0);
 
     await page.keyboard.press('KeyO');                    // shutters open — daylight
     const day = await luma();
     await page.keyboard.press('KeyO');
     await page.keyboard.press('KeyL');                    // lamps out
-    const dark = await luma();
+    const dark = await luma(), darkH = await frame();
     await page.keyboard.press('KeyL');                    // restore
 
-    console.log(`    luma: lit ${lit.toFixed(4)}  day ${day.toFixed(4)}  dark ${dark.toFixed(4)}`);
+    console.log(`    luma: lit ${lit.toFixed(2)}  day ${day.toFixed(2)}  dark ${dark.toFixed(2)}`);
+    console.log(`    frame mean: lit ${litH.mean}  dark ${darkH.mean}`);
     expect(day).toBeGreaterThan(lit * 2);          // daylight is unmistakable
 
-    // Killing the lamps barely moves this probe — paintings are drawn with
-    // uEm = 0.35, so a third of every canvas's brightness ignores the lighting
-    // entirely and the works keep glowing in a dark room. The residual is small
-    // enough that how much art has finished generating shifts it more than the
-    // lamps do, so this only asserts "not meaningfully brighter". Tighten it to
-    // a real ratio once the self-illumination is fixed.
-    expect(dark).toBeLessThan(lit * 1.05);
+    /* This used to assert only "not meaningfully brighter" (dark < lit * 1.05).
+       Paintings and placards were drawn with a flat uEm that ignored the lamp
+       switch, so the works kept glowing in a dark room and the frame hardly
+       moved. They now take the same ambient the walls take, and the switch
+       leaves only the room fill burning at a candle's share, so killing the
+       lamps is a real, measurable change to the whole image. */
+    expect(darkH.mean).toBeLessThan(litH.mean * 0.75);
+    expect(darkH.mean).toBeGreaterThan(1);         // still navigable, not a black screen
   });
 
   test('the image uses its tonal range instead of crushing into black', async () => {

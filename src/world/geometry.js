@@ -7,7 +7,7 @@
    window geometry is baked into the mesh, so the caller owns that choice.
    ═══════════════════════════════════════════════════════════════════ */
 import { S, HS, H, WT, DOORW, DOORH } from '../config.js';
-import { SPECIAL, spotAt, getRoom } from './rooms.js';
+import { SPECIAL, spotAt, getRoom, RIG } from './rooms.js';
 
 export const SCHEMES = [
   { wall:[0.166,0.150,0.132], floor:[0.105,0.094,0.082], ceil:[0.070,0.065,0.058], trim:[0.050,0.046,0.040] },
@@ -257,8 +257,15 @@ export function buildRoomMesh(r, daylight){
   return { verts: new Float32Array(V), idx: new Uint16Array(I), floorStart };
 }
 
-/* Final light list: own lights + neighbour lights that sit within reach
-   of a shared open doorway (their glow should spill through), cap 8. */
+/* Final light list: own lights + neighbour lights that sit within reach of a
+   shared open doorway (their glow should spill through). The cap was 8, which a
+   six-work room filled with its own fixtures alone — so spill never once fired
+   in a busy room. At 10 a full room keeps two slots for its neighbours at night;
+   in daylight two suns still take them, but there the sun swamps the spill
+   anyway. Must match the loop bound in arch.frag / paint.frag and the LPOS
+   arrays. */
+export const MAX_LIGHTS = 10;
+
 export function assembleLights(r, daylight){
   const L = [];
   if (daylight){
@@ -268,12 +275,23 @@ export function assembleLights(r, daylight){
       const horiz = (wn.wall==='e'||wn.wall==='w');
       const p = horiz ? [sign*(IN-0.06), 2.15, wn.u] : [wn.u, 2.15, sign*(IN-0.06)];
       const t = horiz ? [sign*(IN) - sign*5.2, 0.35, wn.u*0.35] : [wn.u*0.35, 0.35, sign*IN - sign*5.2];
-      const sun = spotAt(p, t, [3.3, 2.95, 2.2], 0.80, 0.44, 10.5);
+      const SU = RIG.sun;
+      const sun = spotAt(p, t, SU.col, SU.inner, SU.outer, SU.range);
       sun.sun = true;
       L.push(sun);
     }
   }
-  for (const l of r.ownLights){ if (L.length >= 8) break; L.push(l); }
+  /* Priority, not array order. `ownLights` ends with the two chandelier lights,
+     so a six-work room with the shutters open pushed two suns plus six artwork
+     spots, hit the cap, and dropped the chandelier entirely — while its candle
+     flames carried on burning. A visibly lit fixture that lit nothing.
+
+     The chandelier is the room's fill and the "1" in the 3:1 ratio, so it is
+     placed before the spots; the sun already sits ahead of both. */
+  const chandeliers = [], spots = [];
+  for (const l of r.ownLights) (l.fill ? chandeliers : spots).push(l);
+  for (const l of chandeliers){ if (L.length >= MAX_LIGHTS) break; L.push(l); }
+  for (const l of spots){ if (L.length >= MAX_LIGHTS) break; L.push(l); }
   const doorDefs = [
     ['e',  1,  0, [ HS, 1.5, 0]], ['w', -1,  0, [-HS, 1.5, 0]],
     ['n',  0,  1, [ 0, 1.5,  HS]], ['s',  0, -1, [ 0, 1.5, -HS]],
@@ -289,7 +307,7 @@ export function assembleLights(r, daylight){
     }
   }
   cand.sort((a, b) => a[0] - b[0]);
-  for (const [, l] of cand){ if (L.length >= 8) break; L.push(l); }
+  for (const [, l] of cand){ if (L.length >= MAX_LIGHTS) break; L.push(l); }
   r.lights = L;
 }
 

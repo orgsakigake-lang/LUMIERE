@@ -20,7 +20,18 @@ export const PR  = 0.35;   // player radius
    museum is one connected component rather than pockets of sealed rooms. */
 export const DOOR_P = 0.6;
 
-export const FOG_SIGMA = 0.15;
+/* Extinction per metre. At the original 0.15 a surface 10 m off was 78% fog and
+   22% light: zeroing the fog colour dropped the frame median from 19 to 4, and
+   tripling the chandelier moved it by two code values. The lighting model was
+   real but invisible — everything past arm's reach was a flat wash of the fog
+   constant, which is what made the light pools read as painted gradients.
+   Lowered until the museum is lit by its lamps and fogged only by distance. */
+export let FOG_SIGMA = 0.038;
+export let DAY_SIGMA = 0.030;
+export function setSigma(night, day){
+  if (night != null) FOG_SIGMA = night;
+  if (day   != null) DAY_SIGMA = day;
+}
 /* Fog is the floor of the image — every distant surface is mixed toward it, so
    this constant, not ambient, is what sets the black point. It was ~3.3x higher
    while the pipeline had no sRGB encode, where it displayed as roughly 1/255.

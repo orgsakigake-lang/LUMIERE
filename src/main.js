@@ -5,7 +5,8 @@
    Everything derives from seeds; nothing from timing.
    ═══════════════════════════════════════════════════════════════════ */
 
-import { S, HS, H, WT, DOORW, DOORH, EYE, PR, DOOR_P, FOG_SIGMA, FOG,
+import { S, HS, H, WT, DOORW, DOORH, EYE, PR, DOOR_P, FOG_SIGMA, DAY_SIGMA,
+         setSigma, FOG,
          BUILD_R, EVICT_R, DPR_CAP, REDUCED, DEV, trace,
          CLOUD_URL, CLOUD_KEY } from './config.js';
 import { h2, mulberry32, SALT_EX, SALT_EY, SALT_ROOM, SALT_ART, SALT_WIN,
@@ -16,11 +17,11 @@ import { mat4, perspective, mulM, mulT, viewMatrix, extractPlanes, boxVisible } 
 import { storageOK, persist, savePersist } from './persist.js';
 import { flashHint } from './ui/hint.js';
 import { audio, initAudio, bell, footstep, toggleMute, setAudioActive } from './audio.js';
-import { SPECIAL, rooms, roomKey, getRoom, spotAt, specialAt } from './world/rooms.js';
+import { SPECIAL, rooms, roomKey, getRoom, spotAt, specialAt, RIG } from './world/rooms.js';
 import { cloud, setFetch, cloudSaveSess, cloudSendCode, cloudVerify, cloudPublicURL,
          cloudUploadBlob, cloudDeleteUpload, cloudSetPlacement, cloudDelPlacement,
          cloudClaimSlug, cloudSetPublished, cloudLoadMine, cloudLoadGallery, cloudBoot } from './cloud/client.js';
-import { SCHEMES, buildRoomMesh, assembleLights } from './world/geometry.js';
+import { SCHEMES, buildRoomMesh, assembleLights, MAX_LIGHTS } from './world/geometry.js';
 import { canvas, gl, compile, program } from './render/gl.js';
 import { PERF, dprCap } from './render/perf.js';
 import { post, postCaps, wantSamples, setForcedSamples, allocPost, runPost,
@@ -143,14 +144,31 @@ function initPrograms(){
   gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
   gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
 }
-const AMB_BASE = [0.0203, 0.0182, 0.0151];
-const LPOS = new Float32Array(32), LDIR = new Float32Array(32), LCOL = new Float32Array(32);
-/* one packer for both passes; the lamp switch spares only sunlight */
+/* Stand-in for bounced light. It was near-useless while fog set the black point
+   — scaling it to 12% moved the frame mean by one code value — so it had been
+   tuned down to nothing. With FOG_SIGMA honest it is the lever that lifts the
+   ceiling and the dark end of the histogram without flooding the floor, which
+   is exactly what real bounce does. */
+const AMB_BASE = [0.090, 0.081, 0.067];
+/* 4 floats per light, MAX_LIGHTS of them. */
+const LPOS = new Float32Array(MAX_LIGHTS*4), LDIR = new Float32Array(MAX_LIGHTS*4), LCOL = new Float32Array(MAX_LIGHTS*4);
+/* Lamps off is not lights out. The switch used to drop every light but the sun,
+   which left 95% of the night frame under 9/255 — and uniform ambient could not
+   rescue it: four times the ambient moved the median from 6 to 10 and only
+   greyed the room flat, because ambient has no direction and makes no
+   highlights. A closed museum still has low night lighting, and LUMIÈRE already
+   draws the candle flames on its chandeliers with the lamps off. So the switch
+   now takes the picture lights — which is what makes a gallery read as closed —
+   and leaves the room's fill burning at a candle's share, shifted much warmer
+   than the electric fixture it replaces. */
+const CANDLE = [0.55, 0.399, 0.234];
+/* one packer for both passes */
 function packLights(r, ox, oz){
   const list = r.lights; let n = 0;
-  for (let i = 0; i < list.length && n < 8; i++){
+  for (let i = 0; i < list.length && n < MAX_LIGHTS; i++){
     const l = list[i];
-    if (!lightsOn && !l.sun) continue;
+    if (!lightsOn && !l.sun && !l.fill) continue;
+    const dim = !lightsOn && l.fill;
     const b = n*4;
     const px = l.p[0]+ox, py = l.p[1], pz = l.p[2]+oz;
     LPOS[b]   = M_V[0]*px + M_V[4]*py + M_V[8]*pz  + M_V[12];
@@ -161,7 +179,9 @@ function packLights(r, ox, oz){
     LDIR[b+1] = M_V[1]*l.d[0] + M_V[5]*l.d[1] + M_V[9]*l.d[2];
     LDIR[b+2] = M_V[2]*l.d[0] + M_V[6]*l.d[1] + M_V[10]*l.d[2];
     LDIR[b+3] = l.outer;
-    LCOL[b] = l.col[0]; LCOL[b+1] = l.col[1]; LCOL[b+2] = l.col[2];
+    LCOL[b]   = dim ? l.col[0]*CANDLE[0] : l.col[0];
+    LCOL[b+1] = dim ? l.col[1]*CANDLE[1] : l.col[1];
+    LCOL[b+2] = dim ? l.col[2]*CANDLE[2] : l.col[2];
     LCOL[b+3] = l.inner;
     n++;
   }
@@ -1204,8 +1224,15 @@ function frame(t){
     gl.viewport(0, 0, vpW, vpH);
   }
   const fogCur = WIN.on ? DAY_FOG : FOG;
-  const sigCur = WIN.on ? 0.082 : FOG_SIGMA;
-  const ambMult = (lightsOn ? 1 : 0.22) * (WIN.on ? 3.2 : 1);
+  const sigCur = WIN.on ? DAY_SIGMA : FOG_SIGMA;
+  const ambMult = (lightsOn ? 1 : 0.22) * (WIN.on ? 1.25 : 1);
+  /* What a hanging surface receives when no lamp reaches it. Paintings and
+     placards were drawing with a flat uEm of 0.35 and 0.55 — an emissive term
+     that ignored the lamp switch, so with the lights off the room went black
+     and the art stayed lit like a cutout floating in a void. Heavy fog used to
+     hide it. They are not light sources; they see the same ambient the walls
+     see. Windows keep a real uEm: the sky genuinely emits. */
+  const ambLum = r => (AMB_BASE[1] + r.mood[1]) * (r.ambScale || 1) * ambMult;
   gl.clearColor(fogCur[0], fogCur[1], fogCur[2], 1);
   gl.enable(gl.DEPTH_TEST);
   gl.disable(gl.CULL_FACE);
@@ -1300,7 +1327,7 @@ function frame(t){
         gl.uniform3f(uPaint.uU, PB.u[0], PB.u[1], PB.u[2]);
         gl.uniform3f(uPaint.uV, 0, -A.h, 0);
         gl.uniform1f(uPaint.uFade, fade * 0.72);
-        gl.uniform1f(uPaint.uEm, 0.35);
+        gl.uniform1f(uPaint.uEm, ambLum(r));
         gl.bindTexture(gl.TEXTURE_2D, A.override ? A.override : A.tex.tex);
         gl.drawArrays(gl.TRIANGLES, 0, 6);
       }
@@ -1450,7 +1477,7 @@ function frame(t){
         gl.uniform3f(uPaint.uU, PB.u[0], PB.u[1], PB.u[2]);
         gl.uniform3f(uPaint.uV, PB.v[0], PB.v[1], PB.v[2]);
         gl.uniform1f(uPaint.uFade, fade);
-        gl.uniform1f(uPaint.uEm, 0.35);
+        gl.uniform1f(uPaint.uEm, ambLum(r));
         gl.bindTexture(gl.TEXTURE_2D, A.override ? A.override : A.tex.tex);
         gl.drawArrays(gl.TRIANGLES, 0, 6);
         if (A.ptex && A.pu !== undefined){
@@ -1460,7 +1487,7 @@ function frame(t){
           if (horiz){ gl.uniform3f(uPaint.uO, PB.pwallC, 1.235, pu0); gl.uniform3f(uPaint.uU, 0, 0, flip*0.26); }
           else      { gl.uniform3f(uPaint.uO, pu0, 1.235, PB.pwallC); gl.uniform3f(uPaint.uU, flip*0.26, 0, 0); }
           gl.uniform3f(uPaint.uV, 0, 0.13, 0);
-          gl.uniform1f(uPaint.uEm, 0.55);
+          gl.uniform1f(uPaint.uEm, ambLum(r) * 0.85);
           gl.bindTexture(gl.TEXTURE_2D, A.ptex.tex);
           gl.drawArrays(gl.TRIANGLES, 0, 6);
         }
@@ -1468,7 +1495,7 @@ function frame(t){
       if (r.pedestal){
         const px = r.pedestal.x, pz = r.pedestal.z;
         gl.uniform1f(uPaint.uFade, 1);
-        gl.uniform1f(uPaint.uEm, 0.5);
+        gl.uniform1f(uPaint.uEm, ambLum(r) * 0.85);
         gl.bindTexture(gl.TEXTURE_2D, stolenTex);
         let nx0, nz0;
         if (Math.abs(px) > Math.abs(pz)){
@@ -1807,6 +1834,24 @@ if (DBG_FULL) Object.assign(window.DBG, {
     return { mean: +(sum/cnt).toFixed(1), lo: Math.round(lo), hi: Math.round(hi),
              bottom16th: +(100*bottom/cnt).toFixed(1) };
   },
+  /** Patch the lighting rig and rebuild every room: DBG.relight({spot:{col:[20,16,11]}}). */
+  relight(patch){
+    if (patch) for (const k of Object.keys(patch)) Object.assign(RIG[k], patch[k]);
+    /* genLights runs once, inside getRoom, and rooms are cached — so rebuilding
+       the meshes alone reuses the old ownLights and the patch appears to do
+       nothing. The cache has to go. Releasing the art slots is not optional
+       either: they are keyed to the room objects being discarded, and leaving
+       them held starves every new job forever, since startJob re-queues rather
+       than failing. Same teardown as DBG.seed. */
+    freeAllArtSlots();
+    artState.jobs.clear(); artState.queue.length = 0;
+    artState.active = null; artState.uploadReady = null;
+    artState.placards.length = 0;
+    for (const [, r] of rooms) dropRoomGL(r);
+    rooms.clear();
+    onRoomChanged();
+    return JSON.parse(JSON.stringify(RIG));
+  },
   /** Night and day fog colour — the real floor of the image, since every
    *  distant surface is mixed toward it. DBG.fog([r,g,b], [r,g,b]). */
   fog(night, day){
@@ -1814,6 +1859,11 @@ if (DBG_FULL) Object.assign(window.DBG, {
     if (day)   for (let i=0;i<3;i++) DAY_FOG[i] = day[i];
     return { night: [...FOG], day: [...DAY_FOG] };
   },
+  /** Fog extinction per metre — how fast a surface stops being lit and starts
+   *  being fog. Dominates every other lighting control. DBG.sigma(0.038). */
+  sigma(night, day){ setSigma(night, day); return { night: FOG_SIGMA, day: DAY_SIGMA }; },
+  /** Per-channel share of the room fill that keeps burning with the lamps off. */
+  candle(v){ if (v) for (let i=0;i<3;i++) CANDLE[i] = v[i]; return [...CANDLE]; },
   /** Ambient base, the other half of the night mood. */
   ambient(v){ if (v !== undefined){ AMB_BASE[0]=v[0]; AMB_BASE[1]=v[1]; AMB_BASE[2]=v[2]; } return [...AMB_BASE]; },
   cloudFetch(fn){ setFetch(fn); return { stubbed: !!fn }; },

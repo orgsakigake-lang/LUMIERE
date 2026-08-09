@@ -60,7 +60,13 @@ export function getRoom(gx, gz){
   r.mood = [(ar()-.5)*.02, (ar()-.5)*.016, (ar()-.5)*.02];
   genArtworks(r, ar);
   genLights(r, ar);
-  r.ambScale = r.special === SPECIAL.DARKROOM ? 0.30
+  /* The darkroom hangs one work and has no fill light, so ambient is the only
+     thing lighting its walls. Most of its blackness is deliberate — SCHEMES[3]
+     gives it a 5.5% albedo against a normal room's 16.6% — but 0.30 was set
+     back when fog lifted the walls on its own, and without that the frame sat
+     entirely under 8/255. This buys back the walls without touching the drama:
+     the room still reads far darker than any other. */
+  r.ambScale = r.special === SPECIAL.DARKROOM ? 0.75
              : r.special === SPECIAL.VERMILION ? 1.12 : 1;
   if (r.special === SPECIAL.DARKROOM && r.artworks[0]){
     const A = r.artworks[0];
@@ -192,6 +198,37 @@ function genArtworks(r, rnd){
     }
   }
 }
+/* ————— the lighting rig, in one place —————
+   Gallery practice puts the artwork at roughly three times the brightness of
+   the room it hangs in; the picture light is framed to the canvas and the
+   space around it stays dark. LUMIÈRE did the reverse — a beam 84° wide from
+   1.55 m out smeared a 2.5 × 4.7 m ellipse across the wall for a painting
+   1.4–2.2 m across, so the wall was brighter than the work.
+
+   `inner`/`outer` are cosines: larger is narrower. Intensities are much higher
+   than they look because the falloff is now real inverse-square — at the
+   artwork's 2.9 m throw it attenuates to ~0.085, where the old Lorentzian gave
+   0.76. DBG.relight({...}) patches these and rebuilds. */
+export const RIG = {
+  /* Picture light. cos 0.985 ≈ 10° core, cos 0.93 ≈ 21.5° edge — framed to the
+     canvas rather than washing the wall behind it. */
+  spot:        { col: [11.9, 9.5,  6.6],  inner: 0.985, outer: 0.930, range: 6.0 },
+  spotVermil:  { col: [13.7, 9.2,  5.7],  inner: 0.985, outer: 0.930, range: 6.0 },
+  /* The room's fill, and the "1" in 3:1. A chandelier is a point source: it
+     radiates everywhere, brightest below where nothing shades it. The old cone
+     stopped at 69° from straight down, so a wall at eye height sat outside it
+     and no intensity could reach the walls — raising it eightfold lit only the
+     floor. Now it falls off gradually instead of ending. */
+  chandelier:  { col: [15.6, 13.2, 9.9],  inner: 0.55,  outer: -0.75, range: 14.0 },
+  chandUp:     { col: [13.8, 10.8, 6.3],  inner: 0.75,  outer: 0.00,  range: 9.0 },
+  darkroom:    { col: [26.0, 21.0, 14.7], inner: 0.985, outer: 0.945, range: 7.0 },
+  archive:     { col: [11.0, 8.7, 5.8],   inner: 0.88,  outer: 0.62,  range: 8.0 },
+  /* Same fixture argument as the chandelier: a fill that ends at 66° lights the
+     floor and nothing else. */
+  archiveFill: { col: [13.2, 11.4, 9.0],  inner: 0.55,  outer: -0.75, range: 14.0 },
+  sun:         { col: [22.0, 19.7, 14.7], inner: 0.80,  outer: 0.44,  range: 12.0 },
+};
+
 /* One tungsten spot per artwork; a soft centre downlight when there is
    headroom. Neighbour spill (through open doors) joins at VAO build. */
 export function spotAt(p, target, col, inner, outer, range){
@@ -209,7 +246,8 @@ function genLights(r, rnd){
       const back = sign * (IN - 1.8), y = H - 0.2, ty = (A.hangY || 1.55);
       const p = horiz ? [back, y, A.u] : [A.u, y, back];
       const t = horiz ? [sign*IN, ty, A.u] : [A.u, ty, sign*IN];
-      r.ownLights.push(spotAt(p, t, [3.1, 2.5, 1.75], 0.965, 0.9, 6.5));
+      const D = RIG.darkroom;
+      r.ownLights.push(spotAt(p, t, D.col, D.inner, D.outer, D.range));
     }
     return;
   }
@@ -222,13 +260,16 @@ function genLights(r, rnd){
       const back = sign * (IN - 2.3), y = H - 0.2;
       const p = horiz ? [back, y, 0] : [0, y, back];
       const t = horiz ? [sign*IN, 1.6, 0] : [0, 1.6, sign*IN];
-      r.ownLights.push(spotAt(p, t, [1.9, 1.5, 1.0], 0.82, 0.5, 7.5));
+      const W = RIG.archive;
+      r.ownLights.push(spotAt(p, t, W.col, W.inner, W.outer, W.range));
     }
-    r.ownLights.push(spotAt([0, H-0.3, 0], [0, 0, 0], [0.8, 0.7, 0.55], 0.72, 0.4, 8));
-    r.ownLights.push(spotAt([0, H-1.6, 0], [0, H, 0], [0.85, 0.66, 0.38], 0.78, 0.30, 4.5));
+    const AF = RIG.archiveFill;
+    r.ownLights.push(Object.assign(spotAt([0, H-0.3, 0], [0, 0, 0], AF.col, AF.inner, AF.outer, AF.range), { fill: true }));
+    const AU = RIG.chandUp;
+    r.ownLights.push(Object.assign(spotAt([0, H-1.6, 0], [0, H, 0], AU.col, AU.inner, AU.outer, AU.range), { fill: true }));
     return;
   }
-  const warm = r.special === SPECIAL.VERMILION ? [2.3, 1.55, 0.95] : [2.0, 1.6, 1.1];
+  const S = r.special === SPECIAL.VERMILION ? RIG.spotVermil : RIG.spot;
   for (const A of r.artworks){
     if (r.ownLights.length >= 6) break;
     const sign = (A.wall==='e'||A.wall==='n') ? 1 : -1;
@@ -236,10 +277,13 @@ function genLights(r, rnd){
     const back = sign * (IN - 1.55), y = H - 0.22, ty = (A.hangY || 1.5);
     const p = horiz ? [back, y, A.u] : [A.u, y, back];
     const t = horiz ? [sign*IN, ty, A.u] : [A.u, ty, sign*IN];
-    r.ownLights.push(spotAt(p, t, warm, 0.92, 0.74, 5.2));
+    r.ownLights.push(spotAt(p, t, S.col, S.inner, S.outer, S.range));
   }
   /* the chandelier always burns at the centre — and lights its own ceiling */
-  r.ownLights.push(spotAt([0, H-1.15, 0], [0, 0, 0], [0.95, 0.80, 0.60], 0.70, 0.36, 8.5));
-  r.ownLights.push(spotAt([0, H-1.6, 0], [0, H, 0], [0.85, 0.66, 0.38], 0.78, 0.30, 4.5));
+  const C = RIG.chandelier, CU = RIG.chandUp;
+  /* `fill` marks the room's ambient anchor so assembleLights can keep it when
+     the light budget is tight. */
+  r.ownLights.push(Object.assign(spotAt([0, H-1.15, 0], [0, 0, 0], C.col, C.inner, C.outer, C.range), { fill: true }));
+  r.ownLights.push(Object.assign(spotAt([0, H-1.6, 0], [0, H, 0], CU.col, CU.inner, CU.outer, CU.range), { fill: true }));
 }
 

@@ -63,8 +63,11 @@ Edge, or Firefox.
 
 ## The two switches
 
-**Lights** puts out every lamp and chandelier — after dark only the faint
-self-glow of the paintings (and the moon shafts in the rare rooms) remains.
+**Lights** puts out the picture lights, the way a gallery closes for the night.
+The candles on the chandeliers keep burning — dimmer, and much warmer than the
+electric fixtures they replace — so the halls stay walkable by their light, and
+the moon shafts remain in the rare rooms. The paintings go dark with everything
+else; they are lit, not luminous.
 **Shutters** turn night into day: windows appear in the free stretches of wall,
 warm sky glass, mullions and sills, and sunlight falls into the halls. All four
 combinations are valid moods. Both switches are remembered between visits.

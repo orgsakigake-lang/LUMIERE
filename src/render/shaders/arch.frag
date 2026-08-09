@@ -5,9 +5,9 @@ uniform vec3 uFog; uniform float uSigma; uniform float uAlpha;
 uniform vec3 uAmb; uniform vec3 uUpV;
 uniform sampler2D uPlaster; uniform sampler2D uParquet;
 uniform int uNL;
-uniform vec4 uLPos[8];   // xyz view-space position, w 1/range²
-uniform vec4 uLDir[8];   // xyz view-space axis,     w cos(outer)
-uniform vec4 uLCol[8];   // rgb colour·intensity,    w cos(inner)
+uniform vec4 uLPos[10];   // xyz view-space position, w 1/range²
+uniform vec4 uLDir[10];   // xyz view-space axis,     w cos(outer)
+uniform vec4 uLCol[10];   // rgb colour·intensity,    w cos(inner)
 out vec4 o;
 void main(){
   vec3 n = normalize(vN);
@@ -27,15 +27,24 @@ void main(){
      corner — light does not stop arriving because a wall is nearby. */
   vec3 acc = uAmb * alb * ao;
   float gloss = smoothstep(0.86, 0.99, dot(n, uUpV));
-  for (int i = 0; i < 8; i++){
+  for (int i = 0; i < 10; i++){   // MAX_LIGHTS in world/geometry.js
     if (i >= uNL) break;
     vec3 L = uLPos[i].xyz - vPv;
-    float d2 = dot(L, L);
+    float d2 = max(dot(L, L), 1e-4);
     float dist = sqrt(d2);
     L /= dist;
-    float att = 1.0 / (1.0 + d2 * uLPos[i].w);
+    /* Inverse square, windowed to reach exactly zero at the light's range.
+       This replaced 1/(1 + d²/R²), which varies only 2.15:1 across a room
+       where physics varies 16:1 and never reaches zero — every light lit every
+       fragment at a near-constant level, which is why the pools read as
+       painted gradients rather than as light. */
+    float rr = d2 * uLPos[i].w;                       // (d/R)²
+    float win = clamp(1.0 - rr*rr, 0.0, 1.0);
+    float att = win * win / (d2 + 1.0);
     float cone = smoothstep(uLDir[i].w, uLCol[i].w, dot(-L, uLDir[i].xyz));
-    vec3 c = uLCol[i].rgb * (att * cone);
+    float reach = att * cone;
+    if (reach <= 0.0004) continue;                    // outside the beam: skip the rest
+    vec3 c = uLCol[i].rgb * reach;
     acc += alb * c * max(dot(n, L), 0.0);
     vec3 hv = normalize(L + vdir);
     acc += c * pow(max(dot(n, hv), 0.0), 56.0) * gloss * 0.65;
