@@ -117,6 +117,32 @@ test.describe('determinism', () => {
     }
   });
 
+  test('acquired works are not truncated at acquire resolution', async ({ page }) => {
+    await boot(page);
+    /* The shared attractor accumulator was fixed at 512², exactly the largest
+       pooled texture — so the wall always looked right and every *download*
+       was three-quarters black. artHash renders at pool size and could never
+       have caught it. Measured before the fix: bands 204, 0, 0, 0. */
+    const results = await page.evaluate(() => {
+      const out = [];
+      outer:
+      for (let gx = -3; gx <= 3; gx++) for (let gz = -3; gz <= 3; gz++)
+        for (const a of window.DBG.art(gx, gz)) {
+          out.push(window.DBG.acquireBands(gx, gz, a.i));
+          if (out.length >= 8) break outer;
+        }
+      return out;
+    });
+
+    expect(results.length).toBeGreaterThan(0);
+    for (const r of results) {
+      const lo = Math.min(...r.bands), hi = Math.max(...r.bands);
+      // No horizontal band of a finished work may be empty while another is lit.
+      expect(lo, `algo ${r.algo} at ${r.w}×${r.h} — bands ${r.bands.join(', ')}`)
+        .toBeGreaterThan(hi * 0.05);
+    }
+  });
+
   test('every algorithm and palette index stays in range', async ({ page }) => {
     await boot(page);
     const bad = await page.evaluate(() => {

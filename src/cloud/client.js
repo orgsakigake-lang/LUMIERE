@@ -210,18 +210,27 @@ export async function cloudLoadGallery(slug){
 }
 
 /** Restore a session and load whatever this URL asks for.
- *  Returns {mode, data} — 'guest', 'mine', 'none', or 'missing' when a
- *  ?gallery= name matched nothing. The caller applies it. */
+ *  Returns {mode, data} — 'guest', 'mine', 'none', 'off', 'missing' when a
+ *  ?gallery= name matched nothing, or 'unreachable' when the network failed.
+ *  Never throws: the seeded gallery does not need any of this, and an outage
+ *  must not stop the Curator's Office from initialising. */
 export async function cloudBoot(){
   if (!cloud.on) return { mode: 'off', data: null };
   try { const s = JSON.parse(localStorage.getItem('lumiere_sess') || 'null'); if (s) cloud.sess = s; } catch(e){}
-  if (cloud.sess && Date.now() > cloud.sess.expires_at) await cloudRefresh();
 
-  const gallery = new URLSearchParams(location.search).get('gallery');
-  if (gallery){
-    const data = await cloudLoadGallery(gallery.toLowerCase());
-    return data ? { mode: 'guest', data } : { mode: 'missing', data: { slug: gallery.toLowerCase() } };
+  try {
+    if (cloud.sess && Date.now() > cloud.sess.expires_at) await cloudRefresh();
+
+    const gallery = new URLSearchParams(location.search).get('gallery');
+    if (gallery){
+      const data = await cloudLoadGallery(gallery.toLowerCase());
+      return data ? { mode: 'guest', data } : { mode: 'missing', data: { slug: gallery.toLowerCase() } };
+    }
+    if (cloud.sess) return { mode: 'mine', data: await cloudLoadMine() };
+    return { mode: 'none', data: null };
+  } catch (e){
+    /* Distinguished from 'missing' deliberately. Telling a visitor "no gallery
+       answers to that name" when the project is merely asleep is a lie. */
+    return { mode: 'unreachable', data: null, error: String(e && e.message || e) };
   }
-  if (cloud.sess) return { mode: 'mine', data: await cloudLoadMine() };
-  return { mode: 'none', data: null };
 }

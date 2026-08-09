@@ -586,41 +586,99 @@ function acquire(){
   modal.querySelector('.cap .m').textContent = 'the gallery is committing it to memory…';
   modal.querySelector('img').removeAttribute('src');
   modal.hidden = false;
-  setTimeout(async () => {
-    preemptArtJobs();
-    const [bw, bh] = BIG_SIZES[A.asp];
-    acqCanvas.width = bw; acqCanvas.height = bh;
-    const loanRec = A.overrideKey && curator.uploads.get(curator.placements.get(A.overrideKey));
-    if (loanRec){
-      const bmp = loanRec.bmp || (loanRec.bmp = await createImageBitmap(loanRec.blob));
-      const s = Math.max(bw/bmp.width, bh/bmp.height);
-      acqCtx.drawImage(bmp, (bw - bmp.width*s)/2, (bh - bmp.height*s)/2, bmp.width*s, bmp.height*s);
-    } else {
-      const rnd = mulberry32(A.seed);
-      const gen = ALGOS[A.algo % ALGOS.length](acqCtx, bw, bh, rnd, jitterPal(A.pal, rnd));
-      while (!gen.next().done){}
-      finishArt(acqCtx, bw, bh);
-    }
-    acqCanvas.toBlob((blob) => {
-      if (!blob || modal.hidden) return;
-      if (modalURL) URL.revokeObjectURL(modalURL);
-      modalURL = URL.createObjectURL(blob);
-      modal.querySelector('img').src = modalURL;
-      modal.querySelector('.cap .m').textContent = loanRec
-        ? 'private loan · the curator’s collection · returned to you'
-        : `${ALGO_NAMES[A.algo % ALGOS.length]}, ${year} · seed ${A.seed} · acquired, 1 of 1 — this exact work will never hang again`;
-      try {
-        const a = document.createElement('a');
-        a.href = modalURL;
-        a.download = `lumiere_${(A.title||'untitled').toLowerCase().replace(/[^a-z0-9]+/g,'-')}_${A.seed}.png`;
-        document.body.appendChild(a); a.click(); a.remove();
-      } catch(e){ /* the modal fallback stays */ }
-      persist.acquired++; savePersist();
-    }, 'image/png');
-  }, 40);
+  /* Reserve the plate at the work's true proportions before anything is drawn.
+     The frame is width:fit-content around an <img> with no src, so it used to
+     collapse to a ~50px square and then snap to full size — a layout jump at
+     the moment the interaction is meant to feel considered. */
+  const [bw, bh] = BIG_SIZES[A.asp];
+  const shot = modal.querySelector('img');
+  shot.removeAttribute('src');
+  shot.style.aspectRatio = `${bw} / ${bh}`;
+  modal.hidden = false;
+  runAcquire(A, bw, bh, year);
 }
+
+/* Yield to the browser, but never stall on rAF alone: it is paused entirely in
+   a background tab, so an rAF-only wait would leave a half-rendered plate
+   hanging until the visitor came back. Whichever fires first wins. */
+function nextTick(){
+  return new Promise((resolve) => {
+    let done = false;
+    const go = () => { if (!done){ done = true; resolve(); } };
+    requestAnimationFrame(go);
+    setTimeout(go, 32);
+  });
+}
+
+/* Render the acquire-resolution copy across frames instead of in one blocking
+   pass. The generators already yield; the old path drained them with
+   `while (!gen.next().done){}` at four times the pooled pixel count, which
+   froze the tab for one to two seconds — the render loop stopped, the audio
+   kept droning, and even the status line could not animate. */
+async function runAcquire(A, bw, bh, year){
+  const modal = document.getElementById('modal');
+  const cap = modal.querySelector('.cap .m');
+  preemptArtJobs();
+  acqCanvas.width = bw; acqCanvas.height = bh;
+
+  const loanRec = A.overrideKey && curator.uploads.get(curator.placements.get(A.overrideKey));
+  if (loanRec){
+    const bmp = loanRec.bmp || (loanRec.bmp = await createImageBitmap(loanRec.blob));
+    const s = Math.max(bw/bmp.width, bh/bmp.height);
+    acqCtx.drawImage(bmp, (bw - bmp.width*s)/2, (bh - bmp.height*s)/2, bmp.width*s, bmp.height*s);
+  } else {
+    const rnd = mulberry32(A.seed);
+    const gen = ALGOS[A.algo % ALGOS.length](acqCtx, bw, bh, rnd, jitterPal(A.pal, rnd));
+    let slices = 0;
+    for (;;){
+      const t0 = performance.now();
+      let done = false;
+      /* A generous slice, then hand the thread back. The museum is behind a
+         modal here, so it does not need sixty frames a second — it needs to
+         not be frozen. Too small a budget and Fractured Glass at 1024², the
+         most expensive of the six, takes twenty seconds to resolve. */
+      while (performance.now() - t0 < 24){ if (gen.next().done){ done = true; break; } }
+      if (done) break;
+      cap.textContent = 'the gallery is committing it to memory' + '.'.repeat(1 + (slices++ >> 1) % 3);
+      if (modal.hidden) return;                       // dismissed mid-render
+      await nextTick();
+    }
+    finishArt(acqCtx, bw, bh);
+  }
+
+  acqCanvas.toBlob((blob) => {
+    if (!blob || modal.hidden) return;
+    if (modalURL) URL.revokeObjectURL(modalURL);
+    modalURL = URL.createObjectURL(blob);
+    modal.querySelector('img').src = modalURL;
+    cap.textContent = loanRec
+      ? 'private loan · the curator’s collection'
+      : `${ALGO_NAMES[A.algo % ALGOS.length]}, ${year} · acquired, 1 of 1`;
+    const save = document.getElementById('modal-save');
+    save.hidden = false;
+    save.dataset.name =
+      `lumiere_${(A.title||'untitled').toLowerCase().replace(/[^a-z0-9]+/g,'-')}_${A.seed}.png`;
+    persist.acquired++; savePersist();
+  }, 'image/png');
+}
+
+/* Saving is a deliberate act. This used to fire a synthetic <a download> the
+   moment the render finished — and E sits next to W in the walk cluster, so a
+   mis-keypress while moving wrote a PNG to the visitor's disk with no prompt,
+   no setting and no undo. */
+document.getElementById('modal-save').addEventListener('click', (e) => {
+  e.stopPropagation();
+  if (!modalURL) return;
+  const a = document.createElement('a');
+  a.href = modalURL;
+  a.download = e.currentTarget.dataset.name || 'lumiere.png';
+  document.body.appendChild(a); a.click(); a.remove();
+  flashHint('saved to your downloads');
+});
 document.getElementById('modal').addEventListener('click', () => {
-  document.getElementById('modal').hidden = true;
+  const modal = document.getElementById('modal');
+  modal.hidden = true;
+  document.getElementById('modal-save').hidden = true;
   if (modalURL){ URL.revokeObjectURL(modalURL); modalURL = null; }
 });
 
@@ -1071,6 +1129,10 @@ async function bootCloud(){
     syncArtJobs();
   } else if (mode === 'missing'){
     flashHint('no gallery answers to that name');
+  } else if (mode === 'unreachable'){
+    /* Not the same as 'missing'. The seeded museum is entirely local, so this
+       is worth saying plainly rather than pretending the gallery is empty. */
+    flashHint('the collection is offline — the seeded gallery is all yours tonight');
   } else if (mode === 'mine' && data){
     applyCloudUploads(data.uploads);
     applyCloudPlacements(data.placements);
@@ -1084,6 +1146,10 @@ let lastT = 0, frameCount = 0, fpsAcc = 0, fpsAvg = 0;
 let probeRequest = null, rafId = 0, forceDt = null;
 const probeBuf = new Uint8Array(32*32*4);
 
+let acqModalEl = null;
+const acqModalHidden = () =>
+  (acqModalEl || (acqModalEl = document.getElementById('modal'))).hidden;
+
 function frame(t){
   if (!gl) return;
   if (gl.isContextLost()){
@@ -1092,6 +1158,18 @@ function frame(t){
     return;
   }
   resize();
+
+  /* The acquire plate is a full-bleed opaque overlay, so everything below is
+     drawing a museum nobody can see — while the acquire-resolution render is
+     competing for the same thread. Keep the loop alive, skip the work. Worth
+     about half the wall time of an acquire, and it is free. */
+  if (!acqModalHidden()){
+    lastT = t;
+    cancelAnimationFrame(rafId);
+    rafId = requestAnimationFrame(frame);
+    return;
+  }
+
   const dt = forceDt !== null ? forceDt : Math.min(50, t - lastT) / 1000;
   lastT = t;
   frameCount++; fpsAcc += dt;
@@ -1527,6 +1605,34 @@ window.DBG = {
     for (let j = 0; j < d.length; j += 17) hsh = Math.imul(hsh ^ d[j], 16777619) >>> 0;
     return { algo: A.algo % ALGOS.length, seed: A.seed, w, h, hash: hsh };
   },
+  /* Render at ACQUIRE resolution and report band luminance top to bottom.
+     artHash renders at pool size, which is exactly why it never caught the
+     attractor accumulator overflow: the fault only appears above 512², where
+     the tail of the image went solid black. Any band reading ~0 while others
+     do not means the buffer ran out again. */
+  acquireBands(gx, gz, i, bands = 4){
+    preemptArtJobs();
+    const r = getRoom(gx, gz), A = r.artworks[i];
+    if (!A) return null;
+    const [w, h] = BIG_SIZES[A.asp];
+    acqCanvas.width = w; acqCanvas.height = h;
+    const rnd = mulberry32(A.seed);
+    const gen = ALGOS[A.algo % ALGOS.length](acqCtx, w, h, rnd, jitterPal(A.pal, rnd));
+    while (!gen.next().done){}
+    finishArt(acqCtx, w, h);
+    const d = acqCtx.getImageData(0, 0, w, h).data;
+    const out = [];
+    for (let b = 0; b < bands; b++){
+      const y0 = Math.floor(h * b / bands), y1 = Math.floor(h * (b + 1) / bands);
+      let sum = 0, n = 0;
+      for (let y = y0; y < y1; y += 4) for (let x = 0; x < w; x += 4){
+        const o = (y * w + x) * 4;
+        sum += 0.2126*d[o] + 0.7152*d[o+1] + 0.0722*d[o+2]; n++;
+      }
+      out.push(+(sum / n).toFixed(2));
+    }
+    return { algo: A.algo % ALGOS.length, w, h, bands: out };
+  },
   stats(){
     return {
       room: [player.gx, player.gz],
@@ -1737,7 +1843,15 @@ if (gl){
   swUI();
   ensureBuilt();
   onRoomChanged();
-  curatorBoot().then(bootCloud);
+  /* Booting with no network used to throw an unhandled rejection here and
+     leave the Curator's Office in its default state, because curatorRefresh()
+     sat past the throw. The gallery itself needs nothing from the network. */
+  curatorBoot()
+    .then(bootCloud)
+    .catch((e) => {
+      console.warn('[boot] cloud unreachable — the seeded gallery is unaffected', e);
+      curatorRefresh();
+    });
   requestAnimationFrame((t)=>{ lastT = t; requestAnimationFrame(frame); });
 }
 document.getElementById('sw-lights').addEventListener('click', () => setLights(!lightsOn));

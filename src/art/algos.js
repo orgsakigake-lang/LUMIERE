@@ -73,7 +73,18 @@ function* genFlowField(ctx, W, Hh, rnd, pal){
 }
 
 /* — algorithm 1: strange-attractor density, log-tonemapped — */
-export const ATTR_ACC = new Float32Array(512*512);   // shared — GC stays quiet
+/* Shared density accumulator — one buffer, reused, so the GC stays quiet.
+   It grows on demand. It used to be fixed at 512², which is exactly the
+   largest pooled texture, so the wall never showed the fault: acquire renders
+   up to 1024², `subarray` clamped the request silently, every read past
+   262144 returned undefined, and `Math.log(1 + undefined)` produced NaN that
+   the ramp carried into a Uint8ClampedArray as 0. Every acquired attractor
+   was correct for its first 262144/W rows and solid black below. */
+let ATTR_ACC = new Float32Array(512 * 512);
+function attrAcc(n){
+  if (ATTR_ACC.length < n) ATTR_ACC = new Float32Array(n);
+  return ATTR_ACC.subarray(0, n);
+}
 function* genAttractor(ctx, W, Hh, rnd, pal){
   let a=0, b=0, c=0, d=0;
   for (let t = 0; t < 9; t++){
@@ -87,7 +98,7 @@ function* genAttractor(ctx, W, Hh, rnd, pal){
     if (mxx-mnx > 1.5 && mxy-mny > 1.5) break;
   }
   yield;                            // isolate setup cost in its own slice
-  const acc = ATTR_ACC.subarray(0, W*Hh); acc.fill(0);
+  const acc = attrAcc(W * Hh); acc.fill(0);
   const rx = 1.15 + Math.abs(c), ry = 1.15 + Math.abs(d);
   let x = 0.05, y = 0.05;
   const TOTAL = 400000;

@@ -84,6 +84,10 @@
                 width:fit-content; margin:0 auto;
                 box-shadow:0 30px 80px rgba(0,0,0,.75), inset 0 0 0 1px rgba(201,169,106,.25);}
   #modal img{display:block; max-width:min(76vw, 58rem); max-height:62vh;}
+  /* Hold the plate at the work's proportions while it renders, so the frame
+     does not collapse to a small square and then snap open. */
+  #modal img:not([src]){width:min(76vw, 58rem); max-height:62vh; background:#14110D;}
+  #modal-save{margin-bottom:.4rem;}
   #modal .cap{margin-top:1.3rem; text-align:center; max-width:min(80vw, 44rem); margin-inline:auto;}
   #modal .cap .t{font-style:italic; font-size:1.2rem; color:var(--bone);}
   #modal .cap .m{margin-top:.4rem; font-size:.66rem; letter-spacing:.26em; text-transform:uppercase; color:var(--bone-dim);}
@@ -134,12 +138,15 @@
       font-family:var(--serif); font-size:.95rem; padding:.6rem .9rem; width:14rem;}
   #curator input:focus{outline:none; border-color:var(--brass);}
   #curator ::placeholder{color:rgba(169,159,140,.5); opacity:1;}
-  #curator .btn{background:none; border:1px solid var(--brass-faint); color:var(--brass);
+  /* Unscoped. These were `#curator .btn`, so the same markup used anywhere else
+     — the acquire modal's save button — rendered as a stock browser control in
+     the middle of the gallery. The white sign-in field was the same mistake. */
+  .btn{background:none; border:1px solid var(--brass-faint); color:var(--brass);
       font-family:var(--serif); font-size:.68rem; letter-spacing:.28em; text-transform:uppercase;
       padding:.55rem 1.3rem; cursor:pointer;
       transition:background-color .3s ease, color .3s ease, border-color .3s ease;}
-  #curator .btn:hover{background:var(--brass); color:var(--ink);}
-  #curator .btn:focus-visible{outline:none; border-color:var(--brass);
+  .btn:hover{background:var(--brass); color:var(--ink);}
+  .btn:focus-visible{outline:none; border-color:var(--brass);
       box-shadow:0 0 0 1px var(--brass);}
   #curator .row{display:flex; gap:.8rem; align-items:center; flex-wrap:wrap; margin-top:1rem;}
   #cur-grid{display:grid; grid-template-columns:repeat(auto-fill, minmax(7.2rem, 1fr));
