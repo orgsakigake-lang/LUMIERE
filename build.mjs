@@ -6,24 +6,65 @@
    keeps deploying from main root with no CI step.
    ═══════════════════════════════════════════════════════════════════ */
 import * as esbuild from 'esbuild';
-import { readFile, writeFile } from 'node:fs/promises';
+import { readFile, writeFile, mkdir } from 'node:fs/promises';
 import { watch } from 'node:fs';
 import { createServer } from 'node:http';
-import { extname, join } from 'node:path';
+import { dirname, extname, join } from 'node:path';
 
 const ROOT = new URL('.', import.meta.url).pathname;
 const WATCH = process.argv.includes('--watch');
-const MINIFY = process.argv.includes('--minify');
+const MINIFY = process.argv.includes('--archive') || process.argv.includes('--minify');
+/* An archival build: minified, and with the cloud layer swapped for an inert
+   stub. See docs/permanence.md — it is both the honest artifact for permanent
+   storage and what takes the page under the 100 KiB free-upload threshold. */
+const ARCHIVE = process.argv.includes('--archive');
+const OUT = ARCHIVE ? 'archive/index.html' : 'index.html';
 const PORT = 8000;
+
+/* GLSL goes in as raw text, so esbuild's minifier never sees it. Strip
+   comments and indentation ourselves — line structure is preserved because
+   #version and the other preprocessor directives must stay on their own
+   lines. Worth the trouble: see the 100 KiB note at the bottom of this file. */
+function minifyGLSL(src) {
+  return src
+    .replace(/\/\*[\s\S]*?\*\//g, '')
+    .split('\n')
+    .map((l) => l.replace(/\/\/.*$/, '').replace(/\s+/g, ' ').trim())
+    .filter(Boolean)
+    .join('\n');
+}
+
+const glslPlugin = {
+  name: 'glsl',
+  setup(b) {
+    b.onLoad({ filter: /\.(glsl|vert|frag)$/ }, async (args) => ({
+      contents: JSON.stringify(MINIFY ? minifyGLSL(await readFile(args.path, 'utf8'))
+                                      : await readFile(args.path, 'utf8')),
+      loader: 'json',
+    }));
+  },
+};
+
+/* esbuild's `alias` only accepts bare package names, so the swap is a resolve
+   hook. The filter cannot catch client.stub.js itself — it does not end in
+   "client.js". */
+const stubCloudPlugin = {
+  name: 'stub-cloud',
+  setup(b) {
+    b.onResolve({ filter: /cloud\/client\.js$/ },
+      () => ({ path: join(ROOT, 'src/cloud/client.stub.js') }));
+  },
+};
 
 const buildOptions = {
   entryPoints: [join(ROOT, 'src/main.js')],
   bundle: true,
   format: 'iife',
   target: 'es2022',
+  charset: 'utf8',        /* keep È — · ’ as UTF-8 bytes; the default \uXXXX escaping doubles them */
   minify: MINIFY,
   legalComments: 'none',
-  loader: { '.glsl': 'text', '.vert': 'text', '.frag': 'text' },
+  plugins: ARCHIVE ? [glslPlugin, stubCloudPlugin] : [glslPlugin],
   write: false,
 };
 
@@ -35,14 +76,24 @@ function splice(template, token, content) {
   return template.split(token).join(content);
 }
 
+/* Collapse whitespace that sits strictly between tags. Text content is left
+   alone — the copy in this page is prose, and eating a space inside a
+   sentence is a visible bug for a byte. */
+const minifyHTML = (s) => s.replace(/>\s+</g, '><').trim();
+
 async function emit() {
   const t0 = performance.now();
-  const [result, css, body, template] = await Promise.all([
+  let [result, css, body, template] = await Promise.all([
     esbuild.build(buildOptions),
     readFile(join(ROOT, 'src/ui/styles.css'), 'utf8'),
     readFile(join(ROOT, 'src/ui/body.html'), 'utf8'),
     readFile(join(ROOT, 'src/index.template.html'), 'utf8'),
   ]);
+
+  if (MINIFY) {
+    css = (await esbuild.transform(css, { loader: 'css', minify: true })).code;
+    body = minifyHTML(body);
+  }
 
   let js = result.outputFiles[0].text;
 
@@ -55,18 +106,22 @@ async function emit() {
     js.trimEnd(),
   );
 
-  await writeFile(join(ROOT, 'index.html'), html);
+  await mkdir(dirname(join(ROOT, OUT)), { recursive: true });
+  await writeFile(join(ROOT, OUT), html);
 
   const kb = (Buffer.byteLength(html) / 1024).toFixed(1);
   const ms = (performance.now() - t0).toFixed(0);
-  console.log(`index.html  ${kb} KB  ${ms} ms${MINIFY ? '  (minified)' : ''}`);
+  console.log(`${OUT}  ${kb} KB  ${ms} ms${ARCHIVE ? '  (archive)' : MINIFY ? '  (minified)' : ''}`);
   if (result.warnings.length) console.warn(esbuild.formatMessagesSync(result.warnings, { kind: 'warning' }).join('\n'));
 }
 
 const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.json': 'application/json' };
 
 if (WATCH) {
-  const ctx = await esbuild.context({ ...buildOptions, plugins: [{
+  /* Spread the existing plugins back in — overwriting the array dropped the
+     GLSL loader, and watch mode failed on every .vert while quietly serving
+     the last good index.html, which looks exactly like everything working. */
+  const ctx = await esbuild.context({ ...buildOptions, plugins: [...buildOptions.plugins, {
     name: 'emit',
     setup: (b) => b.onEnd(() => emit().catch((e) => console.error(e.message))),
   }] });

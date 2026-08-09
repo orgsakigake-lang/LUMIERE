@@ -130,6 +130,44 @@ test.describe('determinism', () => {
   });
 });
 
+test.describe('the archive build', () => {
+  /* `npm run archive` swaps the cloud client for an inert stub and minifies,
+     producing the artifact meant for permanent storage. It has to work with no
+     backend at all, and it has to stay under 100 KiB — that threshold is the
+     difference between free permanent storage and a paid account.
+     See docs/permanence.md. */
+  const ARCHIVE_LIMIT = 102400;   // 100 KiB
+
+  test('boots, generates art, and carries no backend', async ({ page }) => {
+    const errors = [];
+    page.on('pageerror', (e) => errors.push(String(e)));
+    await page.goto('/archive/index.html');
+    await page.waitForFunction(() => typeof window.DBG?.stats === 'function', null, { timeout: 60_000 });
+
+    expect(await page.evaluate(() => window.DBG.cloudState().on)).toBe(false);
+    expect(await page.evaluate(() => window.DBG.stats().cached)).toBeGreaterThan(0);
+    expect(await page.evaluate(() => typeof window.DBG.artHash(0, 0, 0).hash)).toBe('number');
+    expect(errors).toEqual([]);
+  });
+
+  test('paints the same pixels as the hosted build', async ({ page }) => {
+    // Stripping the backend must not change a single brushstroke.
+    await page.goto('/archive/index.html');
+    await page.waitForFunction(() => typeof window.DBG?.artHash === 'function', null, { timeout: 60_000 });
+    const archived = await hashes(page);
+
+    await boot(page);
+    expect(await hashes(page)).toEqual(archived);
+  });
+
+  test('stays under the 100 KiB free-upload threshold', async ({ page }) => {
+    const bytes = await page.request.get('/archive/index.html')
+      .then((r) => r.body()).then((b) => b.byteLength);
+    console.log(`    archive: ${bytes} bytes (${(bytes / 1024).toFixed(1)} KiB) of ${ARCHIVE_LIMIT}`);
+    expect(bytes).toBeLessThanOrEqual(ARCHIVE_LIMIT);
+  });
+});
+
 test.describe('the cloud layer', () => {
   /* The point of decoupling it: the read calls return plain data and touch
      neither the DOM nor the render scheduler, so they can be driven against a

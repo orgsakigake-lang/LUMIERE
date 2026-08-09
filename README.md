@@ -9,7 +9,8 @@ runtime dependencies and a single request. The source is modular and built with
 esbuild; the built file is committed, so the repo deploys with no CI step.
 
 Cloud mode (accounts, private loans, shareable galleries) talks to Supabase. Clear
-`CLOUD_URL` / `CLOUD_KEY` in `src/main.js` for a fully local, offline gallery.
+`CLOUD_URL` / `CLOUD_KEY` in `src/config.js` for a fully local, offline gallery — or run
+`npm run archive`, which builds exactly that.
 
 **Live:** https://orgsakigake-lang.github.io/LUMIERE/
 
@@ -17,24 +18,33 @@ Cloud mode (accounts, private loans, shareable galleries) talks to Supabase. Cle
 
 ```sh
 npm install
-npm run dev      # esbuild watch + a static server on localhost:8000
-npm run build    # write index.html
-npm test         # Playwright suite over the DBG surface
+npm run dev        # esbuild watch + a static server on localhost:8000
+npm run build      # index.html, minified — what GitHub Pages serves
+npm run archive    # archive/index.html — no backend, under 100 KiB
+npm test           # Playwright suite over the DBG surface
 ```
 
 Needs a real origin — `http://localhost:8000`, not `file://`. Any recent Chrome,
 Edge, or Firefox.
+
+## Docs
+
+- [docs/architecture.md](docs/architecture.md) — how the source is laid out, the rules that hold it together, and how to extract more from `main.js`
+- [docs/permanence.md](docs/permanence.md) — keeping the gallery online forever for nothing: the archive build, the 100 KiB free-upload threshold, and what breaks when
 
 ## Layout
 
 | path | what |
 |---|---|
 | `index.html` | the built artifact — committed, served by GitHub Pages |
-| `src/main.js` | the gallery |
+| `src/main.js` | the parts not yet extracted — GL, scheduler, controls, frame loop |
+| `src/config.js`, `src/world/`, `src/art/`, `src/render/`, `src/cloud/` | the extracted modules |
+| `archive/index.html` | the no-backend permanent copy (`npm run archive`) |
 | `src/ui/styles.css`, `src/ui/body.html` | chrome, spliced into the template at build |
 | `src/index.template.html` | the page shell |
 | `build.mjs` | bundle + inline + emit |
-| `test/lumiere.spec.js` | determinism, frame budget, UI regressions |
+| `test/lumiere.spec.js` | determinism, archive budget, frame timing, UI regressions |
+| `tools/scope.mjs` | extraction helper — run before moving code out of `main.js` |
 | `supabase-setup.sql` | schema and row-level-security policies |
 
 ## Controls
@@ -95,7 +105,7 @@ Setup, once (~10 minutes):
    strictly owner-only).
 3. **Authentication → Sign In / Up:** make sure the Email provider is enabled
    (it is by default).
-4. In `index.html`, near the top of the script, fill in:
+4. In `src/config.js`, fill in:
    ```js
    const CLOUD_URL = 'https://YOURPROJECT.supabase.co';
    const CLOUD_KEY = 'sb_publishable_...';   // Settings → API Keys → anon public
@@ -107,7 +117,7 @@ Setup, once (~10 minutes):
    claim a gallery name → share `…?gallery=your-name`.
 
 Leave `CLOUD_URL`/`CLOUD_KEY` empty and everything stays exactly as before —
-fully local, no network.
+fully local, no network. `npm run archive` does the same thing at build time.
 
 ## Deploying free
 

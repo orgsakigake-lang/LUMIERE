@@ -1570,7 +1570,7 @@
       },
       body: JSON.stringify({ id: cloud.sess.uid, slug })
     });
-    if (!rs.ok) throw new Error("that name is taken or invalid (a\u2013z, 0\u20139, dashes)");
+    if (!rs.ok) throw new Error("that name is taken or invalid (a–z, 0–9, dashes)");
     cloud.slug = slug;
   }
   var asUpload = (row) => ({
@@ -2060,13 +2060,13 @@
   var arch_default = "#version 300 es\nlayout(location=0) in vec3 aPos;\nlayout(location=1) in vec3 aNor;\nlayout(location=2) in vec2 aUV;\nlayout(location=3) in vec3 aCol;\nlayout(location=4) in float aMat;\nuniform mat4 uMV, uP;\nout vec3 vN; out vec3 vPv; out vec2 vUV; out vec3 vCol; out vec3 vLp; out float vMat;\nvoid main(){\n  vec4 pv = uMV * vec4(aPos, 1.0);\n  vPv = pv.xyz;\n  vN = mat3(uMV) * aNor;\n  vUV = aUV; vCol = aCol; vLp = aPos; vMat = aMat;\n  gl_Position = uP * pv;\n}\n";
 
   // src/render/shaders/arch.frag
-  var arch_default2 = "#version 300 es\nprecision highp float;\nin vec3 vN; in vec3 vPv; in vec2 vUV; in vec3 vCol; in vec3 vLp; in float vMat;\nuniform vec3 uFog; uniform float uSigma; uniform float uAlpha;\nuniform vec3 uAmb; uniform vec3 uUpV;\nuniform sampler2D uPlaster; uniform sampler2D uParquet;\nuniform int uNL;\nuniform vec4 uLPos[8];   // xyz view-space position, w 1/range\xB2\nuniform vec4 uLDir[8];   // xyz view-space axis,     w cos(outer)\nuniform vec4 uLCol[8];   // rgb colour\xB7intensity,    w cos(inner)\nout vec4 o;\nvoid main(){\n  vec3 n = normalize(vN);\n  vec3 vdir = normalize(-vPv);\n  if (dot(n, vdir) < 0.0) n = -n;\n  /* material grain */\n  vec3 alb = vCol;\n  if (vMat < 0.5)      alb *= texture(uPlaster, vUV * 0.5).rgb;\n  else if (vMat < 1.5) alb *= texture(uParquet, vUV * 0.5).rgb;\n  /* analytic corner occlusion \u2014 rooms are boxes, so distance to the two\n     other surface planes is a fine stand-in for baked AO */\n  vec3 dd = vec3(6.76 - abs(vLp.x), min(vLp.y, 4.2 - vLp.y), 6.76 - abs(vLp.z));\n  vec3 gg = 0.66 + 0.34 * clamp(dd / 0.85, 0.0, 1.0);\n  float ao = min(1.0, gg.x * gg.y * gg.z * 1.515);\n  vec3 acc = uAmb * alb;\n  float gloss = smoothstep(0.86, 0.99, dot(n, uUpV));\n  for (int i = 0; i < 8; i++){\n    if (i >= uNL) break;\n    vec3 L = uLPos[i].xyz - vPv;\n    float d2 = dot(L, L);\n    float dist = sqrt(d2);\n    L /= dist;\n    float att = 1.0 / (1.0 + d2 * uLPos[i].w);\n    float cone = smoothstep(uLDir[i].w, uLCol[i].w, dot(-L, uLDir[i].xyz));\n    vec3 c = uLCol[i].rgb * (att * cone);\n    acc += alb * c * max(dot(n, L), 0.0);\n    vec3 hv = normalize(L + vdir);\n    acc += c * pow(max(dot(n, hv), 0.0), 56.0) * gloss * 0.65;\n  }\n  acc *= ao;\n  float f = 1.0 - exp(-uSigma * length(vPv));\n  o = vec4(mix(acc, uFog, f), uAlpha);\n}\n";
+  var arch_default2 = "#version 300 es\nprecision highp float;\nin vec3 vN; in vec3 vPv; in vec2 vUV; in vec3 vCol; in vec3 vLp; in float vMat;\nuniform vec3 uFog; uniform float uSigma; uniform float uAlpha;\nuniform vec3 uAmb; uniform vec3 uUpV;\nuniform sampler2D uPlaster; uniform sampler2D uParquet;\nuniform int uNL;\nuniform vec4 uLPos[8];   // xyz view-space position, w 1/range²\nuniform vec4 uLDir[8];   // xyz view-space axis,     w cos(outer)\nuniform vec4 uLCol[8];   // rgb colour·intensity,    w cos(inner)\nout vec4 o;\nvoid main(){\n  vec3 n = normalize(vN);\n  vec3 vdir = normalize(-vPv);\n  if (dot(n, vdir) < 0.0) n = -n;\n  /* material grain */\n  vec3 alb = vCol;\n  if (vMat < 0.5)      alb *= texture(uPlaster, vUV * 0.5).rgb;\n  else if (vMat < 1.5) alb *= texture(uParquet, vUV * 0.5).rgb;\n  /* analytic corner occlusion — rooms are boxes, so distance to the two\n     other surface planes is a fine stand-in for baked AO */\n  vec3 dd = vec3(6.76 - abs(vLp.x), min(vLp.y, 4.2 - vLp.y), 6.76 - abs(vLp.z));\n  vec3 gg = 0.66 + 0.34 * clamp(dd / 0.85, 0.0, 1.0);\n  float ao = min(1.0, gg.x * gg.y * gg.z * 1.515);\n  vec3 acc = uAmb * alb;\n  float gloss = smoothstep(0.86, 0.99, dot(n, uUpV));\n  for (int i = 0; i < 8; i++){\n    if (i >= uNL) break;\n    vec3 L = uLPos[i].xyz - vPv;\n    float d2 = dot(L, L);\n    float dist = sqrt(d2);\n    L /= dist;\n    float att = 1.0 / (1.0 + d2 * uLPos[i].w);\n    float cone = smoothstep(uLDir[i].w, uLCol[i].w, dot(-L, uLDir[i].xyz));\n    vec3 c = uLCol[i].rgb * (att * cone);\n    acc += alb * c * max(dot(n, L), 0.0);\n    vec3 hv = normalize(L + vdir);\n    acc += c * pow(max(dot(n, hv), 0.0), 56.0) * gloss * 0.65;\n  }\n  acc *= ao;\n  float f = 1.0 - exp(-uSigma * length(vPv));\n  o = vec4(mix(acc, uFog, f), uAlpha);\n}\n";
 
   // src/render/shaders/paint.vert
   var paint_default = "#version 300 es\nlayout(location=0) in vec2 aQ;\nuniform mat4 uMV, uP;\nuniform vec3 uO, uU, uV;\nout vec2 vUV; out vec3 vPv;\nvoid main(){\n  vec3 p = uO + uU*aQ.x + uV*aQ.y;\n  vec4 pv = uMV * vec4(p, 1.0);\n  vPv = pv.xyz; vUV = vec2(aQ.x, 1.0 - aQ.y);\n  gl_Position = uP * pv;\n}\n";
 
   // src/render/shaders/paint.frag
-  var paint_default2 = "#version 300 es\nprecision highp float;\nin vec2 vUV; in vec3 vPv;\nuniform sampler2D uTex;\nuniform vec3 uN;            // view-space surface normal\nuniform vec3 uFog; uniform float uSigma; uniform float uFade; uniform float uEm;\nuniform float uAT;          // 1 \u2192 texture alpha shapes the quad (contact shadows)\nuniform int uNL;\nuniform vec4 uLPos[8]; uniform vec4 uLDir[8]; uniform vec4 uLCol[8];\nout vec4 o;\nvoid main(){\n  vec4 t = texture(uTex, vUV);\n  vec3 alb = t.rgb;\n  vec3 n = normalize(uN);\n  vec3 vdir = normalize(-vPv);\n  if (dot(n, vdir) < 0.0) n = -n;\n  vec3 acc = alb * uEm;\n  for (int i = 0; i < 8; i++){\n    if (i >= uNL) break;\n    vec3 L = uLPos[i].xyz - vPv;\n    float d2 = dot(L, L); float dist = sqrt(d2); L /= dist;\n    float att = 1.0 / (1.0 + d2 * uLPos[i].w);\n    float cone = smoothstep(uLDir[i].w, uLCol[i].w, dot(-L, uLDir[i].xyz));\n    vec3 c = uLCol[i].rgb * (att * cone);\n    acc += alb * c * max(dot(n, L), 0.0);\n    vec3 hv = normalize(L + vdir);\n    acc += c * pow(max(dot(n, hv), 0.0), 24.0) * 0.055;   // varnish sheen\n  }\n  float f = 1.0 - exp(-uSigma * length(vPv));\n  o = vec4(mix(acc, uFog, f), uFade * mix(1.0, t.a, uAT));\n}\n";
+  var paint_default2 = "#version 300 es\nprecision highp float;\nin vec2 vUV; in vec3 vPv;\nuniform sampler2D uTex;\nuniform vec3 uN;            // view-space surface normal\nuniform vec3 uFog; uniform float uSigma; uniform float uFade; uniform float uEm;\nuniform float uAT;          // 1 → texture alpha shapes the quad (contact shadows)\nuniform int uNL;\nuniform vec4 uLPos[8]; uniform vec4 uLDir[8]; uniform vec4 uLCol[8];\nout vec4 o;\nvoid main(){\n  vec4 t = texture(uTex, vUV);\n  vec3 alb = t.rgb;\n  vec3 n = normalize(uN);\n  vec3 vdir = normalize(-vPv);\n  if (dot(n, vdir) < 0.0) n = -n;\n  vec3 acc = alb * uEm;\n  for (int i = 0; i < 8; i++){\n    if (i >= uNL) break;\n    vec3 L = uLPos[i].xyz - vPv;\n    float d2 = dot(L, L); float dist = sqrt(d2); L /= dist;\n    float att = 1.0 / (1.0 + d2 * uLPos[i].w);\n    float cone = smoothstep(uLDir[i].w, uLCol[i].w, dot(-L, uLDir[i].xyz));\n    vec3 c = uLCol[i].rgb * (att * cone);\n    acc += alb * c * max(dot(n, L), 0.0);\n    vec3 hv = normalize(L + vdir);\n    acc += c * pow(max(dot(n, hv), 0.0), 24.0) * 0.055;   // varnish sheen\n  }\n  float f = 1.0 - exp(-uSigma * length(vPv));\n  o = vec4(mix(acc, uFog, f), uFade * mix(1.0, t.a, uAT));\n}\n";
 
   // src/render/shaders/shaft.vert
   var shaft_default = "#version 300 es\nlayout(location=0) in vec2 aQ;\nuniform mat4 uMV, uP;\nuniform vec3 uC; uniform vec2 uAxis; uniform vec2 uDim;\nout vec2 vQ;\nvoid main(){\n  vec3 p = vec3(uC.x + uAxis.x*(aQ.x-0.5)*uDim.x, aQ.y*uDim.y, uC.z + uAxis.y*(aQ.x-0.5)*uDim.x);\n  vQ = aQ;\n  gl_Position = uP * (uMV * vec4(p, 1.0));\n}\n";
@@ -2096,7 +2096,7 @@
   var blur_default = "#version 300 es\nprecision highp float;\nin vec2 vUV; uniform sampler2D uTex; uniform vec2 uDir;\nout vec4 o;\nvoid main(){\n  vec3 acc = texture(uTex, vUV).rgb * 0.227027;\n  vec2 o1 = uDir * 1.3846154, o2 = uDir * 3.2307692;\n  acc += texture(uTex, vUV + o1).rgb * 0.3162162;\n  acc += texture(uTex, vUV - o1).rgb * 0.3162162;\n  acc += texture(uTex, vUV + o2).rgb * 0.0702703;\n  acc += texture(uTex, vUV - o2).rgb * 0.0702703;\n  o = vec4(acc, 1.0);\n}\n";
 
   // src/render/shaders/composite.frag
-  var composite_default = "#version 300 es\nprecision highp float;\nin vec2 vUV;\nuniform sampler2D uTex; uniform sampler2D uBloom;\nuniform float uTime; uniform vec2 uRes;\nout vec4 o;\nvec3 aces(vec3 x){\n  return clamp((x*(2.51*x + 0.03)) / (x*(2.43*x + 0.59) + 0.14), 0.0, 1.0);\n}\nfloat hash(vec2 p){\n  vec3 p3 = fract(vec3(p.xyx) * 0.1031);\n  p3 += dot(p3, p3.yzx + 33.33);\n  return fract((p3.x + p3.y) * p3.z);\n}\nvoid main(){\n  vec3 c = texture(uTex, vUV).rgb + texture(uBloom, vUV).rgb * 0.9;\n  c = aces(c * 1.35);\n  /* split-tone: cool shadows, warm lights \u2014 the film look of old halls */\n  float lum = dot(c, vec3(0.299, 0.587, 0.114));\n  c *= mix(vec3(0.965, 0.99, 1.065), vec3(1.045, 1.0, 0.945), smoothstep(0.04, 0.62, lum));\n  vec2 vg = vUV - 0.5;\n  c *= 1.0 - 0.34 * smoothstep(0.28, 0.72, dot(vg, vg));\n  c += (hash(vUV * uRes + fract(uTime)*371.0) - 0.5) * 0.028;\n  o = vec4(c, 1.0);\n}\n";
+  var composite_default = "#version 300 es\nprecision highp float;\nin vec2 vUV;\nuniform sampler2D uTex; uniform sampler2D uBloom;\nuniform float uTime; uniform vec2 uRes;\nout vec4 o;\nvec3 aces(vec3 x){\n  return clamp((x*(2.51*x + 0.03)) / (x*(2.43*x + 0.59) + 0.14), 0.0, 1.0);\n}\nfloat hash(vec2 p){\n  vec3 p3 = fract(vec3(p.xyx) * 0.1031);\n  p3 += dot(p3, p3.yzx + 33.33);\n  return fract((p3.x + p3.y) * p3.z);\n}\nvoid main(){\n  vec3 c = texture(uTex, vUV).rgb + texture(uBloom, vUV).rgb * 0.9;\n  c = aces(c * 1.35);\n  /* split-tone: cool shadows, warm lights — the film look of old halls */\n  float lum = dot(c, vec3(0.299, 0.587, 0.114));\n  c *= mix(vec3(0.965, 0.99, 1.065), vec3(1.045, 1.0, 0.945), smoothstep(0.04, 0.62, lum));\n  vec2 vg = vUV - 0.5;\n  c *= 1.0 - 0.34 * smoothstep(0.28, 0.72, dot(vg, vg));\n  c += (hash(vUV * uRes + fract(uTime)*371.0) - 0.5) * 0.028;\n  o = vec4(c, 1.0);\n}\n";
 
   // src/main.js
   var canvas = document.getElementById("gl");
@@ -2109,7 +2109,7 @@
   if (!gl) {
     document.getElementById("nogl").hidden = false;
     document.getElementById("intro").hidden = true;
-    console.error("[boot] webgl2 unavailable \u2014 museum closed");
+    console.error("[boot] webgl2 unavailable — museum closed");
   } else {
     trace("[boot] gl ok");
   }
@@ -2413,7 +2413,7 @@
     persist.shutters = WIN.on;
     savePersist();
     rebuildRooms();
-    if (!quiet) flashHint(WIN.on ? "shutters open \u2014 let there be daylight" : "shutters closed \u2014 the night returns");
+    if (!quiet) flashHint(WIN.on ? "shutters open — let there be daylight" : "shutters closed — the night returns");
   }
   var progBright;
   var progBlur;
@@ -2658,8 +2658,8 @@
     g.textBaseline = "alphabetic";
     let title = A.title || "Untitled";
     if (g.measureText(title).width > 230) {
-      while (g.measureText(title + "\u2026").width > 230 && title.length > 4) title = title.slice(0, -1);
-      title += "\u2026";
+      while (g.measureText(title + "…").width > 230 && title.length > 4) title = title.slice(0, -1);
+      title += "…";
     }
     g.fillText(title, 14, 38);
     g.font = "13px Georgia, serif";
@@ -2668,7 +2668,7 @@
       g.fillText("private loan", 14, 66);
       g.font = "12px Georgia, serif";
       g.fillStyle = "#837C6E";
-      g.fillText("the curator\u2019s collection", 14, 90);
+      g.fillText("the curator’s collection", 14, 90);
       g.fillText("on generous terms", 14, 110);
     } else {
       const year = 1870 + h2(A.seed, 39321, WORLD_SEED) % 200;
@@ -2738,8 +2738,8 @@
   }
   function updateHudStat() {
     const el = document.getElementById("hud-stat");
-    const guest = typeof cloud !== "undefined" && cloud.viewing ? `guest of ${cloud.viewing.slug} \xB7 ` : "";
-    el.textContent = `${guest}${visited.size} room${visited.size === 1 ? "" : "s"} \xB7 ${artState.beheld} work${artState.beheld === 1 ? "" : "s"}`;
+    const guest = typeof cloud !== "undefined" && cloud.viewing ? `guest of ${cloud.viewing.slug} · ` : "";
+    el.textContent = `${guest}${visited.size} room${visited.size === 1 ? "" : "s"} · ${artState.beheld} work${artState.beheld === 1 ? "" : "s"}`;
   }
   function markSeen() {
     const r = rooms.get(roomKey(player.gx, player.gz));
@@ -2912,8 +2912,8 @@
     }
     visited.add(k0);
     const hudLoc = document.getElementById("hud-loc");
-    const f = (n) => n < 0 ? "\u2212" + -n : "" + n;
-    hudLoc.textContent = `Wing ${f(player.gx)} \xB7 Hall ${f(player.gz)}`;
+    const f = (n) => n < 0 ? "−" + -n : "" + n;
+    hudLoc.textContent = `Wing ${f(player.gx)} · Hall ${f(player.gz)}`;
     updateHudStat();
     ensureBuilt();
     evict();
@@ -3214,7 +3214,7 @@
       footstep(spd);
     }
     if (!isFinite(player.x) || !isFinite(player.z)) {
-      console.warn("[guard] non-finite position \u2014 resetting to room centre");
+      console.warn("[guard] non-finite position — resetting to room centre");
       player.x = player.z = player.vx = player.vz = 0;
     }
     let moved = false;
@@ -3291,7 +3291,7 @@
     const year = 1870 + h2(A.seed, 39321, WORLD_SEED) % 200;
     A.title = A.title || makeTitle(mulberry32(h2(A.seed, 1815, WORLD_SEED)));
     lt.querySelector(".t").textContent = A.title;
-    lt.querySelector(".m").textContent = `${ALGO_NAMES[A.algo % ALGOS.length]}, ${year} \xB7 ${PALETTES[A.pal % PALETTES.length].name} \xB7 seed ${A.seed} \xB7 1/1`;
+    lt.querySelector(".m").textContent = `${ALGO_NAMES[A.algo % ALGOS.length]}, ${year} · ${PALETTES[A.pal % PALETTES.length].name} · seed ${A.seed} · 1/1`;
     lt.classList.add("show");
     markSeen();
   }
@@ -3321,7 +3321,7 @@
     const year = 1870 + h2(A.seed, 39321, WORLD_SEED) % 200;
     A.title = A.title || makeTitle(mulberry32(h2(A.seed, 1815, WORLD_SEED)));
     modal.querySelector(".cap .t").textContent = A.title;
-    modal.querySelector(".cap .m").textContent = "the gallery is committing it to memory\u2026";
+    modal.querySelector(".cap .m").textContent = "the gallery is committing it to memory…";
     modal.querySelector("img").removeAttribute("src");
     modal.hidden = false;
     setTimeout(async () => {
@@ -3346,7 +3346,7 @@
         if (modalURL) URL.revokeObjectURL(modalURL);
         modalURL = URL.createObjectURL(blob);
         modal.querySelector("img").src = modalURL;
-        modal.querySelector(".cap .m").textContent = loanRec ? "private loan \xB7 the curator\u2019s collection \xB7 returned to you" : `${ALGO_NAMES[A.algo % ALGOS.length]}, ${year} \xB7 seed ${A.seed} \xB7 acquired, 1 of 1 \u2014 this exact work will never hang again`;
+        modal.querySelector(".cap .m").textContent = loanRec ? "private loan · the curator’s collection · returned to you" : `${ALGO_NAMES[A.algo % ALGOS.length]}, ${year} · seed ${A.seed} · acquired, 1 of 1 — this exact work will never hang again`;
         try {
           const a = document.createElement("a");
           a.href = modalURL;
@@ -3491,7 +3491,7 @@
     if (rec.url && !rec.cloudRec) URL.revokeObjectURL(rec.url);
     curator.uploads.delete(id);
     if (rec.cloudRec && cloud.sess)
-      reportWrite(cloudDeleteUpload(rec), "the cloud kept its copy \u2014 the work returns on reload");
+      reportWrite(cloudDeleteUpload(rec), "the cloud kept its copy — the work returns on reload");
     else if (curator.db) {
       try {
         curator.db.transaction("images", "readwrite").objectStore("images").delete(id);
@@ -3505,7 +3505,7 @@
   function curatorClearPlacement(k) {
     curator.placements.delete(k);
     if (cloud.sess && !cloud.viewing)
-      reportWrite(cloudDelPlacement(k), "the cloud still holds that hanging \u2014 it returns on reload");
+      reportWrite(cloudDelPlacement(k), "the cloud still holds that hanging — it returns on reload");
     const o = curator.overrides.get(k);
     if (o) {
       gl.deleteTexture(o.tex);
@@ -3575,11 +3575,11 @@
   }
   function curatorCanEdit() {
     if (cloud.viewing) {
-      flashHint("you are a guest here \u2014 this is <b>" + cloud.viewing.slug + "</b>\u2019s hanging");
+      flashHint("you are a guest here — this is <b>" + cloud.viewing.slug + "</b>’s hanging");
       return false;
     }
     if (!curator.unlocked && !cloud.sess) {
-      flashHint("the curator\u2019s office is locked \u2014 press <b>C</b>");
+      flashHint("the curator’s office is locked — press <b>C</b>");
       return false;
     }
     return true;
@@ -3587,7 +3587,7 @@
   function curatorHang() {
     if (!curatorCanEdit()) return;
     if (!curator.sel) {
-      flashHint("choose a work in the curator\u2019s office first");
+      flashHint("choose a work in the curator’s office first");
       return;
     }
     const t = inspect.on && inspect.A ? { A: inspect.A, r: inspect.r } : facedArtwork();
@@ -3608,9 +3608,9 @@
     curator.placements.set(k, curator.sel);
     savePlacements();
     if (cloud.sess && !cloud.viewing)
-      reportWrite(cloudSetPlacement(k, curator.sel), "cloud did not answer \u2014 the hang is local for now");
+      reportWrite(cloudSetPlacement(k, curator.sel), "cloud did not answer — the hang is local for now");
     applyPlacement(t.r, t.A, i);
-    flashHint("hung \u2014 a private loan to the endless gallery");
+    flashHint("hung — a private loan to the endless gallery");
   }
   function curatorUnhang() {
     if (!curatorCanEdit()) return;
@@ -3620,7 +3620,7 @@
       return;
     }
     curatorClearPlacement(t.A.overrideKey);
-    flashHint("taken down \u2014 the seeded work returns");
+    flashHint("taken down — the seeded work returns");
   }
   function curatorGrid() {
     const grid = document.getElementById("cur-grid");
@@ -3652,10 +3652,10 @@
     if (!curator.uploads.size) {
       const empty = document.createElement("div");
       empty.className = "sub";
-      empty.textContent = "The private collection is empty \u2014 add works above.";
+      empty.textContent = "The private collection is empty — add works above.";
       grid.append(empty);
     }
-    document.getElementById("cur-store").textContent = curator.mode === "idb" ? "collection kept in this browser \xB7 placements remembered" : "this embedding cannot keep files \u2014 loans last for this visit only";
+    document.getElementById("cur-store").textContent = curator.mode === "idb" ? "collection kept in this browser · placements remembered" : "this embedding cannot keep files — loans last for this visit only";
   }
   function curatorRefresh() {
     const guest = !!cloud.viewing;
@@ -3663,7 +3663,7 @@
     document.getElementById("cur-lock").hidden = open || guest || cloud.on ? true : false;
     document.getElementById("cur-cloud-lock").hidden = !(cloud.on && !open && !guest);
     document.getElementById("cur-open").hidden = !open;
-    document.getElementById("cur-state").textContent = guest ? "guest of " + cloud.viewing.slug : open ? cloud.sess ? "signed in \xB7 loans open everywhere" : "unlocked \xB7 loans open" : cloud.on ? "signed out" : curator.rekey ? "set a new key" : "locked";
+    document.getElementById("cur-state").textContent = guest ? "guest of " + cloud.viewing.slug : open ? cloud.sess ? "signed in · loans open everywhere" : "unlocked · loans open" : cloud.on ? "signed out" : curator.rekey ? "set a new key" : "locked";
     if (open) {
       const acct = document.getElementById("cur-acct");
       const share = document.getElementById("cur-share");
@@ -3717,7 +3717,7 @@
           }
           curator.rekey = false;
           pass.value = "";
-          pass.placeholder = "curator\u2019s key";
+          pass.placeholder = "curator’s key";
           flashHint("the key is changed");
           curatorRefresh();
         }
@@ -3769,7 +3769,7 @@
         cloudNote.textContent = "that does not read like an email address";
         return;
       }
-      cloudNote.textContent = "sending\u2026";
+      cloudNote.textContent = "sending…";
       try {
         await cloudSendCode(email);
         document.getElementById("cur-code-row").hidden = false;
@@ -3780,13 +3780,13 @@
       }
     });
     document.getElementById("cur-verify").addEventListener("click", async () => {
-      cloudNote.textContent = "checking\u2026";
+      cloudNote.textContent = "checking…";
       try {
         await cloudVerify(emailIn.value.trim(), codeIn.value.trim());
         cloudNote.textContent = "";
         await loadMyCollection();
         curatorRefresh();
-        flashHint("welcome, curator \u2014 your loans follow you now");
+        flashHint("welcome, curator — your loans follow you now");
       } catch (e) {
         cloudNote.textContent = String(e.message || e);
       }
@@ -3798,7 +3798,7 @@
     document.getElementById("cur-slug-save").addEventListener("click", async () => {
       const slug = document.getElementById("cur-slug").value.trim().toLowerCase();
       if (!/^[a-z0-9-]{3,32}$/.test(slug)) {
-        flashHint("names are 3\u201332 letters, digits, dashes");
+        flashHint("names are 3–32 letters, digits, dashes");
         return;
       }
       try {
@@ -3812,7 +3812,7 @@
     document.getElementById("cur-migrate").addEventListener("click", async () => {
       if (!cloud.sess) return;
       const btn = document.getElementById("cur-migrate");
-      btn.textContent = "Sending\u2026";
+      btn.textContent = "Sending…";
       let moved = 0;
       for (const [oldId, rec] of [...curator.uploads]) {
         if (rec.cloudRec || !rec.blob) continue;
@@ -3870,7 +3870,7 @@
       applyCloudUploads(data.uploads);
       applyCloudPlacements(data.placements);
       updateHudStat();
-      flashHint("you are walking <b>" + data.slug + "</b>\u2019s gallery \u2014 their loans hang here");
+      flashHint("you are walking <b>" + data.slug + "</b>’s gallery — their loans hang here");
       syncArtJobs();
     } else if (mode === "missing") {
       flashHint("no gallery answers to that name");
@@ -3908,7 +3908,7 @@
       if (entered && forceDt === null && fpsAvg < 42 && PERF.q > 0 && t - PERF.lastDrop > 5e3) {
         PERF.q--;
         PERF.lastDrop = t;
-        trace(`[perf] frame rate ${fpsAvg.toFixed(0)} \u2014 easing quality to tier ${PERF.q}`);
+        trace(`[perf] frame rate ${fpsAvg.toFixed(0)} — easing quality to tier ${PERF.q}`);
       }
     }
     if (entered) step(dt);
@@ -4543,10 +4543,10 @@
   };
   canvas.addEventListener("webglcontextlost", (e) => {
     e.preventDefault();
-    console.warn("[boot] context lost \u2014 holding seeds, waiting for restore");
+    console.warn("[boot] context lost — holding seeds, waiting for restore");
   });
   canvas.addEventListener("webglcontextrestored", () => {
-    console.warn("[boot] context restored \u2014 rebuilding the museum from seeds");
+    console.warn("[boot] context restored — rebuilding the museum from seeds");
     for (const pool of [POOLS.L, POOLS.P, POOLS.S, POOLS.W, PPOOL])
       for (const s of pool.slots) {
         releaseSlot(s);
@@ -4582,7 +4582,7 @@
         return;
       }
       const g = artState.jobs.size;
-      noteEl.textContent = g > 0 ? `the first wing is being hung \xB7 ${g} work${g === 1 ? "" : "s"} remain` : storageOK && persist.visits > 1 ? `the gallery remembers you \xB7 visit ${persist.visits}` : "the first wing is ready";
+      noteEl.textContent = g > 0 ? `the first wing is being hung · ${g} work${g === 1 ? "" : "s"} remain` : storageOK && persist.visits > 1 ? `the gallery remembers you · visit ${persist.visits}` : "the first wing is ready";
     }, 350);
   }
   document.getElementById("enter").addEventListener("click", () => {
