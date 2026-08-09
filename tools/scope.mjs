@@ -11,8 +11,28 @@ const lines = readFileSync(new URL('../src/main.js', import.meta.url), 'utf8').s
 const inside = lines.slice(a - 1, b).join('\n');
 const outside = lines.slice(0, a - 1).concat(lines.slice(b)).join('\n');
 
-const DECL = /^(?:export )?(?:async )?(?:function\*? |const |let |var )([A-Za-z_$][\w$]*)/gm;
-const declare = (s) => [...s.matchAll(DECL)].map((m) => m[1]);
+const FN = /^(?:export )?(?:async )?function\*?\s+([A-Za-z_$][\w$]*)/gm;
+/* Bindings, including every declarator in `let a, b = {}, c;` — capturing only
+   the first is how `progBlur` and friends stayed invisible to this tool while
+   being very much required by the code left behind. */
+const BINDING = /^(?:export )?(?:const|let|var)\s+([^;\n]*)/gm;
+const NAME = /(?:^|,)\s*([A-Za-z_$][\w$]*)\s*(?==|,|$)/g;
+
+function declare(s) {
+  const out = [...s.matchAll(FN)].map((m) => m[1]);
+  for (const [, tail] of s.matchAll(BINDING)) {
+    /* Stop at the first `=`'s right-hand side: only the head of the list and
+       names that follow a comma at depth zero are declarators. */
+    let depth = 0, cut = '';
+    for (const ch of tail) {
+      if ('([{'.includes(ch)) depth++;
+      else if (')]}'.includes(ch)) depth--;
+      cut += depth > 0 ? ' ' : ch;      // blank out anything nested
+    }
+    for (const m of cut.matchAll(NAME)) out.push(m[1]);
+  }
+  return out;
+}
 
 /* Names already imported into main.js count too. Missing these is how an
    extraction ships a ReferenceError: getRoom lives in world/rooms.js, so it

@@ -21,6 +21,10 @@ import { cloud, setFetch, cloudSaveSess, cloudSendCode, cloudVerify, cloudPublic
          cloudUploadBlob, cloudDeleteUpload, cloudSetPlacement, cloudDelPlacement,
          cloudClaimSlug, cloudLoadMine, cloudLoadGallery, cloudBoot } from './cloud/client.js';
 import { SCHEMES, buildRoomMesh, assembleLights } from './world/geometry.js';
+import { canvas, gl, compile, program } from './render/gl.js';
+import { PERF, dprCap } from './render/perf.js';
+import { post, postCaps, wantSamples, setForcedSamples, allocPost, runPost,
+         setPostPrograms, uBright, uBlur, uComp } from './render/post.js';
 
 import VS_ARCH from './render/shaders/arch.vert';
 import FS_ARCH from './render/shaders/arch.frag';
@@ -38,38 +42,6 @@ import FS_BLUR from './render/shaders/blur.frag';
 import FS_COMP from './render/shaders/composite.frag';
 
 /* ————— §4 GL core ————— */
-const canvas = document.getElementById('gl');
-let gl = null;
-try { gl = canvas.getContext('webgl2', { antialias:true, alpha:false, powerPreference:'high-performance' }); }
-catch(e){ gl = null; }
-if (!gl){
-  document.getElementById('nogl').hidden = false;
-  document.getElementById('intro').hidden = true;
-  console.error('[boot] webgl2 unavailable — museum closed');
-} else {
-  trace('[boot] gl ok');
-}
-
-function compile(type, src){
-  const sh = gl.createShader(type);
-  gl.shaderSource(sh, src); gl.compileShader(sh);
-  if (!gl.getShaderParameter(sh, gl.COMPILE_STATUS)){
-    console.error('[boot] shader error:', gl.getShaderInfoLog(sh), src);
-    throw new Error('shader');
-  }
-  return sh;
-}
-function program(vs, fs){
-  const p = gl.createProgram();
-  gl.attachShader(p, compile(gl.VERTEX_SHADER, vs));
-  gl.attachShader(p, compile(gl.FRAGMENT_SHADER, fs));
-  gl.linkProgram(p);
-  if (!gl.getProgramParameter(p, gl.LINK_STATUS)){
-    console.error('[boot] link error:', gl.getProgramInfoLog(p));
-    throw new Error('link');
-  }
-  return p;
-}
 
 /* Architecture shader — M2 placeholder lighting (a fixed key light + fog).
    M3 replaces the fragment stage with per-room spotlight arrays.        */
@@ -114,14 +86,15 @@ function initPrograms(){
   const aniso = gl.getExtension('EXT_texture_filter_anisotropic');
   if (aniso) window.__aniso = { ext: aniso, max: Math.min(4, gl.getParameter(aniso.MAX_TEXTURE_MAX_ANISOTROPY_EXT)) };
 
-  progBright = program(VS_POST, FS_BRIGHT);
-  uBright.uTex = gl.getUniformLocation(progBright, 'uTex');
-  progBlur = program(VS_POST, FS_BLUR);
-  uBlur.uTex = gl.getUniformLocation(progBlur, 'uTex');
-  uBlur.uDir = gl.getUniformLocation(progBlur, 'uDir');
-  progComp = program(VS_POST, FS_COMP);
+  const pBright = program(VS_POST, FS_BRIGHT);
+  const pBlur   = program(VS_POST, FS_BLUR);
+  const pComp   = program(VS_POST, FS_COMP);
+  setPostPrograms(pBright, pBlur, pComp);
+  uBright.uTex = gl.getUniformLocation(pBright, 'uTex');
+  uBlur.uTex = gl.getUniformLocation(pBlur, 'uTex');
+  uBlur.uDir = gl.getUniformLocation(pBlur, 'uDir');
   for (const nm of ['uTex','uBloom','uTime','uRes'])
-    uComp[nm] = gl.getUniformLocation(progComp, nm);
+    uComp[nm] = gl.getUniformLocation(pComp, nm);
 
   progFlame = program(VS_FLAME, FS_FLAME);
   for (const nm of ['uMV','uP','uTime','uCol','uMY'])
@@ -334,177 +307,6 @@ function setShutters(on, quiet){
   if (!quiet) flashHint(WIN.on ? 'shutters open — let there be daylight' : 'shutters closed — the night returns');
 }
 
-/* ————— §9 Post stack: bloom → filmic tonemap → vignette → grain ————— */
-let progBright, progBlur, progComp, uBright = {}, uBlur = {}, uComp = {};
-const post = { on: true, ready: false, w: 0, h: 0, qw: 0, qh: 0,
-               fboScene: null, texScene: null, depthRb: null,
-               fboMS: null, msColor: null, msDepth: null,
-               samples: 0, hdr: false,
-               fboA: null, texA: null, fboB: null, texB: null,
-               pendingAt: 0 };
-
-/* Two capabilities decide how the scene buffer is built. Probed once, because
-   getExtension allocates on first call and this runs on every resize. */
-let CAPS = null;
-function postCaps(){
-  if (CAPS) return CAPS;
-  CAPS = {
-    /* Without this, RGBA16F is not colour-renderable and everything above 1.0
-       is clipped by the framebuffer before the tonemapper ever sees it —
-       which is what made the ACES curve decorative for so long. */
-    hdr: !!gl.getExtension('EXT_color_buffer_float'),
-    maxSamples: gl.getParameter(gl.MAX_SAMPLES) | 0,
-  };
-  trace(`[post] hdr=${CAPS.hdr} maxSamples=${CAPS.maxSamples}`);
-  return CAPS;
-}
-
-/* The context is created with antialias:true, but that only ever applied to
-   the default framebuffer — and the only thing drawn there is the fullscreen
-   composite triangle, which has no interior edges. Every frame bar, cornice
-   and chandelier arm was hard-aliased. MSAA has to live on the scene FBO. */
-let forceSamples = null;          // DBG override, for A/B measurement
-function wantSamples(){
-  const max = postCaps().maxSamples;
-  if (max < 2) return 0;
-  if (forceSamples !== null) return Math.min(forceSamples, max);
-  return PERF.q >= 2 ? Math.min(4, max) : PERF.q === 1 ? Math.min(2, max) : 0;
-}
-function setForcedSamples(n){ forceSamples = (n === null || n === undefined) ? null : (n | 0); }
-
-function makePostTex(w, h, float){
-  const t = gl.createTexture();
-  gl.bindTexture(gl.TEXTURE_2D, t);
-  gl.texImage2D(gl.TEXTURE_2D, 0, float ? gl.RGBA16F : gl.RGBA8, w, h, 0, gl.RGBA,
-                float ? gl.HALF_FLOAT : gl.UNSIGNED_BYTE, null);
-  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
-  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
-  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
-  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
-  return t;
-}
-
-function freePost(){
-  for (const k of ['texScene','texA','texB']) if (post[k]){ gl.deleteTexture(post[k]); post[k] = null; }
-  for (const k of ['fboScene','fboA','fboB','fboMS']) if (post[k]){ gl.deleteFramebuffer(post[k]); post[k] = null; }
-  for (const k of ['depthRb','msColor','msDepth']) if (post[k]){ gl.deleteRenderbuffer(post[k]); post[k] = null; }
-}
-
-function allocPost(){
-  freePost();
-  const caps = postCaps();
-  post.w = vpW; post.h = vpH;
-  post.qw = Math.max(1, vpW >> 2); post.qh = Math.max(1, vpH >> 2);
-  post.hdr = caps.hdr;
-  post.samples = wantSamples();
-  const colorFmt = post.hdr ? gl.RGBA16F : gl.RGBA8;
-
-  /* The resolve target: a plain texture, because post-processing has to sample
-     it and you cannot sample a multisampled renderbuffer. */
-  post.texScene = makePostTex(post.w, post.h, post.hdr);
-  post.fboScene = gl.createFramebuffer();
-  gl.bindFramebuffer(gl.FRAMEBUFFER, post.fboScene);
-  gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, post.texScene, 0);
-
-  if (post.samples > 0){
-    post.msColor = gl.createRenderbuffer();
-    gl.bindRenderbuffer(gl.RENDERBUFFER, post.msColor);
-    gl.renderbufferStorageMultisample(gl.RENDERBUFFER, post.samples, colorFmt, post.w, post.h);
-    post.msDepth = gl.createRenderbuffer();
-    gl.bindRenderbuffer(gl.RENDERBUFFER, post.msDepth);
-    gl.renderbufferStorageMultisample(gl.RENDERBUFFER, post.samples, gl.DEPTH_COMPONENT24, post.w, post.h);
-    post.fboMS = gl.createFramebuffer();
-    gl.bindFramebuffer(gl.FRAMEBUFFER, post.fboMS);
-    gl.framebufferRenderbuffer(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.RENDERBUFFER, post.msColor);
-    gl.framebufferRenderbuffer(gl.FRAMEBUFFER, gl.DEPTH_ATTACHMENT, gl.RENDERBUFFER, post.msDepth);
-    if (gl.checkFramebufferStatus(gl.FRAMEBUFFER) !== gl.FRAMEBUFFER_COMPLETE){
-      console.warn('[post] multisample target incomplete — falling back to 1 sample');
-      gl.deleteFramebuffer(post.fboMS); post.fboMS = null;
-      gl.deleteRenderbuffer(post.msColor); post.msColor = null;
-      gl.deleteRenderbuffer(post.msDepth); post.msDepth = null;
-      post.samples = 0;
-    }
-  }
-  if (post.samples === 0){
-    /* No MSAA: depth hangs off the resolve FBO and the scene renders straight
-       into it, exactly as before. */
-    post.depthRb = gl.createRenderbuffer();
-    gl.bindRenderbuffer(gl.RENDERBUFFER, post.depthRb);
-    gl.renderbufferStorage(gl.RENDERBUFFER, gl.DEPTH_COMPONENT24, post.w, post.h);
-    gl.bindFramebuffer(gl.FRAMEBUFFER, post.fboScene);
-    gl.framebufferRenderbuffer(gl.FRAMEBUFFER, gl.DEPTH_ATTACHMENT, gl.RENDERBUFFER, post.depthRb);
-  }
-
-  /* Bloom targets are float too. The bright pass exists to isolate values the
-     display cannot show; rounding them to 8 bits on the way into the blur
-     throws away the very range that makes a highlight bloom. */
-  post.texA = makePostTex(post.qw, post.qh, post.hdr);
-  post.fboA = gl.createFramebuffer();
-  gl.bindFramebuffer(gl.FRAMEBUFFER, post.fboA);
-  gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, post.texA, 0);
-  post.texB = makePostTex(post.qw, post.qh, post.hdr);
-  post.fboB = gl.createFramebuffer();
-  gl.bindFramebuffer(gl.FRAMEBUFFER, post.fboB);
-  gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, post.texB, 0);
-
-  gl.bindFramebuffer(gl.FRAMEBUFFER, null);
-  post.ready = true;
-  trace(`[post] ${post.w}×${post.h} ${post.hdr ? 'RGBA16F' : 'RGBA8'} ${post.samples || 1}× samples`);
-}
-
-/** Resolve the multisampled target into the sampleable one. No-op without MSAA. */
-function resolveScene(){
-  if (!post.fboMS) return;
-  gl.bindFramebuffer(gl.READ_FRAMEBUFFER, post.fboMS);
-  gl.bindFramebuffer(gl.DRAW_FRAMEBUFFER, post.fboScene);
-  /* Same rectangle and NEAREST — both are required for a multisample resolve. */
-  gl.blitFramebuffer(0, 0, post.w, post.h, 0, 0, post.w, post.h,
-                     gl.COLOR_BUFFER_BIT, gl.NEAREST);
-  gl.bindFramebuffer(gl.READ_FRAMEBUFFER, null);
-  gl.bindFramebuffer(gl.DRAW_FRAMEBUFFER, null);
-}
-function runPost(){
-  resolveScene();
-  gl.disable(gl.DEPTH_TEST);
-  gl.bindVertexArray(quadVAO);
-  gl.activeTexture(gl.TEXTURE0);
-  /* bright pass → quarter res */
-  gl.bindFramebuffer(gl.FRAMEBUFFER, post.fboA);
-  gl.viewport(0, 0, post.qw, post.qh);
-  gl.useProgram(progBright);
-  gl.uniform1i(uBright.uTex, 0);
-  gl.bindTexture(gl.TEXTURE_2D, post.texScene);
-  gl.drawArrays(gl.TRIANGLES, 0, 6);
-  /* two separable blur rounds */
-  gl.useProgram(progBlur);
-  gl.uniform1i(uBlur.uTex, 0);
-  for (let i = 0; i < 2; i++){
-    gl.bindFramebuffer(gl.FRAMEBUFFER, post.fboB);
-    gl.bindTexture(gl.TEXTURE_2D, post.texA);
-    gl.uniform2f(uBlur.uDir, 1/post.qw, 0);
-    gl.drawArrays(gl.TRIANGLES, 0, 6);
-    gl.bindFramebuffer(gl.FRAMEBUFFER, post.fboA);
-    gl.bindTexture(gl.TEXTURE_2D, post.texB);
-    gl.uniform2f(uBlur.uDir, 0, 1/post.qh);
-    gl.drawArrays(gl.TRIANGLES, 0, 6);
-  }
-  /* composite to canvas */
-  gl.bindFramebuffer(gl.FRAMEBUFFER, null);
-  gl.viewport(0, 0, vpW, vpH);
-  gl.useProgram(progComp);
-  gl.uniform1i(uComp.uTex, 0);
-  gl.uniform1i(uComp.uBloom, 1);
-  gl.uniform1f(uComp.uTime, (performance.now() % 300000)/1000);
-  gl.uniform2f(uComp.uRes, vpW, vpH);
-  gl.activeTexture(gl.TEXTURE0);
-  gl.bindTexture(gl.TEXTURE_2D, post.texScene);
-  gl.activeTexture(gl.TEXTURE1);
-  gl.bindTexture(gl.TEXTURE_2D, post.texA);
-  gl.drawArrays(gl.TRIANGLES, 0, 6);
-  gl.activeTexture(gl.TEXTURE0);
-  gl.bindVertexArray(null);
-  gl.enable(gl.DEPTH_TEST);
-}
 
 const TEX_SIZES = { L: [512, 384], P: [384, 512], S: [448, 448], W: [512, 320] };
 function makePool(n, w, h){
@@ -742,8 +544,6 @@ const PB = { o:[0,0,0], u:[0,0,0], v:[0,0,0], n:[0,0,0], pwallC:0 };
 const SHA = { wall:'e', u:0, w:1, h:1, hangY:1.55 };   // scratch for shadow quads
 
 /* adaptive quality: 2 full · 1 lighter DPR · 0 low DPR, no reflections */
-const PERF = { q: 2, lastDrop: 0 };
-function dprCap(){ return PERF.q === 2 ? DPR_CAP : PERF.q === 1 ? 1.25 : 1.0; }
 
 function makeRoomVAO(r){
   const mesh = buildRoomMesh(r, WIN.on);
@@ -1608,7 +1408,7 @@ function frame(t){
   if (fpsAcc > 0.5){
     fpsAvg = frameCount / fpsAcc; frameCount = 0; fpsAcc = 0;
     /* trade pixels for smoothness on machines that need it */
-    if (entered && forceDt === null && fpsAvg < 42 && PERF.q > 0 &&
+    if (entered && forceDt === null && !PERF.pinned && fpsAvg < 42 && PERF.q > 0 &&
         t - PERF.lastDrop > 5000){
       PERF.q--; PERF.lastDrop = t;
       trace(`[perf] frame rate ${fpsAvg.toFixed(0)} — easing quality to tier ${PERF.q}`);
@@ -1619,12 +1419,12 @@ function frame(t){
 
   const usePost = post.on;
   if (usePost){
-    if (!post.ready) allocPost();
+    if (!post.ready) allocPost(vpW, vpH);
     else if (vpW !== post.w || vpH !== post.h){
       if (!post.pendingAt) post.pendingAt = performance.now();
-      if (performance.now() - post.pendingAt > 200){ allocPost(); post.pendingAt = 0; }
+      if (performance.now() - post.pendingAt > 200){ allocPost(vpW, vpH); post.pendingAt = 0; }
     } else if (post.samples !== wantSamples()){
-      allocPost();          // the quality tier moved; rebuild at the new sample count
+      allocPost(vpW, vpH);   // the quality tier moved; rebuild at the new sample count
       post.pendingAt = 0;
     } else post.pendingAt = 0;
     /* Draw into the multisampled target when there is one; runPost resolves it
@@ -2003,7 +1803,7 @@ function frame(t){
   gl.depthMask(true);
   gl.disable(gl.BLEND);
   gl.bindVertexArray(null);
-  if (usePost) runPost();
+  if (usePost) runPost(quadVAO);
   pumpArt();
 
   if (probeRequest){
@@ -2169,7 +1969,7 @@ window.DBG = {
              w: post.w, h: post.h, q: PERF.q, caps: postCaps() };
   },
   /** Pin the MSAA sample count (null restores tier control), for A/B tests. */
-  samples(n){ setForcedSamples(n); allocPost(); return DBG.postInfo(); },
+  samples(n){ setForcedSamples(n); allocPost(vpW, vpH); return DBG.postInfo(); },
   cloudFetch(fn){ setFetch(fn); return { stubbed: !!fn }; },
   cloudLoadGallery(slug){ return cloudLoadGallery(slug); },
   cloudState(){ return { on: cloud.on, signedIn: !!cloud.sess, viewing: cloud.viewing, slug: cloud.slug }; },
