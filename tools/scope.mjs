@@ -14,8 +14,16 @@ const outside = lines.slice(0, a - 1).concat(lines.slice(b)).join('\n');
 const DECL = /^(?:export )?(?:async )?(?:function\*? |const |let |var )([A-Za-z_$][\w$]*)/gm;
 const declare = (s) => [...s.matchAll(DECL)].map((m) => m[1]);
 
+/* Names already imported into main.js count too. Missing these is how an
+   extraction ships a ReferenceError: getRoom lives in world/rooms.js, so it
+   was invisible to a scan that only looked at main.js's own declarations. */
+const IMPORTED = /^import\s*\{([^}]*)\}\s*from\s*'([^']+)'/gm;
+const imported = [...outside.matchAll(IMPORTED)].flatMap(([, names, from]) =>
+  names.split(',').map((n) => n.trim().split(/\s+as\s+/).pop()).filter(Boolean).map((n) => [n, from]));
+const importedFrom = new Map(imported);
+
 const mine = [...new Set(declare(inside))];
-const theirs = [...new Set(declare(outside))];
+const theirs = [...new Set([...declare(outside), ...importedFrom.keys()])];
 const word = (n) => new RegExp(`\\b${n.replace(/\$/g, '\\$')}\\b`);
 
 const exports = mine.filter((n) => word(n).test(outside));
@@ -26,5 +34,7 @@ console.log(`declares ${mine.length}:`);
 console.log('  ' + mine.join(', ') + '\n');
 console.log(`must EXPORT (used by the rest of main.js) — ${exports.length}:`);
 console.log('  ' + (exports.join(', ') || '(nothing)') + '\n');
-console.log(`must IMPORT (module-scope names it reaches for) — ${imports.length}:`);
-console.log('  ' + (imports.join(', ') || '(nothing)'));
+console.log(`must IMPORT (names it reaches for) — ${imports.length}:`);
+for (const n of imports) console.log(`  ${n.padEnd(20)} ${importedFrom.get(n) || '(declared in main.js)'}`);
+if (!imports.length) console.log('  (nothing)');
+console.log('\nWord-boundary matching, so comments and property names show up here too — check each.');

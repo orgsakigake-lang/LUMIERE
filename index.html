@@ -1631,56 +1631,14 @@
     return { mode: "none", data: null };
   }
 
-  // src/render/shaders/arch.vert
-  var arch_default = "#version 300 es\nlayout(location=0) in vec3 aPos;\nlayout(location=1) in vec3 aNor;\nlayout(location=2) in vec2 aUV;\nlayout(location=3) in vec3 aCol;\nlayout(location=4) in float aMat;\nuniform mat4 uMV, uP;\nout vec3 vN; out vec3 vPv; out vec2 vUV; out vec3 vCol; out vec3 vLp; out float vMat;\nvoid main(){\n  vec4 pv = uMV * vec4(aPos, 1.0);\n  vPv = pv.xyz;\n  vN = mat3(uMV) * aNor;\n  vUV = aUV; vCol = aCol; vLp = aPos; vMat = aMat;\n  gl_Position = uP * pv;\n}\n";
-
-  // src/render/shaders/arch.frag
-  var arch_default2 = "#version 300 es\nprecision highp float;\nin vec3 vN; in vec3 vPv; in vec2 vUV; in vec3 vCol; in vec3 vLp; in float vMat;\nuniform vec3 uFog; uniform float uSigma; uniform float uAlpha;\nuniform vec3 uAmb; uniform vec3 uUpV;\nuniform sampler2D uPlaster; uniform sampler2D uParquet;\nuniform int uNL;\nuniform vec4 uLPos[8];   // xyz view-space position, w 1/range\xB2\nuniform vec4 uLDir[8];   // xyz view-space axis,     w cos(outer)\nuniform vec4 uLCol[8];   // rgb colour\xB7intensity,    w cos(inner)\nout vec4 o;\nvoid main(){\n  vec3 n = normalize(vN);\n  vec3 vdir = normalize(-vPv);\n  if (dot(n, vdir) < 0.0) n = -n;\n  /* material grain */\n  vec3 alb = vCol;\n  if (vMat < 0.5)      alb *= texture(uPlaster, vUV * 0.5).rgb;\n  else if (vMat < 1.5) alb *= texture(uParquet, vUV * 0.5).rgb;\n  /* analytic corner occlusion \u2014 rooms are boxes, so distance to the two\n     other surface planes is a fine stand-in for baked AO */\n  vec3 dd = vec3(6.76 - abs(vLp.x), min(vLp.y, 4.2 - vLp.y), 6.76 - abs(vLp.z));\n  vec3 gg = 0.66 + 0.34 * clamp(dd / 0.85, 0.0, 1.0);\n  float ao = min(1.0, gg.x * gg.y * gg.z * 1.515);\n  vec3 acc = uAmb * alb;\n  float gloss = smoothstep(0.86, 0.99, dot(n, uUpV));\n  for (int i = 0; i < 8; i++){\n    if (i >= uNL) break;\n    vec3 L = uLPos[i].xyz - vPv;\n    float d2 = dot(L, L);\n    float dist = sqrt(d2);\n    L /= dist;\n    float att = 1.0 / (1.0 + d2 * uLPos[i].w);\n    float cone = smoothstep(uLDir[i].w, uLCol[i].w, dot(-L, uLDir[i].xyz));\n    vec3 c = uLCol[i].rgb * (att * cone);\n    acc += alb * c * max(dot(n, L), 0.0);\n    vec3 hv = normalize(L + vdir);\n    acc += c * pow(max(dot(n, hv), 0.0), 56.0) * gloss * 0.65;\n  }\n  acc *= ao;\n  float f = 1.0 - exp(-uSigma * length(vPv));\n  o = vec4(mix(acc, uFog, f), uAlpha);\n}\n";
-
-  // src/render/shaders/paint.vert
-  var paint_default = "#version 300 es\nlayout(location=0) in vec2 aQ;\nuniform mat4 uMV, uP;\nuniform vec3 uO, uU, uV;\nout vec2 vUV; out vec3 vPv;\nvoid main(){\n  vec3 p = uO + uU*aQ.x + uV*aQ.y;\n  vec4 pv = uMV * vec4(p, 1.0);\n  vPv = pv.xyz; vUV = vec2(aQ.x, 1.0 - aQ.y);\n  gl_Position = uP * pv;\n}\n";
-
-  // src/render/shaders/paint.frag
-  var paint_default2 = "#version 300 es\nprecision highp float;\nin vec2 vUV; in vec3 vPv;\nuniform sampler2D uTex;\nuniform vec3 uN;            // view-space surface normal\nuniform vec3 uFog; uniform float uSigma; uniform float uFade; uniform float uEm;\nuniform float uAT;          // 1 \u2192 texture alpha shapes the quad (contact shadows)\nuniform int uNL;\nuniform vec4 uLPos[8]; uniform vec4 uLDir[8]; uniform vec4 uLCol[8];\nout vec4 o;\nvoid main(){\n  vec4 t = texture(uTex, vUV);\n  vec3 alb = t.rgb;\n  vec3 n = normalize(uN);\n  vec3 vdir = normalize(-vPv);\n  if (dot(n, vdir) < 0.0) n = -n;\n  vec3 acc = alb * uEm;\n  for (int i = 0; i < 8; i++){\n    if (i >= uNL) break;\n    vec3 L = uLPos[i].xyz - vPv;\n    float d2 = dot(L, L); float dist = sqrt(d2); L /= dist;\n    float att = 1.0 / (1.0 + d2 * uLPos[i].w);\n    float cone = smoothstep(uLDir[i].w, uLCol[i].w, dot(-L, uLDir[i].xyz));\n    vec3 c = uLCol[i].rgb * (att * cone);\n    acc += alb * c * max(dot(n, L), 0.0);\n    vec3 hv = normalize(L + vdir);\n    acc += c * pow(max(dot(n, hv), 0.0), 24.0) * 0.055;   // varnish sheen\n  }\n  float f = 1.0 - exp(-uSigma * length(vPv));\n  o = vec4(mix(acc, uFog, f), uFade * mix(1.0, t.a, uAT));\n}\n";
-
-  // src/render/shaders/shaft.vert
-  var shaft_default = "#version 300 es\nlayout(location=0) in vec2 aQ;\nuniform mat4 uMV, uP;\nuniform vec3 uC; uniform vec2 uAxis; uniform vec2 uDim;\nout vec2 vQ;\nvoid main(){\n  vec3 p = vec3(uC.x + uAxis.x*(aQ.x-0.5)*uDim.x, aQ.y*uDim.y, uC.z + uAxis.y*(aQ.x-0.5)*uDim.x);\n  vQ = aQ;\n  gl_Position = uP * (uMV * vec4(p, 1.0));\n}\n";
-
-  // src/render/shaders/shaft.frag
-  var shaft_default2 = "#version 300 es\nprecision highp float;\nin vec2 vQ; uniform vec3 uCol; uniform float uTime;\nout vec4 o;\nvoid main(){\n  float ax = 1.0 - abs(vQ.x - 0.5)*2.0;\n  float ay = 1.0 - vQ.y*0.78;\n  float a = ax*ax*ay*0.11*(0.82 + 0.18*sin(uTime*0.37 + vQ.y*5.0));\n  o = vec4(uCol*a, 0.0);\n}\n";
-
-  // src/render/shaders/mote.vert
-  var mote_default = "#version 300 es\nlayout(location=0) in vec4 aS;\nuniform mat4 uMV, uP;\nuniform vec3 uC; uniform vec2 uDim; uniform float uTime;\nout float vA;\nvoid main(){\n  float ph = fract(aS.y + uTime*0.016 + uC.x*0.13);\n  float wob = sin(uTime*aS.w*2.0 + aS.x*23.0)*0.14;\n  vec3 p = vec3(uC.x + (aS.x-0.5)*uDim.x*0.8 + wob,\n                ph*uDim.y,\n                uC.z + (aS.z-0.5)*uDim.x*0.8 + wob*0.7);\n  vec4 pv = uMV * vec4(p, 1.0);\n  gl_Position = uP * pv;\n  gl_PointSize = clamp(9.0 / max(1.0, -pv.z), 1.5, 5.0);\n  vA = (0.55 + 0.45*sin(uTime*1.7 + aS.x*40.0)) * smoothstep(0.0, 0.12, ph) * smoothstep(1.0, 0.82, ph);\n}\n";
-
-  // src/render/shaders/mote.frag
-  var mote_default2 = "#version 300 es\nprecision highp float;\nin float vA; uniform vec3 uCol;\nout vec4 o;\nvoid main(){\n  vec2 d = gl_PointCoord - 0.5;\n  o = vec4(uCol * smoothstep(0.5, 0.12, length(d)) * vA * 0.5, 0.0);\n}\n";
-
-  // src/render/shaders/flame.vert
-  var flame_default = "#version 300 es\nlayout(location=0) in vec3 aP;\nuniform mat4 uMV, uP; uniform float uTime; uniform float uMY;\nout float vF;\nvoid main(){\n  vec3 p = vec3(aP.x, mix(aP.y, -aP.y, uMY), aP.z);\n  vec4 pv = uMV * vec4(p, 1.0);\n  gl_Position = uP * pv;\n  float h = fract(sin(aP.x*37.7 + aP.z*91.3)*43758.5);\n  vF = 0.70 + 0.30*sin(uTime*(5.0 + h*4.0) + h*40.0);\n  gl_PointSize = clamp(40.0 / max(1.0, -pv.z), 2.5, 20.0);\n}\n";
-
-  // src/render/shaders/flame.frag
-  var flame_default2 = "#version 300 es\nprecision highp float;\nin float vF; uniform vec3 uCol;\nout vec4 o;\nvoid main(){\n  vec2 d = gl_PointCoord - 0.5;\n  o = vec4(uCol * smoothstep(0.5, 0.05, length(d)) * vF, 0.0);\n}\n";
-
-  // src/render/shaders/post.vert
-  var post_default = "#version 300 es\nlayout(location=0) in vec2 aQ;\nout vec2 vUV;\nvoid main(){ vUV = aQ; gl_Position = vec4(aQ*2.0 - 1.0, 0.0, 1.0); }\n";
-
-  // src/render/shaders/bright.frag
-  var bright_default = "#version 300 es\nprecision highp float;\nin vec2 vUV; uniform sampler2D uTex;\nout vec4 o;\nvoid main(){\n  vec3 c = texture(uTex, vUV).rgb;\n  float l = dot(c, vec3(0.2126, 0.7152, 0.0722));\n  o = vec4(c * smoothstep(0.62, 1.05, l), 1.0);\n}\n";
-
-  // src/render/shaders/blur.frag
-  var blur_default = "#version 300 es\nprecision highp float;\nin vec2 vUV; uniform sampler2D uTex; uniform vec2 uDir;\nout vec4 o;\nvoid main(){\n  vec3 acc = texture(uTex, vUV).rgb * 0.227027;\n  vec2 o1 = uDir * 1.3846154, o2 = uDir * 3.2307692;\n  acc += texture(uTex, vUV + o1).rgb * 0.3162162;\n  acc += texture(uTex, vUV - o1).rgb * 0.3162162;\n  acc += texture(uTex, vUV + o2).rgb * 0.0702703;\n  acc += texture(uTex, vUV - o2).rgb * 0.0702703;\n  o = vec4(acc, 1.0);\n}\n";
-
-  // src/render/shaders/composite.frag
-  var composite_default = "#version 300 es\nprecision highp float;\nin vec2 vUV;\nuniform sampler2D uTex; uniform sampler2D uBloom;\nuniform float uTime; uniform vec2 uRes;\nout vec4 o;\nvec3 aces(vec3 x){\n  return clamp((x*(2.51*x + 0.03)) / (x*(2.43*x + 0.59) + 0.14), 0.0, 1.0);\n}\nfloat hash(vec2 p){\n  vec3 p3 = fract(vec3(p.xyx) * 0.1031);\n  p3 += dot(p3, p3.yzx + 33.33);\n  return fract((p3.x + p3.y) * p3.z);\n}\nvoid main(){\n  vec3 c = texture(uTex, vUV).rgb + texture(uBloom, vUV).rgb * 0.9;\n  c = aces(c * 1.35);\n  /* split-tone: cool shadows, warm lights \u2014 the film look of old halls */\n  float lum = dot(c, vec3(0.299, 0.587, 0.114));\n  c *= mix(vec3(0.965, 0.99, 1.065), vec3(1.045, 1.0, 0.945), smoothstep(0.04, 0.62, lum));\n  vec2 vg = vUV - 0.5;\n  c *= 1.0 - 0.34 * smoothstep(0.28, 0.72, dot(vg, vg));\n  c += (hash(vUV * uRes + fract(uTime)*371.0) - 0.5) * 0.028;\n  o = vec4(c, 1.0);\n}\n";
-
-  // src/main.js
+  // src/world/geometry.js
   var SCHEMES = [
     { wall: [0.166, 0.15, 0.132], floor: [0.105, 0.094, 0.082], ceil: [0.07, 0.065, 0.058], trim: [0.05, 0.046, 0.04] },
     { wall: [0.3, 0.082, 0.058], floor: [0.088, 0.062, 0.05], ceil: [0.078, 0.05, 0.04], trim: [0.36, 0.28, 0.14] },
     { wall: [0.19, 0.17, 0.14], floor: [0.1, 0.09, 0.078], ceil: [0.068, 0.063, 0.056], trim: [0.055, 0.05, 0.043] },
     { wall: [0.058, 0.055, 0.05], floor: [0.05, 0.047, 0.043], ceil: [0.04, 0.038, 0.035], trim: [0.03, 0.028, 0.025] }
   ];
-  function buildRoomMesh(r) {
+  function buildRoomMesh(r, daylight) {
     const V = [], I = [];
     r.colliders.length = 0;
     const SCH = SCHEMES[r.special] || SCHEMES[0];
@@ -2032,7 +1990,7 @@
         r.flames.push(x1, ringY + 0.165, z1);
       }
     }
-    if (WIN.on) {
+    if (daylight) {
       const MUL = [0.045, 0.042, 0.038];
       for (const wn of r.windows) {
         const u0 = wn.u - wn.w / 2, u1 = wn.u + wn.w / 2;
@@ -2056,9 +2014,9 @@
     if (d.s) quad(-DW, 0, -IN, -DW, 0, -HS, DW, 0, -HS, DW, 0, -IN, 0, 1, 0, COL.floor, 0.3, 1);
     return { verts: new Float32Array(V), idx: new Uint16Array(I), floorStart };
   }
-  function assembleLights(r) {
+  function assembleLights(r, daylight) {
     const L = [];
-    if (WIN.on) {
+    if (daylight) {
       const IN = HS - WT;
       for (const wn of r.windows) {
         const sign = wn.wall === "e" || wn.wall === "n" ? 1 : -1;
@@ -2097,6 +2055,50 @@
     }
     r.lights = L;
   }
+
+  // src/render/shaders/arch.vert
+  var arch_default = "#version 300 es\nlayout(location=0) in vec3 aPos;\nlayout(location=1) in vec3 aNor;\nlayout(location=2) in vec2 aUV;\nlayout(location=3) in vec3 aCol;\nlayout(location=4) in float aMat;\nuniform mat4 uMV, uP;\nout vec3 vN; out vec3 vPv; out vec2 vUV; out vec3 vCol; out vec3 vLp; out float vMat;\nvoid main(){\n  vec4 pv = uMV * vec4(aPos, 1.0);\n  vPv = pv.xyz;\n  vN = mat3(uMV) * aNor;\n  vUV = aUV; vCol = aCol; vLp = aPos; vMat = aMat;\n  gl_Position = uP * pv;\n}\n";
+
+  // src/render/shaders/arch.frag
+  var arch_default2 = "#version 300 es\nprecision highp float;\nin vec3 vN; in vec3 vPv; in vec2 vUV; in vec3 vCol; in vec3 vLp; in float vMat;\nuniform vec3 uFog; uniform float uSigma; uniform float uAlpha;\nuniform vec3 uAmb; uniform vec3 uUpV;\nuniform sampler2D uPlaster; uniform sampler2D uParquet;\nuniform int uNL;\nuniform vec4 uLPos[8];   // xyz view-space position, w 1/range\xB2\nuniform vec4 uLDir[8];   // xyz view-space axis,     w cos(outer)\nuniform vec4 uLCol[8];   // rgb colour\xB7intensity,    w cos(inner)\nout vec4 o;\nvoid main(){\n  vec3 n = normalize(vN);\n  vec3 vdir = normalize(-vPv);\n  if (dot(n, vdir) < 0.0) n = -n;\n  /* material grain */\n  vec3 alb = vCol;\n  if (vMat < 0.5)      alb *= texture(uPlaster, vUV * 0.5).rgb;\n  else if (vMat < 1.5) alb *= texture(uParquet, vUV * 0.5).rgb;\n  /* analytic corner occlusion \u2014 rooms are boxes, so distance to the two\n     other surface planes is a fine stand-in for baked AO */\n  vec3 dd = vec3(6.76 - abs(vLp.x), min(vLp.y, 4.2 - vLp.y), 6.76 - abs(vLp.z));\n  vec3 gg = 0.66 + 0.34 * clamp(dd / 0.85, 0.0, 1.0);\n  float ao = min(1.0, gg.x * gg.y * gg.z * 1.515);\n  vec3 acc = uAmb * alb;\n  float gloss = smoothstep(0.86, 0.99, dot(n, uUpV));\n  for (int i = 0; i < 8; i++){\n    if (i >= uNL) break;\n    vec3 L = uLPos[i].xyz - vPv;\n    float d2 = dot(L, L);\n    float dist = sqrt(d2);\n    L /= dist;\n    float att = 1.0 / (1.0 + d2 * uLPos[i].w);\n    float cone = smoothstep(uLDir[i].w, uLCol[i].w, dot(-L, uLDir[i].xyz));\n    vec3 c = uLCol[i].rgb * (att * cone);\n    acc += alb * c * max(dot(n, L), 0.0);\n    vec3 hv = normalize(L + vdir);\n    acc += c * pow(max(dot(n, hv), 0.0), 56.0) * gloss * 0.65;\n  }\n  acc *= ao;\n  float f = 1.0 - exp(-uSigma * length(vPv));\n  o = vec4(mix(acc, uFog, f), uAlpha);\n}\n";
+
+  // src/render/shaders/paint.vert
+  var paint_default = "#version 300 es\nlayout(location=0) in vec2 aQ;\nuniform mat4 uMV, uP;\nuniform vec3 uO, uU, uV;\nout vec2 vUV; out vec3 vPv;\nvoid main(){\n  vec3 p = uO + uU*aQ.x + uV*aQ.y;\n  vec4 pv = uMV * vec4(p, 1.0);\n  vPv = pv.xyz; vUV = vec2(aQ.x, 1.0 - aQ.y);\n  gl_Position = uP * pv;\n}\n";
+
+  // src/render/shaders/paint.frag
+  var paint_default2 = "#version 300 es\nprecision highp float;\nin vec2 vUV; in vec3 vPv;\nuniform sampler2D uTex;\nuniform vec3 uN;            // view-space surface normal\nuniform vec3 uFog; uniform float uSigma; uniform float uFade; uniform float uEm;\nuniform float uAT;          // 1 \u2192 texture alpha shapes the quad (contact shadows)\nuniform int uNL;\nuniform vec4 uLPos[8]; uniform vec4 uLDir[8]; uniform vec4 uLCol[8];\nout vec4 o;\nvoid main(){\n  vec4 t = texture(uTex, vUV);\n  vec3 alb = t.rgb;\n  vec3 n = normalize(uN);\n  vec3 vdir = normalize(-vPv);\n  if (dot(n, vdir) < 0.0) n = -n;\n  vec3 acc = alb * uEm;\n  for (int i = 0; i < 8; i++){\n    if (i >= uNL) break;\n    vec3 L = uLPos[i].xyz - vPv;\n    float d2 = dot(L, L); float dist = sqrt(d2); L /= dist;\n    float att = 1.0 / (1.0 + d2 * uLPos[i].w);\n    float cone = smoothstep(uLDir[i].w, uLCol[i].w, dot(-L, uLDir[i].xyz));\n    vec3 c = uLCol[i].rgb * (att * cone);\n    acc += alb * c * max(dot(n, L), 0.0);\n    vec3 hv = normalize(L + vdir);\n    acc += c * pow(max(dot(n, hv), 0.0), 24.0) * 0.055;   // varnish sheen\n  }\n  float f = 1.0 - exp(-uSigma * length(vPv));\n  o = vec4(mix(acc, uFog, f), uFade * mix(1.0, t.a, uAT));\n}\n";
+
+  // src/render/shaders/shaft.vert
+  var shaft_default = "#version 300 es\nlayout(location=0) in vec2 aQ;\nuniform mat4 uMV, uP;\nuniform vec3 uC; uniform vec2 uAxis; uniform vec2 uDim;\nout vec2 vQ;\nvoid main(){\n  vec3 p = vec3(uC.x + uAxis.x*(aQ.x-0.5)*uDim.x, aQ.y*uDim.y, uC.z + uAxis.y*(aQ.x-0.5)*uDim.x);\n  vQ = aQ;\n  gl_Position = uP * (uMV * vec4(p, 1.0));\n}\n";
+
+  // src/render/shaders/shaft.frag
+  var shaft_default2 = "#version 300 es\nprecision highp float;\nin vec2 vQ; uniform vec3 uCol; uniform float uTime;\nout vec4 o;\nvoid main(){\n  float ax = 1.0 - abs(vQ.x - 0.5)*2.0;\n  float ay = 1.0 - vQ.y*0.78;\n  float a = ax*ax*ay*0.11*(0.82 + 0.18*sin(uTime*0.37 + vQ.y*5.0));\n  o = vec4(uCol*a, 0.0);\n}\n";
+
+  // src/render/shaders/mote.vert
+  var mote_default = "#version 300 es\nlayout(location=0) in vec4 aS;\nuniform mat4 uMV, uP;\nuniform vec3 uC; uniform vec2 uDim; uniform float uTime;\nout float vA;\nvoid main(){\n  float ph = fract(aS.y + uTime*0.016 + uC.x*0.13);\n  float wob = sin(uTime*aS.w*2.0 + aS.x*23.0)*0.14;\n  vec3 p = vec3(uC.x + (aS.x-0.5)*uDim.x*0.8 + wob,\n                ph*uDim.y,\n                uC.z + (aS.z-0.5)*uDim.x*0.8 + wob*0.7);\n  vec4 pv = uMV * vec4(p, 1.0);\n  gl_Position = uP * pv;\n  gl_PointSize = clamp(9.0 / max(1.0, -pv.z), 1.5, 5.0);\n  vA = (0.55 + 0.45*sin(uTime*1.7 + aS.x*40.0)) * smoothstep(0.0, 0.12, ph) * smoothstep(1.0, 0.82, ph);\n}\n";
+
+  // src/render/shaders/mote.frag
+  var mote_default2 = "#version 300 es\nprecision highp float;\nin float vA; uniform vec3 uCol;\nout vec4 o;\nvoid main(){\n  vec2 d = gl_PointCoord - 0.5;\n  o = vec4(uCol * smoothstep(0.5, 0.12, length(d)) * vA * 0.5, 0.0);\n}\n";
+
+  // src/render/shaders/flame.vert
+  var flame_default = "#version 300 es\nlayout(location=0) in vec3 aP;\nuniform mat4 uMV, uP; uniform float uTime; uniform float uMY;\nout float vF;\nvoid main(){\n  vec3 p = vec3(aP.x, mix(aP.y, -aP.y, uMY), aP.z);\n  vec4 pv = uMV * vec4(p, 1.0);\n  gl_Position = uP * pv;\n  float h = fract(sin(aP.x*37.7 + aP.z*91.3)*43758.5);\n  vF = 0.70 + 0.30*sin(uTime*(5.0 + h*4.0) + h*40.0);\n  gl_PointSize = clamp(40.0 / max(1.0, -pv.z), 2.5, 20.0);\n}\n";
+
+  // src/render/shaders/flame.frag
+  var flame_default2 = "#version 300 es\nprecision highp float;\nin float vF; uniform vec3 uCol;\nout vec4 o;\nvoid main(){\n  vec2 d = gl_PointCoord - 0.5;\n  o = vec4(uCol * smoothstep(0.5, 0.05, length(d)) * vF, 0.0);\n}\n";
+
+  // src/render/shaders/post.vert
+  var post_default = "#version 300 es\nlayout(location=0) in vec2 aQ;\nout vec2 vUV;\nvoid main(){ vUV = aQ; gl_Position = vec4(aQ*2.0 - 1.0, 0.0, 1.0); }\n";
+
+  // src/render/shaders/bright.frag
+  var bright_default = "#version 300 es\nprecision highp float;\nin vec2 vUV; uniform sampler2D uTex;\nout vec4 o;\nvoid main(){\n  vec3 c = texture(uTex, vUV).rgb;\n  float l = dot(c, vec3(0.2126, 0.7152, 0.0722));\n  o = vec4(c * smoothstep(0.62, 1.05, l), 1.0);\n}\n";
+
+  // src/render/shaders/blur.frag
+  var blur_default = "#version 300 es\nprecision highp float;\nin vec2 vUV; uniform sampler2D uTex; uniform vec2 uDir;\nout vec4 o;\nvoid main(){\n  vec3 acc = texture(uTex, vUV).rgb * 0.227027;\n  vec2 o1 = uDir * 1.3846154, o2 = uDir * 3.2307692;\n  acc += texture(uTex, vUV + o1).rgb * 0.3162162;\n  acc += texture(uTex, vUV - o1).rgb * 0.3162162;\n  acc += texture(uTex, vUV + o2).rgb * 0.0702703;\n  acc += texture(uTex, vUV - o2).rgb * 0.0702703;\n  o = vec4(acc, 1.0);\n}\n";
+
+  // src/render/shaders/composite.frag
+  var composite_default = "#version 300 es\nprecision highp float;\nin vec2 vUV;\nuniform sampler2D uTex; uniform sampler2D uBloom;\nuniform float uTime; uniform vec2 uRes;\nout vec4 o;\nvec3 aces(vec3 x){\n  return clamp((x*(2.51*x + 0.03)) / (x*(2.43*x + 0.59) + 0.14), 0.0, 1.0);\n}\nfloat hash(vec2 p){\n  vec3 p3 = fract(vec3(p.xyx) * 0.1031);\n  p3 += dot(p3, p3.yzx + 33.33);\n  return fract((p3.x + p3.y) * p3.z);\n}\nvoid main(){\n  vec3 c = texture(uTex, vUV).rgb + texture(uBloom, vUV).rgb * 0.9;\n  c = aces(c * 1.35);\n  /* split-tone: cool shadows, warm lights \u2014 the film look of old halls */\n  float lum = dot(c, vec3(0.299, 0.587, 0.114));\n  c *= mix(vec3(0.965, 0.99, 1.065), vec3(1.045, 1.0, 0.945), smoothstep(0.04, 0.62, lum));\n  vec2 vg = vUV - 0.5;\n  c *= 1.0 - 0.34 * smoothstep(0.28, 0.72, dot(vg, vg));\n  c += (hash(vUV * uRes + fract(uTime)*371.0) - 0.5) * 0.028;\n  o = vec4(c, 1.0);\n}\n";
+
+  // src/main.js
   var canvas = document.getElementById("gl");
   var gl = null;
   try {
@@ -2797,7 +2799,7 @@
     return PERF.q === 2 ? DPR_CAP : PERF.q === 1 ? 1.25 : 1;
   }
   function makeRoomVAO(r) {
-    const mesh = buildRoomMesh(r);
+    const mesh = buildRoomMesh(r, WIN.on);
     const vao = gl.createVertexArray();
     gl.bindVertexArray(vao);
     const vbo = gl.createBuffer();
@@ -2834,7 +2836,7 @@
       gl.bindVertexArray(null);
       r.nFlames = r.flames.length / 3;
     }
-    assembleLights(r);
+    assembleLights(r, WIN.on);
     trace(`[world] built room (${r.gx},${r.gz}) seed=${r.seed}`);
   }
   function dropRoomGL(r) {
