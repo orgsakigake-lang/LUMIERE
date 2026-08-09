@@ -563,6 +563,56 @@ test.describe.serial('inside the gallery', () => {
     await page.evaluate(() => window.DBG.theme('salon'));
   });
 
+  test('portal culling draws fewer rooms and changes no pixels', async () => {
+    /* The museum is a portal graph and had stored it in r.doors since the world
+       generator was written, without using it: frustum culling alone kept every
+       room of the 5x5 neighbourhood inside the view cone, including ones sealed
+       behind a solid wall. Culling is only ever allowed to change how many
+       rooms are asked to produce the image, never the image — so this compares
+       the two strategies pixel for pixel.
+
+       Two things have to hold still for that to mean anything. Animation time
+       is pinned, because flames, moon shafts, motes and the grain all run off
+       the wall clock and an unfrozen comparison silently measures noise instead
+       of geometry. And the theme is switched to a solo one, because it
+       generates nothing: otherwise a painting finishes between the two reads
+       and the diff is art arriving, not a room going missing. Both of those
+       were live failures before they were guards. */
+    const rows = await page.evaluate(() => {
+      const c = document.getElementById('gl'), g = c.getContext('webgl2');
+      const hash = () => {
+        window.DBG.frame(4, 16.7);
+        const w = c.width, h = c.height, b = new Uint8Array(w*h*4);
+        g.readPixels(0, 0, w, h, g.RGBA, g.UNSIGNED_BYTE, b);
+        let x = 2166136261;
+        for (let i = 0; i < b.length; i += 29){ x ^= b[i]; x = Math.imul(x, 16777619); }
+        return x >>> 0;
+      };
+      window.DBG.freeze(12.5);
+      window.DBG.theme('graphite');          // solo: nothing generates mid-comparison
+      const out = [];
+      for (const [gx, gz, yaw] of [[0,0,0], [0,0,Math.PI/2], [1,0,0], [-2,3,0.7], [4,-1,Math.PI]]){
+        window.DBG.tp(gx, gz, yaw);
+        window.DBG.frame(6, 16.7);
+        window.DBG.culling('portal');  const hp = hash(), cp = window.DBG.culling().portal;
+        window.DBG.culling('frustum'); const hf = hash(), cf = window.DBG.culling().frustum;
+        out.push({ at: `${gx},${gz}`, identical: hp === hf, portal: cp, frustum: cf });
+      }
+      window.DBG.culling('portal');
+      window.DBG.freeze(null);
+      window.DBG.theme('salon');
+      return out;
+    });
+
+    const drawn = rows.reduce((s, r) => s + r.portal, 0);
+    const before = rows.reduce((s, r) => s + r.frustum, 0);
+    console.log(`    rooms drawn across ${rows.length} views: ${drawn} portal vs ${before} frustum`);
+
+    for (const r of rows)
+      expect(r.identical, `view ${r.at} differs between culling strategies`).toBe(true);
+    expect(drawn).toBeLessThan(before * 0.6);   // and it is a real saving
+  });
+
   test('the image uses its tonal range instead of crushing into black', async () => {
     /* The colour pipeline had no sRGB encode and no sRGB decode, so everything
        was displayed at L^2.2 and the whole museum lived in about 70 of the 255

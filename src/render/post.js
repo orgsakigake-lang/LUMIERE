@@ -23,6 +23,11 @@ export const GRADE = {
   lightTint:  [1.045, 1.0,  0.945],
 };
 
+/* Overridable so DBG.freeze can pin the grain along with everything else. */
+let timeFn = () => (performance.now() % 300000)/1000;
+export function setPostTime(fn){ timeFn = fn || (() => (performance.now() % 300000)/1000); }
+function postTime(){ return timeFn(); }
+
 export let progBright, progBlur, progComp;
 export const uBright = {}, uBlur = {}, uComp = {};
 export const post = { on: true, ready: false, w: 0, h: 0, qw: 0, qh: 0,
@@ -183,7 +188,7 @@ export function runPost(quadVAO){
   gl.useProgram(progComp);
   gl.uniform1i(uComp.uTex, 0);
   gl.uniform1i(uComp.uBloom, 1);
-  gl.uniform1f(uComp.uTime, (performance.now() % 300000)/1000);
+  gl.uniform1f(uComp.uTime, postTime());
   gl.uniform2f(uComp.uRes, post.w, post.h);
   gl.uniform1f(uComp.uExposure, GRADE.exposure);
   gl.uniform1f(uComp.uGrain, GRADE.grain);

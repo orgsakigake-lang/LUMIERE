@@ -27,7 +27,7 @@ import { SCHEMES, applyScheme, buildRoomMesh, assembleLights, MAX_LIGHTS } from 
 import { canvas, gl, compile, program } from './render/gl.js';
 import { PERF, dprCap } from './render/perf.js';
 import { post, postCaps, wantSamples, setForcedSamples, allocPost, runPost,
-         setPostPrograms, uBright, uBlur, uComp, GRADE } from './render/post.js';
+         setPostPrograms, setPostTime, uBright, uBlur, uComp, GRADE } from './render/post.js';
 import { plasterTex, parquetTex, shadowTex, skyTex, makeSurfaceTextures,
          ensureSkyTex, dropSurfaceTextures } from './render/textures.js';
 import { player, M_P, M_V, M_MV, M_PV, vpW, vpH, setViewport,
@@ -1348,6 +1348,128 @@ let acqModalEl = null;
 const acqModalHidden = () =>
   (acqModalEl || (acqModalEl = document.getElementById('modal'))).hidden;
 
+/* ————— portal visibility —————
+   The museum is a portal graph and has stored it in `r.doors` since the world
+   generator was written; nothing used it to decide what to draw. Frustum
+   culling alone kept every one of the 5×5 neighbourhood's twenty-five rooms
+   that fell inside the view cone, including rooms sealed off behind a solid
+   wall two metres away, and shaded them in full.
+
+   A room is reachable for the eye only through a chain of open doorways, and
+   each doorway narrows the screen rectangle everything beyond it can occupy.
+   So: flood outward from the visitor's room, intersecting a clip-space
+   rectangle at every portal, and stop when it closes. */
+const DOOR_DIRS = [['e',1,0], ['w',-1,0], ['n',0,1], ['s',0,-1]];
+let portalCull = true;   // DBG.culling('frustum') turns it off for A/B
+/* Flames, moon shafts and dust motes animate on the wall clock, and the grain
+   is seeded from it too, so no two frames are ever identical. Pinning it is
+   what lets a change claim "this did not alter a single pixel" and be checked
+   rather than believed. */
+let frozenT = null;
+const VIS_STACK = [], VIS_BY_KEY = new Map();
+const PRECT = [0,0,0,0];
+/** Clip-space AABB of a doorway. Returns PRECT, or null when the doorway
+ *  straddles the near plane — there the projection flips sign and an AABB is
+ *  nonsense, so the caller keeps the parent's rectangle. Returns false when
+ *  every corner is behind the camera: that doorway is not a way in.
+ *
+ *  Treating those two cases alike is what made the first version of this keep
+ *  *more* rooms than the frustum did — a door behind your head has all four
+ *  corners behind the near plane, and the conservative fallback let the room
+ *  beyond it through. */
+function portalRect(ox, oz, wall){
+  const DW = DOORW/2;
+  const horiz = (wall === 'e' || wall === 'w');
+  const sgn = (wall === 'e' || wall === 'n') ? 1 : -1;
+  const a = horiz ? ox + sgn*HS : ox - DW, b = horiz ? ox + sgn*HS : ox + DW;
+  const c = horiz ? oz - DW : oz + sgn*HS, d = horiz ? oz + DW : oz + sgn*HS;
+  let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity, behind = 0;
+  for (let i = 0; i < 4; i++){
+    const px = (i & 1) ? b : a, pz = (i & 1) ? d : c;
+    const py = (i & 2) ? DOORH : 0;
+    const cx = M_PV[0]*px + M_PV[4]*py + M_PV[8]*pz  + M_PV[12];
+    const cy = M_PV[1]*px + M_PV[5]*py + M_PV[9]*pz  + M_PV[13];
+    const cw = M_PV[3]*px + M_PV[7]*py + M_PV[11]*pz + M_PV[15];
+    if (cw <= 1e-4){ behind++; continue; }
+    const nx = cx/cw, ny = cy/cw;
+    if (nx < x0) x0 = nx; if (nx > x1) x1 = nx;
+    if (ny < y0) y0 = ny; if (ny > y1) y1 = ny;
+  }
+  if (behind === 4) return false;      // not a way in
+  if (behind) return null;             // straddling — keep the parent rect
+  PRECT[0] = x0; PRECT[1] = y0; PRECT[2] = x1; PRECT[3] = y1;
+  return PRECT;
+}
+function computeVisibility(){
+  if (!portalCull){
+    for (let i = 0; i < nearRooms.length; i++){
+      const e = nearRooms[i];
+      e.vis = boxVisible(e.ox, H/2, e.oz, HS, H/2, HS);
+    }
+    return;
+  }
+  VIS_BY_KEY.clear();
+  for (let i = 0; i < nearRooms.length; i++){
+    const e = nearRooms[i];
+    e.vis = false;
+    VIS_BY_KEY.set(roomKey(e.r.gx, e.r.gz), e);
+  }
+  const start = VIS_BY_KEY.get(roomKey(player.gx, player.gz));
+  if (!start){
+    /* Mid-teleport the visitor's own room may not be built yet. Fall back to
+       the frustum rather than drawing nothing at all. */
+    for (let i = 0; i < nearRooms.length; i++){
+      const e = nearRooms[i];
+      e.vis = boxVisible(e.ox, H/2, e.oz, HS, H/2, HS);
+    }
+    return;
+  }
+  start.vis = true; start.x0 = -1; start.y0 = -1; start.x1 = 1; start.y1 = 1;
+  VIS_STACK.length = 0; VIS_STACK.push(start);
+  /* Reachability and the view frustum are independent facts, and a room has to
+     satisfy both. The flood answers "could light get here through the doors";
+     the frustum answers "is it in front of me at all". */
+  while (VIS_STACK.length){
+    const e = VIS_STACK.pop();
+    for (let d = 0; d < 4; d++){
+      const [wall, dx, dz] = DOOR_DIRS[d];
+      if (!e.r.doors[wall]) continue;
+      const nb = VIS_BY_KEY.get(roomKey(e.r.gx + dx, e.r.gz + dz));
+      if (!nb) continue;
+      const p = portalRect(e.ox, e.oz, wall);
+      if (p === false) continue;                     // that doorway faces away
+      let x0 = e.x0, y0 = e.y0, x1 = e.x1, y1 = e.y1;
+      if (p){
+        if (p[0] > x0) x0 = p[0]; if (p[1] > y0) y0 = p[1];
+        if (p[2] < x1) x1 = p[2]; if (p[3] < y1) y1 = p[3];
+        if (x1 <= x0 || y1 <= y0) continue;          // the doorway closed it
+      }
+      /* A room can be reached down more than one corridor. Keep the union, and
+         only walk on when this path actually widened it — otherwise a cycle in
+         the door graph would loop forever. */
+      if (nb.vis){
+        if (x0 >= nb.x0 && y0 >= nb.y0 && x1 <= nb.x1 && y1 <= nb.y1) continue;
+        if (nb.x0 < x0) x0 = nb.x0; if (nb.y0 < y0) y0 = nb.y0;
+        if (nb.x1 > x1) x1 = nb.x1; if (nb.y1 > y1) y1 = nb.y1;
+      }
+      nb.vis = true; nb.x0 = x0; nb.y0 = y0; nb.x1 = x1; nb.y1 = y1;
+      VIS_STACK.push(nb);
+    }
+  }
+  for (let i = 0; i < nearRooms.length; i++){
+    const e = nearRooms[i];
+    if (e.vis && e !== start && !boxVisible(e.ox, H/2, e.oz, HS, H/2, HS)) e.vis = false;
+  }
+}
+/** Frustum test against the room mirrored below the floor, for the reflection
+ *  pass. Cheap, and the only visibility that pass can honestly use. */
+function computeMirrorVisibility(){
+  for (let i = 0; i < nearRooms.length; i++){
+    const e = nearRooms[i];
+    e.visR = boxVisible(e.ox, -H/2, e.oz, HS, H/2, HS);
+  }
+}
+
 function frame(t){
   if (!gl) return;
   if (gl.isContextLost()){
@@ -1470,10 +1592,8 @@ function frame(t){
      shafts, motes — for an answer that cannot change within a frame. Rooms in
      nearRooms and midRooms are the same objects, so one pass settles both. */
   packSerial++;
-  for (let i = 0; i < nearRooms.length; i++){
-    const e = nearRooms[i];
-    e.vis = boxVisible(e.ox, H/2, e.oz, HS, H/2, HS);
-  }
+  computeVisibility();
+  if (PERF.q >= 1) computeMirrorVisibility();
 
   gl.useProgram(progArch);
   gl.uniformMatrix4fv(uArch.p, false, M_P);
@@ -1509,6 +1629,11 @@ function frame(t){
     }
 
   /* pass B — the world below the floor: mirrored paintings, glass, flames.
+     These use visR, not vis. A doorway aperture bounds where a room can be seen
+     *directly*; the mirror image of that room lands in the floor at your feet,
+     which the aperture says nothing about. Portal-culling this pass dropped the
+     reflections of paintings in neighbouring rooms — 0.6% of the frame, and
+     obvious once seen. The mirrored room box is the honest test.
      The floor then covers them at slight transparency: a polished sheen. */
   const nowMs = performance.now();
   if (PERF.q >= 1){
@@ -1522,9 +1647,9 @@ function frame(t){
     gl.uniform1f(uPaint.uAT, 0);
     gl.bindVertexArray(quadVAO);
     for (let ri = 0; ri < midRooms.length; ri++){
-      const { r, ox, oz, vis } = midRooms[ri];
+      const { r, ox, oz, visR } = midRooms[ri];
       if (!r.vao) continue;
-      if (!vis) continue;
+      if (!visR) continue;
       const m = r.mood;
       gl.uniform3f(uPaint.uFog, fogCur[0]+m[0]*.5, fogCur[1]+m[1]*.5, fogCur[2]+m[2]*.5);
       const nl = packLights(r, ox, oz);
@@ -1584,13 +1709,13 @@ function frame(t){
       gl.blendFunc(gl.ONE, gl.ONE);
       gl.useProgram(progFlame);
       gl.uniformMatrix4fv(uFlame.uP, false, M_P);
-      gl.uniform1f(uFlame.uTime, (performance.now() % 300000)/1000);
+      gl.uniform1f(uFlame.uTime, frozenT !== null ? frozenT : (performance.now() % 300000)/1000);
       gl.uniform1f(uFlame.uMY, 1);
       gl.uniform3f(uFlame.uCol, 0.34, 0.21, 0.09);
       for (let ri = 0; ri < midRooms.length; ri++){
-        const { r, ox, oz, vis } = midRooms[ri];
+        const { r, ox, oz, visR } = midRooms[ri];
         if (!r.nFlames || !r.flameVAO) continue;
-        if (!vis) continue;
+        if (!visR) continue;
         mulT(M_MV, M_V, ox, 0, oz);
         gl.uniformMatrix4fv(uFlame.uMV, false, M_MV);
         gl.bindVertexArray(r.flameVAO);
@@ -1770,7 +1895,7 @@ function frame(t){
     }
 
   /* additive pass: moon shafts + dust motes in the rare rooms */
-  const shaderT = (performance.now() % 300000) / 1000;
+  const shaderT = frozenT !== null ? frozenT : (performance.now() % 300000) / 1000;
   let addOn = false;
   /* candle flames on the chandeliers */
   if (lightsOn){
@@ -2036,6 +2161,13 @@ if (DBG_FULL) Object.assign(window.DBG, {
   samples(n){ setForcedSamples(n); allocPost(vpW, vpH); return DBG.postInfo(); },
   /** Adjust the grade live: DBG.grade({exposure:1.9, grain:0.012}). */
   grade(patch){ if (patch) Object.assign(GRADE, patch); return { ...GRADE }; },
+  /** Pin animation time so two renders can be compared pixel for pixel.
+   *  DBG.freeze(12.5) to pin, DBG.freeze(null) to let it run again. */
+  freeze(t){
+    frozenT = (t === undefined || t === null) ? null : +t;
+    setPostTime(frozenT === null ? null : () => frozenT);
+    return frozenT;
+  },
   /** Luminance histogram of the current frame. The colour pipeline cannot be
    *  asserted by eye in CI, but the crush can: with no sRGB encode the lit
    *  scene put 85% of its pixels in the bottom sixteenth of the code range. */
@@ -2081,6 +2213,18 @@ if (DBG_FULL) Object.assign(window.DBG, {
   },
   /** Whether an image would be stored lossless. Takes a canvas or a bitmap. */
   uploadKind(src){ return looksLikeLineArt(src) ? 'png' : 'jpeg'; },
+  /** How many rooms each strategy keeps, and a way to force one of them.
+   *  Portal culling must never change a pixel, only how many rooms are asked
+   *  to produce it — DBG.culling('frustum') is how that gets proven. */
+  culling(mode){
+    if (mode) portalCull = mode !== 'frustum';
+    let portal = 0, frustum = 0;
+    for (const e of nearRooms){
+      if (e.vis) portal++;
+      if (boxVisible(e.ox, H/2, e.oz, HS, H/2, HS)) frustum++;
+    }
+    return { near: nearRooms.length, portal, frustum, mode: portalCull ? 'portal' : 'frustum' };
+  },
   /** Switch or read the gallery theme: DBG.theme('graphite'). */
   theme(name){
     if (name) applyTheme(name, true);
