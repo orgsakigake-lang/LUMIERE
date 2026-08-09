@@ -35,6 +35,12 @@ create table if not exists public.placements (
 -- Private by default. A gallery is readable by anyone only once its owner
 -- has published it; until then the owner is the only one who can see their
 -- own rows. Writes are always owner-only. Do not weaken the checks.
+--
+-- Verify, do not assume: `npm run verify:sql` applies this whole file to a
+-- throwaway PostgreSQL and asserts the policies actually behave. This file
+-- once shipped with a single `$` where `$$` was required, which aborted the
+-- entire script in the Supabase editor and applied nothing at all — while the
+-- app and the docs both claimed galleries were private.
 alter table public.profiles   enable row level security;
 alter table public.uploads    enable row level security;
 alter table public.placements enable row level security;
@@ -56,16 +62,23 @@ create policy "profiles update" on public.profiles for update using (auth.uid() 
 
 -- Helper so the read policies below stay legible and stay in one place.
 create or replace function public.is_published(uid uuid)
-returns boolean language sql stable security definer set search_path = public as $
+returns boolean language sql stable security definer set search_path = pg_catalog, pg_temp as $fn$
   select exists (select 1 from public.profiles p where p.id = uid and p.published)
-$;
+$fn$;
 
 drop policy if exists "uploads read"   on public.uploads;
 drop policy if exists "uploads write"  on public.uploads;
 drop policy if exists "uploads delete" on public.uploads;
 create policy "uploads read"   on public.uploads for select
   using (auth.uid() = owner or public.is_published(owner));
-create policy "uploads write"  on public.uploads for insert with check (auth.uid() = owner);
+-- Two guards beyond ownership. `path` must live under the owner's own folder,
+-- or a row could point at somebody else's object; and a row-count ceiling, so
+-- one account cannot fill the bucket. Both are enforceable in SQL — no server.
+create policy "uploads write"  on public.uploads for insert with check (
+  auth.uid() = owner
+  and path like (auth.uid()::text || '/%')
+  and (select count(*) from public.uploads u where u.owner = auth.uid()) < 500
+);
 create policy "uploads delete" on public.uploads for delete using (auth.uid() = owner);
 
 drop policy if exists "placements read"   on public.placements;
@@ -74,30 +87,53 @@ drop policy if exists "placements update" on public.placements;
 drop policy if exists "placements delete" on public.placements;
 create policy "placements read"   on public.placements for select
   using (auth.uid() = owner or public.is_published(owner));
-create policy "placements upsert" on public.placements for insert with check (auth.uid() = owner);
+-- `k` is a frame key, "gx,gz:i". Unconstrained text let a script insert
+-- millions of rows; bound the shape and the count.
+create policy "placements upsert" on public.placements for insert with check (
+  auth.uid() = owner
+  and k ~ '^-?[0-9]{1,7},-?[0-9]{1,7}:[0-9]{1,2}$'
+  and (select count(*) from public.placements p where p.owner = auth.uid()) < 2000
+);
 create policy "placements update" on public.placements for update using (auth.uid() = owner) with check (auth.uid() = owner);
 create policy "placements delete" on public.placements for delete using (auth.uid() = owner);
 
--- ————— storage: one public-read bucket, owner-scoped writes —————
--- Note what this does and does not protect. The bucket stays public-read
--- because a guest viewing a published gallery has no session to sign URLs
--- with, and signing them server-side would mean running a server.
+-- ————— storage —————
+-- Read this before changing any of it; the two endpoints behave differently.
 --
--- With the policies above, nobody can *enumerate* your uploads: the rows that
--- hold the paths are invisible unless you have published. But an object path
--- is a UUID, and anyone holding that exact string can still fetch the image
--- whether you have published or not. That is unguessability, not access
--- control. For genuinely private images you want a private bucket and signed
--- URLs, which needs an Edge Function to sign for guests.
-insert into storage.buckets (id, name, public)
-  values ('loans', 'loans', true)
-  on conflict (id) do update set public = true;
+--   /storage/v1/object/public/loans/<path>   public bucket, NO auth, RLS bypassed
+--   /storage/v1/object/list/loans            governed by SELECT on storage.objects
+--   /storage/v1/object/loans/<path>          governed by SELECT on storage.objects
+--
+-- The bucket must stay public so a guest viewing a published gallery can fetch
+-- images — they have no session to sign URLs with, and signing server-side
+-- would mean running a server.
+--
+-- But SELECT was previously `using (bucket_id = 'loans')`, unconditional, which
+-- governs the *list* endpoint. Anyone with the publishable key could enumerate
+-- every owner folder and every object path, then fetch each one — published or
+-- not. Scoping SELECT to the owner closes listing outright while leaving the
+-- public fetch path (which never consults RLS) working for guests.
+--
+-- What remains, stated accurately: an object path is a UUID, and anyone holding
+-- that exact string can still fetch it. Paths can no longer be discovered, only
+-- shared. That is unguessability, not access control. Genuinely private images
+-- need a private bucket plus an Edge Function signing URLs for guests.
+insert into storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
+  values ('loans', 'loans', true, 12582912,          -- 12 MiB
+          array['image/jpeg','image/png','image/webp'])
+  on conflict (id) do update set
+    public = true,
+    file_size_limit = excluded.file_size_limit,
+    allowed_mime_types = excluded.allowed_mime_types;
 
-drop policy if exists "loans public read" on storage.objects;
+drop policy if exists "loans public read" on storage.objects;   -- the old open one
+drop policy if exists "loans read"        on storage.objects;
 drop policy if exists "loans own write"   on storage.objects;
 drop policy if exists "loans own delete"  on storage.objects;
-create policy "loans public read" on storage.objects
-  for select using (bucket_id = 'loans');
+
+-- Owner-only. This is what stops enumeration.
+create policy "loans read" on storage.objects
+  for select using (bucket_id = 'loans' and (storage.foldername(name))[1] = auth.uid()::text);
 create policy "loans own write" on storage.objects
   for insert with check (bucket_id = 'loans' and (storage.foldername(name))[1] = auth.uid()::text);
 create policy "loans own delete" on storage.objects

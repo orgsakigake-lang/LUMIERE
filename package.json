@@ -10,7 +10,8 @@
     "dev": "node build.mjs --watch",
     "archive": "node build.mjs --archive",
     "test": "node build.mjs --archive && playwright test",
-    "test:fast": "playwright test -g \"boot|cloud layer\""
+    "test:fast": "playwright test -g \"boot|cloud layer\"",
+    "verify:sql": "./tools/verify-sql.sh"
   },
   "devDependencies": {
     "@playwright/test": "^1.56.0",
