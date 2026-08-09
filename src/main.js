@@ -1340,6 +1340,7 @@ async function bootCloud(){
 
 /* ————— frame loop ————— */
 let lastT = 0, frameCount = 0, fpsAcc = 0, fpsAvg = 0;
+let stalled = false, badRuns = 0, goodRuns = 0;
 let probeRequest = null, rafId = 0, forceDt = null;
 const probeBuf = new Uint8Array(32*32*4);
 
@@ -1367,17 +1368,36 @@ function frame(t){
     return;
   }
 
-  const dt = forceDt !== null ? forceDt : Math.min(50, t - lastT) / 1000;
+  const rawDt = t - lastT;
+  const dt = forceDt !== null ? forceDt : Math.min(50, rawDt) / 1000;
   lastT = t;
+  /* A frame that took longer than this is a stall, not a slow machine: a tab
+     waking, the compositor stealing the GPU, a long task elsewhere. It used to
+     be counted as evidence — and because dt is clamped to 50ms, one such frame
+     reads as exactly 20fps, which is the shape of input most likely to trip a
+     downgrade that could never be undone. Windows containing one are discarded. */
+  if (forceDt === null && rawDt > 120) stalled = true;
   frameCount++; fpsAcc += dt;
   if (fpsAcc > 0.5){
     fpsAvg = frameCount / fpsAcc; frameCount = 0; fpsAcc = 0;
-    /* trade pixels for smoothness on machines that need it */
-    if (entered && forceDt === null && !PERF.pinned && fpsAvg < 42 && PERF.q > 0 &&
-        t - PERF.lastDrop > 5000){
-      PERF.q--; PERF.lastDrop = t;
-      trace(`[perf] frame rate ${fpsAvg.toFixed(0)} — easing quality to tier ${PERF.q}`);
-    }
+    const judge = entered && forceDt === null && !PERF.pinned && !stalled;
+    stalled = false;
+    if (judge){
+      /* Hysteresis in both directions, and a run of agreeing windows before
+         either move: each change reallocates the post buffers, so a mechanism
+         meant to prevent hitches must not be a source of them. */
+      if (fpsAvg < 42){ badRuns++; goodRuns = 0; }
+      else if (fpsAvg > 56){ goodRuns++; badRuns = 0; }
+      else { badRuns = 0; goodRuns = 0; }
+      const settled = t - PERF.lastChange > 5000;
+      if (badRuns >= 2 && PERF.q > 0 && settled){
+        PERF.q--; PERF.lastChange = t; badRuns = 0;
+        trace(`[perf] ${fpsAvg.toFixed(0)}fps — easing quality to tier ${PERF.q}`);
+      } else if (goodRuns >= 6 && PERF.q < 2 && settled){
+        PERF.q++; PERF.lastChange = t; goodRuns = 0;
+        trace(`[perf] ${fpsAvg.toFixed(0)}fps — restoring quality to tier ${PERF.q}`);
+      }
+    } else { badRuns = 0; goodRuns = 0; }
   }
 
   if (entered) step(dt);

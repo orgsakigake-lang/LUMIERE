@@ -6,10 +6,15 @@
      1  DPR 1.25, 2× MSAA, reflections on
      0  DPR 1.0, no MSAA, opaque floor
 
-   Known limitation: it only ever ratchets down. One transient hitch —
-   a browser tab waking, a background tab stealing the GPU — degrades the
-   rest of the session with no way back. Making it bidirectional with
-   hysteresis is queued renderer work.
+   Bidirectional, with hysteresis and a run of agreeing half-second windows
+   before either move — each change reallocates the post buffers, so the
+   mechanism meant to prevent hitches must not become a source of them.
+
+   It used to ratchet only downward, and it was trivially fooled: dt is
+   clamped to 50ms, so the single long frame you get when a tab wakes reads
+   as exactly 20fps and cost you the rest of the session with no way back.
+   The frame loop now discards any window containing a frame over 120ms as a
+   stall rather than evidence of a slow machine.
    ═══════════════════════════════════════════════════════════════════ */
 import { DPR_CAP } from '../config.js';
 
@@ -18,7 +23,7 @@ import { DPR_CAP } from '../config.js';
    software rasteriser, and nothing outside the two renderer tests cares. */
 const pinned = /[?&]q=([0-2])\b/.exec(location.search);
 
-export const PERF = { q: pinned ? +pinned[1] : 2, lastDrop: 0, pinned: !!pinned };
+export const PERF = { q: pinned ? +pinned[1] : 2, lastChange: 0, pinned: !!pinned };
 
 export function dprCap(){
   return PERF.q === 2 ? DPR_CAP : PERF.q === 1 ? 1.25 : 1.0;
