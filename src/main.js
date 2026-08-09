@@ -153,8 +153,6 @@ function initPrograms(){
    ceiling and the dark end of the histogram without flooding the floor, which
    is exactly what real bounce does. */
 const AMB_BASE = [0.090, 0.081, 0.067];
-/* 4 floats per light, MAX_LIGHTS of them. */
-const LPOS = new Float32Array(MAX_LIGHTS*4), LDIR = new Float32Array(MAX_LIGHTS*4), LCOL = new Float32Array(MAX_LIGHTS*4);
 /* Lamps off is not lights out. The switch used to drop every light but the sun,
    which left 95% of the night frame under 9/255 — and uniform ambient could not
    rescue it: four times the ambient moved the median from 6 to 10 and only
@@ -165,8 +163,19 @@ const LPOS = new Float32Array(MAX_LIGHTS*4), LDIR = new Float32Array(MAX_LIGHTS*
    and leaves the room's fill burning at a candle's share, shifted much warmer
    than the electric fixture it replaces. */
 const CANDLE = [0.55, 0.399, 0.234];
-/* one packer for both passes */
-function packLights(r, ox, oz){
+/* Lights are packed into view space, so the result is good for exactly one
+   frame — but it was being recomputed for every pass that drew the room, up to
+   68 times a frame for at most 25 distinct answers. Each room now keeps its own
+   packed arrays and a serial; the frame loop bumps the serial once. */
+let packSerial = 1;
+function packLights(r, ox, oz, force){
+  if (!force && r.packSerial === packSerial) return r.packN;
+  if (!r.lpos){
+    r.lpos = new Float32Array(MAX_LIGHTS*4);
+    r.ldir = new Float32Array(MAX_LIGHTS*4);
+    r.lcol = new Float32Array(MAX_LIGHTS*4);
+  }
+  const LPOS = r.lpos, LDIR = r.ldir, LCOL = r.lcol;
   const list = r.lights; let n = 0;
   for (let i = 0; i < list.length && n < MAX_LIGHTS; i++){
     const l = list[i];
@@ -188,6 +197,7 @@ function packLights(r, ox, oz){
     LCOL[b+3] = l.inner;
     n++;
   }
+  if (!force){ r.packSerial = packSerial; r.packN = n; }
   return n;
 }
 
@@ -1350,6 +1360,16 @@ function frame(t){
   mulM(M_PV, M_P, M_V);
   extractPlanes(M_PV);
 
+  /* Visibility, once. The same room box was tested against the frustum in
+     seven separate loops — architecture, reflections, art, shadows, flames,
+     shafts, motes — for an answer that cannot change within a frame. Rooms in
+     nearRooms and midRooms are the same objects, so one pass settles both. */
+  packSerial++;
+  for (let i = 0; i < nearRooms.length; i++){
+    const e = nearRooms[i];
+    e.vis = boxVisible(e.ox, H/2, e.oz, HS, H/2, HS);
+  }
+
   gl.useProgram(progArch);
   gl.uniformMatrix4fv(uArch.p, false, M_P);
   gl.uniform1f(uArch.sig, sigCur);
@@ -1367,17 +1387,17 @@ function frame(t){
       fogCur[0]+m[0]*.5, fogCur[1]+m[1]*.5, fogCur[2]+m[2]*.5);
     const nl = packLights(r, ox, oz);
     gl.uniform1i(uArch.nl, nl);
-    gl.uniform4fv(uArch.lpos, LPOS);
-    gl.uniform4fv(uArch.ldir, LDIR);
-    gl.uniform4fv(uArch.lcol, LCOL);
+    gl.uniform4fv(uArch.lpos, r.lpos);
+    gl.uniform4fv(uArch.ldir, r.ldir);
+    gl.uniform4fv(uArch.lcol, r.lcol);
     mulT(M_MV, M_V, ox, 0, oz);
     gl.uniformMatrix4fv(uArch.mv, false, M_MV);
   }
   /* pass A — opaque architecture, floors withheld */
   for (let ri = 0; ri < nearRooms.length; ri++){
-      const { r, ox, oz } = nearRooms[ri];
+      const { r, ox, oz, vis } = nearRooms[ri];
       if (!r.vao) continue;
-      if (!boxVisible(ox, H/2, oz, HS, H/2, HS)) continue;
+      if (!vis) continue;
       archRoomUniforms(r, ox, oz);
       gl.bindVertexArray(r.vao);
       gl.drawElements(gl.TRIANGLES, r.floorStart, gl.UNSIGNED_SHORT, 0);
@@ -1397,16 +1417,16 @@ function frame(t){
     gl.uniform1f(uPaint.uAT, 0);
     gl.bindVertexArray(quadVAO);
     for (let ri = 0; ri < midRooms.length; ri++){
-      const { r, ox, oz } = midRooms[ri];
+      const { r, ox, oz, vis } = midRooms[ri];
       if (!r.vao) continue;
-      if (!boxVisible(ox, H/2, oz, HS, H/2, HS)) continue;
+      if (!vis) continue;
       const m = r.mood;
       gl.uniform3f(uPaint.uFog, fogCur[0]+m[0]*.5, fogCur[1]+m[1]*.5, fogCur[2]+m[2]*.5);
       const nl = packLights(r, ox, oz);
       gl.uniform1i(uPaint.uNL, nl);
-      gl.uniform4fv(uPaint.uLPos, LPOS);
-      gl.uniform4fv(uPaint.uLDir, LDIR);
-      gl.uniform4fv(uPaint.uLCol, LCOL);
+      gl.uniform4fv(uPaint.uLPos, r.lpos);
+      gl.uniform4fv(uPaint.uLDir, r.ldir);
+      gl.uniform4fv(uPaint.uLCol, r.lcol);
       mulT(M_MV, M_V, ox, 0, oz);
       gl.uniformMatrix4fv(uPaint.uMV, false, M_MV);
       for (const A of r.artworks){
@@ -1463,9 +1483,9 @@ function frame(t){
       gl.uniform1f(uFlame.uMY, 1);
       gl.uniform3f(uFlame.uCol, 0.34, 0.21, 0.09);
       for (let ri = 0; ri < midRooms.length; ri++){
-        const { r, ox, oz } = midRooms[ri];
+        const { r, ox, oz, vis } = midRooms[ri];
         if (!r.nFlames || !r.flameVAO) continue;
-        if (!boxVisible(ox, H/2, oz, HS, H/2, HS)) continue;
+        if (!vis) continue;
         mulT(M_MV, M_V, ox, 0, oz);
         gl.uniformMatrix4fv(uFlame.uMV, false, M_MV);
         gl.bindVertexArray(r.flameVAO);
@@ -1484,9 +1504,9 @@ function frame(t){
   gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
   gl.uniform1f(uArch.alpha, PERF.q >= 1 ? 0.87 : 1.0);
   for (let ri = 0; ri < nearRooms.length; ri++){
-      const { r, ox, oz } = nearRooms[ri];
+      const { r, ox, oz, vis } = nearRooms[ri];
       if (!r.vao) continue;
-      if (!boxVisible(ox, H/2, oz, HS, H/2, HS)) continue;
+      if (!vis) continue;
       archRoomUniforms(r, ox, oz);
       gl.bindVertexArray(r.vao);
       gl.drawElements(gl.TRIANGLES, r.nIdx - r.floorStart, gl.UNSIGNED_SHORT, r.floorStart * 2);
@@ -1507,9 +1527,9 @@ function frame(t){
   gl.uniform1f(uPaint.uAT, 0);
   gl.bindVertexArray(quadVAO);
   for (let ri = 0; ri < midRooms.length; ri++){
-      const { r, ox, oz } = midRooms[ri];
+      const { r, ox, oz, vis } = midRooms[ri];
       if (!r.vao) continue;
-      if (!boxVisible(ox, H/2, oz, HS, H/2, HS)) continue;
+      if (!vis) continue;
       let any = (WIN.on && r.windows.length > 0) || !!r.pedestal;
       if (!any) for (const A of r.artworks) if (A.tex || A.ptex || A.override){ any = true; break; }
       if (!any) continue;
@@ -1517,9 +1537,9 @@ function frame(t){
       gl.uniform3f(uPaint.uFog, fogCur[0]+m[0]*.5, fogCur[1]+m[1]*.5, fogCur[2]+m[2]*.5);
       const nl = packLights(r, ox, oz);
       gl.uniform1i(uPaint.uNL, nl);
-      gl.uniform4fv(uPaint.uLPos, LPOS);
-      gl.uniform4fv(uPaint.uLDir, LDIR);
-      gl.uniform4fv(uPaint.uLCol, LCOL);
+      gl.uniform4fv(uPaint.uLPos, r.lpos);
+      gl.uniform4fv(uPaint.uLDir, r.ldir);
+      gl.uniform4fv(uPaint.uLCol, r.lcol);
       mulT(M_MV, M_V, ox, 0, oz);
       gl.uniformMatrix4fv(uPaint.uMV, false, M_MV);
       /* contact shadows first — they ground the frames and furniture */
@@ -1650,9 +1670,9 @@ function frame(t){
   /* candle flames on the chandeliers */
   if (lightsOn){
     for (let ri = 0; ri < midRooms.length; ri++){
-      const { r, ox, oz } = midRooms[ri];
+      const { r, ox, oz, vis } = midRooms[ri];
       if (!r.nFlames || !r.flameVAO) continue;
-      if (!boxVisible(ox, H/2, oz, HS, H/2, HS)) continue;
+      if (!vis) continue;
       if (!addOn){ gl.blendFunc(gl.ONE, gl.ONE); addOn = true; }
       gl.useProgram(progFlame);
       gl.uniformMatrix4fv(uFlame.uP, false, M_P);
@@ -1666,9 +1686,9 @@ function frame(t){
     }
   }
   for (let ri = 0; ri < midRooms.length; ri++){
-      const { r, ox, oz } = midRooms[ri];
+      const { r, ox, oz, vis } = midRooms[ri];
       if (WIN.on || !r.shaft || !r.vao) continue;
-      if (!boxVisible(ox, H/2, oz, HS, H/2, HS)) continue;
+      if (!vis) continue;
       if (!addOn){
         gl.blendFunc(gl.ONE, gl.ONE);
         addOn = true;
@@ -1850,9 +1870,9 @@ if (DBG_FULL) Object.assign(window.DBG, {
     const r = rooms.get(roomKey(player.gx, player.gz));
     if (!r) return 'no room';
     return { own: r.ownLights.length, final: r.lights ? r.lights.length : null,
-             packed: packLights(r, 0, 0),
+             packed: packLights(r, 0, 0, true),   // force: the frame cache is keyed to the real offsets
              sample: r.lights && r.lights[0] ? { p: r.lights[0].p, col: r.lights[0].col } : null,
-             lpos0: [+LPOS[0].toFixed(2), +LPOS[1].toFixed(2), +LPOS[2].toFixed(2), +LPOS[3].toFixed(4)] };
+             lpos0: [+r.lpos[0].toFixed(2), +r.lpos[1].toFixed(2), +r.lpos[2].toFixed(2), +r.lpos[3].toFixed(4)] };
   },
   findSpecial(type = 1, maxR = 48){    // 1 vermilion · 2 archive · 3 dark room
     for (let rad = 1; rad <= maxR; rad++)
