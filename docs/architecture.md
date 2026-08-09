@@ -130,6 +130,37 @@ Judge a theme with mean chroma over the frame — it catches a cast from the lam
 from a bounced wall, or from the grade, all at once. Salon measures 14.0 and
 graphite 2.9, and a test holds the ratio.
 
+## What gets drawn
+
+Visibility is computed once per frame, for all seven passes, in
+`computeVisibility()`. Two facts, both required:
+
+- **Portal reachability.** The world is a portal graph stored in `r.doors`. A
+  flood from the visitor's room intersects a clip-space rectangle at every open
+  doorway and stops when it closes. This cut rooms drawn from 13 to 2–5.
+- **The view frustum**, unchanged. These are independent — the first version of
+  the portal flood *replaced* the frustum test and ended up keeping seventeen
+  rooms where frustum culling kept thirteen, because a doorway behind the camera
+  has all four corners behind the near plane and the conservative fallback let
+  everything past it through. `portalRect` now distinguishes "straddles the near
+  plane" (keep the parent rect) from "faces away entirely" (not a way in).
+
+**The reflection pass uses `visR`, not `vis`,** and must keep doing so. A
+doorway bounds where a room can be seen *directly*; its mirror image lands in
+the floor at your feet, which the aperture says nothing about. `visR` is a
+frustum test against the room box mirrored below the floor.
+
+### Proving a rendering change is invisible
+
+`DBG.freeze(t)` pins animation time — flames, moon shafts, motes, and the grain,
+which runs through a time hook on the post stack. Without it no two frames are
+identical and a pixel comparison silently measures noise: the first portal-cull
+A/B reported a difference at every viewpoint and there was none.
+
+Two more things a comparison needs: run it in a **solo theme**, so a painting
+finishing mid-comparison is not mistaken for a room going missing, and use
+`DBG.culling(mode)` to force each strategy in turn.
+
 ## The lighting model
 
 Read this before changing any light. It is the part of the codebase that has
