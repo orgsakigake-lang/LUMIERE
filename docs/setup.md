@@ -164,11 +164,23 @@ For keeping a copy alive permanently and independently of any of this, see
 The gallery is built for works on paper, and a few of its habits are worth
 knowing.
 
-**Nothing is cropped, ever.** Hang a portrait drawing in a landscape frame and
-it is *mounted*, not cut: the sheet keeps its own proportions on cream rag board
-and the mount fills the rest. A matched aspect gets a slim mount; a mismatched
-one gets generous margins on two sides. So hang whatever you like wherever you
-like — but a frame roughly the shape of your sheet gives it the most wall.
+**Nothing is cropped unless you say so.** Hang a portrait drawing in a landscape
+frame and it is *mounted*, not cut: the sheet keeps its own proportions on cream
+rag board and the mount fills the rest. A matched aspect gets a slim mount; a
+mismatched one gets generous margins on two sides. So hang whatever you like
+wherever you like — but a frame roughly the shape of your sheet gives it the
+most wall.
+
+**The review sheet after each upload** is where you change that. Every work gets
+one row: mounted, or full bleed — filling the frame edge to edge and losing what
+does not fit. Drawings arrive pre-set to mounted, because cropping a sheet of
+paper damages it; photographs arrive set to full bleed when the nearest frame
+shape is close enough that filling crops almost nothing. Fix any row, or set the
+whole batch with one button. The choice is remembered per work.
+
+*Cloud caveat:* the fill choice lives in this browser's local storage, not in
+the `uploads` table, so it does not yet travel to another device with your
+collection. The works and their placements do.
 
 **Scans beat photographs.** Line art is stored lossless at 2048 px, because JPEG
 ringing gathers exactly around the hard strokes a pencil or pen makes.

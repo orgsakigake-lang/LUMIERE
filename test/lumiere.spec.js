@@ -563,6 +563,31 @@ test.describe.serial('inside the gallery', () => {
     await page.evaluate(() => window.DBG.theme('salon'));
   });
 
+  test('the upload review pre-fills how each work meets its frame', async () => {
+    /* Forty uploads should not be forty decisions, so the prompt arrives with
+       an answer already in it. A sheet of paper is a whole object and is always
+       mounted — cropping one damages it. Anything else fills the frame when the
+       nearest frame shape is close enough that filling crops almost nothing,
+       and is mounted when it would cut in deep. */
+    const cases = await page.evaluate(() => [
+      { what: 'portrait drawing',   r: window.DBG.presentation(1500, 2000, true) },
+      { what: 'landscape drawing',  r: window.DBG.presentation(2200, 1400, true) },
+      { what: '3:2 photograph',     r: window.DBG.presentation(3000, 2000, false) },
+      { what: 'square photograph',  r: window.DBG.presentation(2000, 2000, false) },
+      { what: 'panorama',           r: window.DBG.presentation(6000, 1200, false) },
+    ]);
+    const by = Object.fromEntries(cases.map((c) => [c.what, c.r]));
+    console.log('    ' + cases.map((c) => `${c.what}: ${c.r.orientation}/${c.r.fill}`).join(' · '));
+
+    expect(by['portrait drawing']).toEqual({ orientation: 'portrait', fill: 'mount' });
+    expect(by['landscape drawing']).toEqual({ orientation: 'landscape', fill: 'mount' });
+    // a drawing is mounted whatever its shape; a photograph is judged on fit
+    expect(by['3:2 photograph'].fill).toBe('bleed');
+    expect(by['square photograph'].fill).toBe('bleed');   // S frames are square
+    expect(by['panorama'].fill).toBe('mount');            // 5:1 would lose half of it
+    expect(by['panorama'].orientation).toBe('landscape');
+  });
+
   test('portal culling draws fewer rooms and changes no pixels', async () => {
     /* The museum is a portal graph and had stored it in r.doors since the world
        generator was written, without using it: frustum culling alone kept every

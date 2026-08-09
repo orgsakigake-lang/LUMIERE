@@ -666,7 +666,7 @@ async function runAcquire(A, bw, bh, year){
        been perverse to take a drawing down off the wall uncropped and then
        hand the visitor a cropped copy of it. */
     const bmp = loanRec.bmp || (loanRec.bmp = await createImageBitmap(loanRec.blob));
-    mountWork(acqCtx, bmp, bw, bh);
+    mountWork(acqCtx, bmp, bw, bh, fillOf(loanRec.id));
   } else {
     const rnd = mulberry32(A.seed);
     const gen = ALGOS[A.algo % ALGOS.length](acqCtx, bw, bh, rnd, jitterPal(A.pal, rnd));
@@ -733,6 +733,7 @@ const curator = {
   uploads: new Map(),        // id → {id, name, blob, url, bmp}
   placements: new Map(),     // "gx,gz:i" → uploadId
   overrides: new Map(),      // key → {tex, r, A}
+  fills: new Map(),          // upload id → 'mount' | 'bleed'
   applying: new Set(),
   db: null, mode: 'memory',
 };
@@ -750,6 +751,7 @@ function idbOpen(){
 }
 async function curatorBoot(){
   curator.db = await idbOpen();
+  loadFills();
   curator.mode = curator.db ? 'idb' : 'memory';
   /* when a cloud session (or a guest visit) will drive placements,
      the local ones stay parked — the cloud is the source of truth */
@@ -808,7 +810,8 @@ function looksLikeLineArt(bmp){
   }
   return pale/(n*n) > 0.45 && colourful/(n*n) < 0.10;
 }
-async function encodeUpload(bmp){
+async function encodeUpload(bmp, lineArt){
+  if (lineArt === undefined) lineArt = looksLikeLineArt(bmp);
   const long = Math.max(bmp.width, bmp.height);
   const sc = Math.min(1, UPLOAD_LONG/long);
   const cw = Math.max(1, Math.round(bmp.width*sc)), ch = Math.max(1, Math.round(bmp.height*sc));
@@ -816,30 +819,157 @@ async function encodeUpload(bmp){
   const g = cc.getContext('2d');
   g.imageSmoothingQuality = 'high';
   g.drawImage(bmp, 0, 0, cw, ch);
-  if (looksLikeLineArt(bmp)){
+  if (lineArt){
     const png = await new Promise(r => cc.toBlob(r, 'image/png'));
     if (png && png.size <= PNG_CEILING) return png;
     trace(`[curator] png ${(png ? png.size/1048576 : 0).toFixed(1)}MB over ceiling — jpeg instead`);
   }
   return new Promise(r => cc.toBlob(r, 'image/jpeg', 0.94));
 }
+/* ————— how each work meets its frame —————
+   Two honest answers, and which one is right depends on the work rather than
+   on the gallery. A sheet of paper is a whole object: crop it and you have
+   damaged it, so it is mounted at its own proportions. A photograph or a
+   screen-born image is already a crop of something larger, so filling the
+   frame costs it nothing it minds losing.
+
+   The prompt asks, but it asks with an answer already filled in, because forty
+   uploads should not be forty decisions. Line art is always mounted — that is
+   the whole point of the works-on-paper treatment. Anything else fills the
+   frame when the nearest frame shape is close enough that filling it crops
+   almost nothing, and is mounted when it would cut in deep. */
+const FRAME_ASPECTS = [1.87/1.40, 1.14/1.52, 1.35/1.35, 2.24/1.40];   // L P S W
+const BLEED_TOLERANCE = 0.08;
+function suggestFill(w, h, lineArt){
+  if (lineArt) return 'mount';
+  const a = w / h;
+  let closest = Infinity;
+  for (const fa of FRAME_ASPECTS){
+    const off = Math.max(a/fa, fa/a);
+    if (off < closest) closest = off;
+  }
+  return (1 - 1/closest) < BLEED_TOLERANCE ? 'bleed' : 'mount';
+}
+function orientationOf(w, h){
+  const a = w / h;
+  return a > 1.15 ? 'landscape' : a < 0.87 ? 'portrait' : 'square';
+}
+/** How a work fills its frame. Kept beside the collection rather than in it,
+ *  so it survives without a schema change on the cloud `uploads` table. */
+function loadFills(){
+  if (!storageOK) return;
+  try {
+    for (const [id, f] of JSON.parse(localStorage.getItem('lumiere_fills') || '[]'))
+      curator.fills.set(id, f);
+  } catch(e){}
+}
+function saveFills(){
+  if (!storageOK) return;
+  try { localStorage.setItem('lumiere_fills', JSON.stringify([...curator.fills])); } catch(e){}
+}
+const fillOf = (id) => curator.fills.get(id) || 'mount';
+
+/** Re-draw anything already hanging whose fill just changed. The placement
+ *  stays; only the texture is wrong, so drop it and let syncArtJobs rebuild. */
+function refreshHung(ids){
+  let touched = false;
+  for (const [k, o] of [...curator.overrides]){
+    if (!ids.has(curator.placements.get(k))) continue;
+    gl.deleteTexture(o.tex);
+    o.A.override = null;
+    curator.overrides.delete(k);
+    touched = true;
+  }
+  if (touched) syncArtJobs();
+}
+
+/** The review sheet: one screen for the whole batch, each row pre-filled. */
+function curatorReview(recs){
+  const box = document.getElementById('cur-review');
+  if (!box) return;
+  if (!recs.length){ box.hidden = true; box.textContent = ''; return; }
+  box.textContent = ''; box.hidden = false;
+
+  const head = document.createElement('div');
+  head.className = 'rv-head';
+  head.textContent = `Added ${recs.length} work${recs.length === 1 ? '' : 's'} — how should ${recs.length === 1 ? 'it' : 'they'} meet the frame?`;
+  const list = document.createElement('div');
+  list.className = 'rv-list';
+
+  const rows = [];
+  for (const rec of recs){
+    const row = document.createElement('div');
+    row.className = 'rv-row';
+    const im = document.createElement('img'); im.src = rec.url; im.alt = '';
+    const nm = document.createElement('div'); nm.className = 'rv-nm';
+    nm.textContent = rec.name;
+    const or = document.createElement('div'); or.className = 'rv-or';
+    or.textContent = rec.orientation;
+    const seg = document.createElement('div'); seg.className = 'rv-seg';
+    const mk = (mode, label) => {
+      const b = document.createElement('button');
+      b.type = 'button'; b.className = 'rv-opt'; b.textContent = label;
+      b.addEventListener('click', () => { curator.fills.set(rec.id, mode); paint(); });
+      return b;
+    };
+    const bMount = mk('mount', 'Mounted'), bBleed = mk('bleed', 'Full bleed');
+    seg.append(bMount, bBleed);
+    row.append(im, nm, or, seg);
+    list.append(row);
+    rows.push({ rec, bMount, bBleed });
+  }
+  function paint(){
+    for (const { rec, bMount, bBleed } of rows){
+      const f = fillOf(rec.id);
+      bMount.setAttribute('aria-pressed', String(f === 'mount'));
+      bBleed.setAttribute('aria-pressed', String(f === 'bleed'));
+    }
+  }
+
+  const foot = document.createElement('div');
+  foot.className = 'rv-foot';
+  const all = (mode, label) => {
+    const b = document.createElement('button');
+    b.type = 'button'; b.className = 'btn'; b.textContent = label;
+    b.addEventListener('click', () => { for (const r of recs) curator.fills.set(r.id, mode); paint(); });
+    return b;
+  };
+  const done = document.createElement('button');
+  done.type = 'button'; done.className = 'btn'; done.textContent = 'Done';
+  done.addEventListener('click', () => {
+    saveFills();
+    refreshHung(new Set(recs.map(r => r.id)));
+    box.hidden = true; box.textContent = '';
+    curatorGrid();
+  });
+  foot.append(all('mount', 'All mounted'), all('bleed', 'All full bleed'), done);
+
+  box.append(head, list, foot);
+  paint();
+}
+
 async function curatorAddFiles(files){
+  const added = [];
   for (const f of files){
     if (!f.type.startsWith('image/')) continue;
     try {
       const bmp = await createImageBitmap(f);
-      const blob = await encodeUpload(bmp);
+      const lineArt = looksLikeLineArt(bmp);
+      const shape = { w: bmp.width, h: bmp.height, lineArt };
+      const blob = await encodeUpload(bmp, lineArt);
       bmp.close();
       if (!blob) continue;
       const name = f.name.replace(/\.[^.]+$/, '');
       if (cloud.on && cloud.sess){
         const { id, path } = await cloudUploadBlob(name, blob);
-        curator.uploads.set(id, { id, name, blob, path, cloudRec: true,
-                                  url: URL.createObjectURL(blob) });
+        const rec = { id, name, blob, path, cloudRec: true, url: URL.createObjectURL(blob) };
+        curator.uploads.set(id, rec);
+        noteShape(rec, shape); added.push(rec);
       } else {
         const id = 'u' + Date.now().toString(36) + Math.floor(Math.random()*1e6).toString(36);
         const rec = { id, name, blob, url: URL.createObjectURL(blob) };
         curator.uploads.set(id, rec);
+        noteShape(rec, shape); added.push(rec);
         if (curator.db){
           try { curator.db.transaction('images', 'readwrite').objectStore('images')
                   .put({ id, name: rec.name, blob }); } catch(e){}
@@ -848,6 +978,14 @@ async function curatorAddFiles(files){
     } catch(e){ console.warn('[curator] could not add image', f.name, e); flashHint('that image could not be added'); }
   }
   curatorGrid();
+  curatorReview(added);
+}
+/** Record what an upload's own proportions imply, and pre-fill its answer. */
+function noteShape(rec, shape){
+  rec.orientation = orientationOf(shape.w, shape.h);
+  if (!curator.fills.has(rec.id))
+    curator.fills.set(rec.id, suggestFill(shape.w, shape.h, shape.lineArt));
+  saveFills();
 }
 function curatorRemove(id){
   const rec = curator.uploads.get(id);
@@ -861,6 +999,7 @@ function curatorRemove(id){
     try { curator.db.transaction('images', 'readwrite').objectStore('images').delete(id); } catch(e){}
   }
   if (curator.sel === id) curator.sel = null;
+  curator.fills.delete(id); saveFills();
   savePlacements();
   curatorGrid();
 }
@@ -984,7 +1123,16 @@ function mountRect(sw, sh, tw, th){
   return { tw, th, m, mb, dw, dh,
            dx: Math.round((tw - dw)/2), dy: Math.round(m + (availH - dh)/2) };
 }
-function mountWork(g, bmp, tw, th){
+function mountWork(g, bmp, tw, th, fill){
+  if (fill === 'bleed'){
+    /* Edge to edge, and whatever does not fit is lost. Right for a photograph
+       or a screen-born image, where the frame is a crop and not a mount; wrong
+       for a sheet of paper, which is why it is never the default for one. */
+    const s = Math.max(tw/bmp.width, th/bmp.height);
+    const dw = bmp.width*s, dh = bmp.height*s;
+    g.drawImage(bmp, (tw-dw)/2, (th-dh)/2, dw, dh);
+    return;
+  }
   const { dx, dy, dw, dh } = mountRect(bmp.width, bmp.height, tw, th);
   g.fillStyle = MOUNT.face; g.fillRect(0, 0, tw, th);
   /* The bevel: rag board is cut at 45°, so the exposed core is a bright line on
@@ -1010,7 +1158,7 @@ async function applyPlacement(r, A, i){
     const [tw, th] = LOAN_SIZES[A.asp];
     const cc = document.createElement('canvas'); cc.width = tw; cc.height = th;
     const g = cc.getContext('2d');
-    mountWork(g, bmp, tw, th);
+    mountWork(g, bmp, tw, th, fillOf(rec.id));
     const tex = gl.createTexture();
     gl.bindTexture(gl.TEXTURE_2D, tex);
     const levels = Math.floor(Math.log2(Math.max(tw, th))) + 1;
@@ -2213,6 +2361,10 @@ if (DBG_FULL) Object.assign(window.DBG, {
   },
   /** Whether an image would be stored lossless. Takes a canvas or a bitmap. */
   uploadKind(src){ return looksLikeLineArt(src) ? 'png' : 'jpeg'; },
+  /** What the upload review would pre-fill for a work of this shape. */
+  presentation(w, h, lineArt = false){
+    return { orientation: orientationOf(w, h), fill: suggestFill(w, h, lineArt) };
+  },
   /** How many rooms each strategy keeps, and a way to force one of them.
    *  Portal culling must never change a pixel, only how many rooms are asked
    *  to produce it — DBG.culling('frustum') is how that gets proven. */

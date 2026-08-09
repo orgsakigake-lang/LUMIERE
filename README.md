@@ -112,6 +112,14 @@ The gallery accepts *private loans* — your own images:
   JPEG ringing gathers around exactly the hard strokes a pencil or pen makes;
   photographs, which gain nothing from that and would cost tens of megabytes,
   keep a JPEG at the same resolution.
+- **A review sheet appears after each batch**, asking how the new works should
+  meet their frames — **mounted** (the sheet whole at its own proportions on rag
+  board, never cropped) or **full bleed** (edge to edge, cropping what will not
+  fit). Every row arrives with an answer already filled in, so forty uploads are
+  not forty decisions: a drawing is always mounted, and a photograph fills the
+  frame when the nearest frame shape is close enough that filling costs it
+  almost nothing. Change any row, or set the whole batch at once. The choice is
+  remembered and applies wherever the work hangs.
 - The grid shows the collection — click to select, the cross to remove.
 - Walk to *any* frame in the infinite gallery and press **H** to hang the
   selected work there. It is **mounted, not cropped**: the sheet keeps its own
