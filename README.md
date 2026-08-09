@@ -20,7 +20,7 @@ Cloud mode (accounts, private loans, shareable galleries) talks to Supabase. Cle
 npm install
 npm run dev        # esbuild watch + a static server on localhost:8000
 npm run build      # index.html, minified — what GitHub Pages serves
-npm run archive    # archive/index.html — no backend, under 100 KiB
+npm run archive    # archive/index.html — no backend, for permanent hosting
 npm test           # Playwright suite over the DBG surface
 ```
 
@@ -29,7 +29,8 @@ Edge, or Firefox.
 
 ## Docs
 
-- [docs/architecture.md](docs/architecture.md) — how the source is laid out, the rules that hold it together, and how to extract more from `main.js`
+- [docs/setup.md](docs/setup.md) — **start here**: clone to a hosted gallery of your own, and how to prove the privacy actually applied
+- [docs/architecture.md](docs/architecture.md) — how the source is laid out, the lighting model, private loans, and the rules that hold it together
 - [docs/permanence.md](docs/permanence.md) — keeping the gallery online forever for nothing: the archive build, the 100 KiB free-upload threshold, and what breaks when
 
 ## Layout
@@ -113,47 +114,25 @@ Office grows up: email sign-in (six-digit code, no passwords), a collection
 that follows you across devices, and a **share link** so anyone can walk your
 hanging read-only.
 
-Setup, once (~10 minutes):
+**[docs/setup.md](docs/setup.md) walks the whole thing** — project, schema,
+config, publishing, hosting, and how to *prove* the privacy applied rather than
+assume it. Roughly half an hour, no paid account.
 
-1. Create a Supabase project (free tier is plenty: 500 MB DB + 1 GB images).
-2. In the dashboard: **SQL Editor → paste `supabase-setup.sql` → Run.**
-   That creates the tables, the storage bucket, and every row-level-security
-   policy (reads are public — galleries are meant to be walked; writes are
-   strictly owner-only).
-3. **Authentication → Sign In / Up:** make sure the Email provider is enabled
-   (it is by default).
-4. In `src/config.js`, fill in:
-   ```js
-   const CLOUD_URL = 'https://YOURPROJECT.supabase.co';
-   const CLOUD_KEY = 'sb_publishable_...';   // Settings → API Keys → anon public
-   ```
-   The anon key is *designed* to be public — the SQL policies are the lock,
-   not the key. Never paste the `service_role` key anywhere.
-5. Deploy (below). Open the Curator's Office → sign in with your email →
-   **Send local works to the cloud** migrates an existing local collection →
-   claim a gallery name → share `…?gallery=your-name`.
+The short version: create a free project, run `supabase-setup.sql` in its SQL
+editor, put the project URL and the **publishable** key into `src/config.js`,
+then run `npm run verify:sql` before uploading anything you care about. That key
+is designed to be public — the row-level-security policies are the lock, not the
+key. The `service_role` key is the one that must never enter this repo.
 
 Leave `CLOUD_URL`/`CLOUD_KEY` empty and everything stays exactly as before —
 fully local, no network. `npm run archive` does the same thing at build time.
 
 ## Deploying free
 
-Any static host works; two good ones:
-
-- **Cloudflare Pages** (recommended — unlimited static bandwidth):
-  ```sh
-  npx wrangler login          # one-time browser sign-in
-  npx wrangler pages deploy . --project-name lumiere
-  ```
-  Your gallery appears at `https://lumiere.pages.dev`.
-- **GitHub Pages:** push this folder to a public repo → Settings → Pages →
-  deploy from branch. Bonus: the included workflow
-  `.github/workflows/keepalive.yml` pings Supabase twice a week so the free
-  project never pauses — add `SUPABASE_URL` and `SUPABASE_ANON_KEY` as
-  repository secrets to arm it.
-
-Free-tier arithmetic: images are ~200 KB after import, so 1 GB of storage
-holds ≈ 5,000 works, and 5 GB/month of egress serves ≈ 25k image views.
+Any static host works, since `index.html` is committed and there is no build
+step on the server. Cloudflare Pages (`npx wrangler pages deploy .`) or GitHub
+Pages both take a couple of minutes; [docs/setup.md](docs/setup.md#step-5--host-it)
+has the commands and the free-tier arithmetic.
 
 ## How the seeds work
 

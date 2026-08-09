@@ -9,9 +9,11 @@ what made the original 3843-line file hard to extend.
 ```sh
 npm run dev        # watch + server on :8000, unminified
 npm run build      # index.html, minified — what GitHub Pages serves
-npm run archive    # archive/index.html, no backend, under 100 KiB
+npm run archive    # archive/index.html, no backend — see docs/permanence.md
 npm run test:fast  # boot + cloud layer, ~1 min — use this while working
-npm test           # everything, 4–7 min — use this before committing
+npm test           # everything, 27 tests, ~7 min — before committing
+npm run verify:sql # apply supabase-setup.sql to a throwaway PostgreSQL in
+                   # Docker and assert 13 row-level-security behaviours
 ```
 
 **Use `test:fast` in the inner loop.** The full suite is slow because CI has no
@@ -51,7 +53,7 @@ src/
     post.js            HDR scene buffer, MSAA resolve, bloom, composite
     textures.js        procedural plaster, parquet, contact shadow, sky
     mat4.js            matrices and frustum planes — pure
-    shaders/*.vert     14 GLSL files
+    shaders/            14 GLSL files, 7 .vert and 7 .frag
   cloud/
     client.js          Supabase over plain fetch
     client.stub.js     inert stand-in for archive builds
@@ -59,7 +61,11 @@ src/
     styles.css         spliced into the template at build
     body.html          spliced into the template at build
     hint.js            flashHint
-tools/scope.mjs        extraction helper — see below
+tools/
+  scope.mjs            extraction helper — see below
+  verify-sql.sh        runs supabase-setup.sql against Dockerised PostgreSQL
+  supabase-shim.sql    the auth/storage objects Supabase provides, so the
+                       policies can be executed outside it
 ```
 
 ## Rules that hold this together
@@ -87,6 +93,90 @@ updates are pushed from state transitions, never polled per frame.
 1/64 thresholds written out twice. Both of these were real bugs waiting: adding
 a seventh algorithm used to silently do nothing.
 
+## The lighting model
+
+Read this before changing any light. It is the part of the codebase that has
+misled people most, and one constant dominates everything else.
+
+**Fog is not atmosphere, it is a mixing weight.** Every fragment ends as
+`mix(lit, uFog, 1 - exp(-uSigma * distance))`. At the original `FOG_SIGMA` of
+0.15/metre a surface 10 m away was **78% fog and 22% light** — so the lighting
+model was real, correct and invisible, and every intensity in the rig had been
+hand-tuned to a value that made no physical sense. Two measurements find this
+instantly:
+
+```js
+DBG.fog([0, 0, 0])     // frame median fell 19 → 4: four fifths of the image was fog
+DBG.sigma(0.038)       // then every other control starts responding
+```
+
+**If a light control seems inert, suspect sigma before you touch intensities.**
+Ambient had the same problem — scaling it to 12% moved the frame mean by one
+code value — which is why `AMB_BASE` had been tuned down to nothing.
+
+The rig lives in one place, `RIG` in `world/rooms.js`, and `DBG.relight({...})`
+patches it and rebuilds every room. Two things about that hook are load-bearing
+and were bugs first: rooms are cached and `genLights` runs once inside
+`getRoom`, so the cache must be cleared or the patch appears to do nothing; and
+clearing it without `freeAllArtSlots()` starves the art pools *permanently*,
+because slots stay keyed to discarded rooms and `startJob` re-queues rather than
+failing.
+
+Other invariants:
+
+- **Falloff is windowed inverse-square**, reaching exactly zero at the light's
+  range. It replaced `1/(1 + d²/R²)`, which varies 2.15:1 across a room where
+  physics varies 16:1 and never reaches zero, so every light lit every fragment
+  at a near-constant level and the pools read as painted gradients.
+- **Occlusion belongs to the ambient term only.** `acc = uAmb * alb * ao`, not
+  `acc *= ao` after the loop — light does not stop arriving because a wall is
+  nearby.
+- **`MAX_LIGHTS` is 10** and must match the loop bound in `arch.frag` and
+  `paint.frag` and the `LPOS`/`LDIR`/`LCOL` array sizes. `assembleLights` fills
+  it by priority, not array order: sun, then `fill`-marked lights, then artwork
+  spots, then neighbour spill through open doors. At the old cap of 8 a six-work
+  room filled the budget with its own spots and dropped the chandelier entirely,
+  while its candle flames carried on burning.
+- **Paintings are not emitters.** They take the same ambient the walls take, via
+  `uEm`. A flat `uEm` ignored the lamp switch and left the works glowing in a
+  dark room like cutouts in a void. Windows keep a real `uEm`: the sky emits.
+- **Lamps off is not lights out.** The switch drops the picture lights and
+  leaves `fill` lights burning at `CANDLE`, a warm-shifted fraction. Killing
+  everything left 95% of the frame under 9/255, and uniform ambient cannot
+  rescue that — it has no direction and makes no highlights.
+
+Judge changes with `DBG.histogram()`, which covers the whole frame. `DBG.luma()`
+reads a 32×32 patch at the reticle, so it reports whatever the camera happens to
+face — lamps on to off moved luma 26.5 → 20.1 while the frame mean went
+32.9 → 13.4. Hand-picked sample boxes are worse: a box on the wall above a
+painting sits outside both the beam and the chandelier cone *by design*.
+
+## Private loans
+
+A visitor's own image overrides a seeded work on a frame. The path is
+`curatorAddFiles` → `encodeUpload` → IndexedDB or Supabase Storage →
+`applyPlacement` → its own GL texture.
+
+- **Nothing is ever cropped.** `mountRect` contains the sheet at its true
+  proportions and cream rag board fills the rest; margins are a minimum, not a
+  fixed border. Cover-cropping was the original behaviour and it silently ate
+  the top and bottom of any portrait drawing hung in a landscape frame. The
+  acquire path had the same bug independently — both call `mountWork` now, so
+  they cannot drift.
+- **Line art is stored lossless.** JPEG ringing gathers exactly around hard dark
+  strokes on white. `looksLikeLineArt` decides on a downsample; photographs keep
+  a JPEG, since PNG would cost tens of megabytes for nothing.
+- **Loans have their own fixture.** Lights carry a `forArt` index so hanging a
+  drawing swaps one fixture — `RIG.paper`, near-neutral and dimmer, because
+  works on paper hang at about 50 lux against 150–200 for a painting — without
+  disturbing the paintings beside it. Taking it down restores the tungsten.
+- Loans allocate their own textures at `LOAN_SIZES` (twice the linear resolution
+  of a pool slot) and are freed by `releaseOutside` beyond one room.
+
+`rebuildRooms` keeps room objects and only re-derives `r.lights` from
+`r.ownLights`, so a runtime fixture swap survives a shutter toggle. Room
+eviction does discard it, but the loan is re-applied on return.
+
 ## Extracting more from main.js
 
 Run the scope tool first, always:
@@ -106,9 +196,10 @@ mistake so far, usually on the boot test.
 
 ### What is left, and why it is left
 
-`main.js` is 1681 lines, down from 3843. What remains is the composition
-root — program creation, controls and collision, inspect/acquire, the Curator's
-Office, the frame loop, DBG and boot.
+`main.js` is about 2050 lines, down from 3843 — it grew back a little as the
+renderer, lighting and loan work landed, most of it comment. What remains is the
+composition root: program creation, controls and collision, inspect/acquire, the
+Curator's Office, the frame loop, DBG and boot.
 
 Those are not waiting on tidying; they are mutually recursive. The scheduler
 needs to know whether a loan hangs on a frame, the curator needs the artwork

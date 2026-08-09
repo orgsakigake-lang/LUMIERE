@@ -124,7 +124,11 @@ touch the network at all.
 ### Step 2 — Arweave, the permanent copy *(you)*
 
 1. Go to <https://turbo.ar.io/> and connect or create a wallet.
-2. Upload `archive/index.html`. Under 100 KiB it should ask for nothing.
+2. Upload `archive/index.html`. Under 100 KiB it asks for nothing; the build
+   crossed that line during the quality work and is now around 104 KiB, so it
+   will ask for Turbo Credits — a one-time purchase of about $10 that covers
+   thousands of uploads at this size, not a per-upload fee. `npm test` prints
+   the current number every run.
 3. Keep the transaction ID. Your gallery is now at
    `https://arweave.net/<TX_ID>`, permanently, with no renewal.
 
