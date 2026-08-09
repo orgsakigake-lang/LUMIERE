@@ -1,7 +1,20 @@
 # Keeping LUMIÈRE online forever, for nothing
 
+> **Read this first: none of this stores your drawings.**
+>
+> What Arweave and IPFS preserve here is the *gallery software* — one HTML file
+> that generates the procedural museum from a seed. The archive build has no
+> backend by design, so an archived copy shows the seeded artwork and nothing
+> else. Your uploaded work lives in Supabase and is reached through cloud mode
+> and a `?gallery=` link.
+>
+> So this document is insurance on the building, not on the collection. If your
+> goal is showing your own drawings to people, cloud mode is the thing that
+> does that, and this is optional. See "Where your drawings actually live" at
+> the bottom.
+
 Everything described here costs **£0**. Where a service has a paid tier, this
-document says exactly which line you must not cross and what happens if you do.
+document says exactly what crossing it costs.
 
 There is one thing I cannot do for you: **create accounts.** Every step below
 that needs a login is marked *(you)*.
@@ -52,26 +65,29 @@ What you lose: cloud accounts and shared galleries. The Curator's Office falls
 back to its local passphrase gate and IndexedDB, so private loans still work;
 they just stay on the visitor's own machine.
 
-### The budget is enforced
+### The size is reported, not enforced
 
 ```
-archive/index.html   100,523 bytes
-limit                102,400 bytes
-headroom              1,877 bytes
+archive/index.html    99,776 bytes
+free tier            102,400 bytes
 ```
 
-`test/lumiere.spec.js` fails the build if this is exceeded. **Do not silently
-raise the limit** — crossing it turns free permanent storage into a paid
-account, which is the whole point of the number.
+The suite prints this and says what it implies. It does **not** fail the build
+if you cross it, and that is deliberate. 100 KiB is ArDrive's pricing policy,
+not an engineering limit, and treating it as one started shaping the product —
+the archive went over twice and each time a feature got trimmed to claw back a
+couple of hundred bytes.
 
-If you need room, in order of preference:
+**What crossing it actually costs:** an account and a one-time Turbo Credits
+purchase, around \$10 minimum, which buys on the order of a gigabyte of
+permanent storage. At this file size that is thousands of editions. It is not
+a per-upload fee. If the gallery you want is 150 KB, build the gallery you want
+and pay the ten dollars once.
 
-1. **Strip the `DBG` surface from archive builds** — measured at 3,416 bytes.
-   Costs you the in-page debug console on the archived copy only.
-2. Trim intro copy or hint strings. Cheap bytes, real character; weigh it.
-3. Accept the cost. Above 100 KiB you need Turbo Credits, which means an
-   account and a minimum purchase (a few dollars) that would cover thousands
-   of uploads. Not expensive — just no longer free.
+If you would rather stay free: the archive is **34.5 KB gzipped**, and Arweave
+can store it tagged `Content-Encoding: gzip`. Gateway support for that is
+inconsistent though, and a permanent artifact that renders as binary on some
+gateways is worse than paying. Not recommended for the canonical copy.
 
 ---
 
@@ -174,3 +190,34 @@ contradiction, and the version history is more interesting anyway.
 The seeded gallery has no runtime dependency on anything. That was true before
 this document and is the reason any of it works: a room's geometry, its
 paintings and their palettes are all derived from one integer.
+
+---
+
+## 7. Where your drawings actually live
+
+Worth stating plainly, because the sections above are about the software and
+not the art.
+
+| | your uploaded drawings | the gallery software |
+|---|---|---|
+| lives in | Supabase: Postgres rows + the `loans` storage bucket | one HTML file |
+| reached by | cloud mode, `?gallery=your-name` | any host, or an Arweave TX |
+| preserved by | nothing yet — Supabase's free tier | Arweave, IPFS |
+| in the archive build | **absent** | present |
+
+**Could Storacha hold the drawings instead?** Yes, and it is a reasonable
+future move. Its 5 GiB free tier is five times Supabase's 1 GB, and images are
+exactly the kind of large immutable blob content-addressing suits. The upload
+path would change from `POST /storage/v1/object/loans/...` to a Storacha
+upload, and `uploads.path` would store a CID instead of a bucket path.
+
+You would still need Supabase for the parts Storacha cannot do: email sign-in,
+and the `placements` table that records which work hangs on which frame. So it
+is a swap of the image store, not of the backend. Worth doing when storage
+becomes the binding constraint; not before.
+
+**Could the drawings go on Arweave?** They could, and unlike IPFS they would
+then be genuinely permanent. But every upload costs, images are far above the
+100 KiB free tier, and permanence cuts both ways: an artwork you post cannot
+be taken down. That is a real decision about your own work, not a technical
+one, and it should not be made by default.

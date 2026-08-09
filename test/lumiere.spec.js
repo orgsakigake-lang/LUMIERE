@@ -213,10 +213,9 @@ test.describe('the renderer', () => {
 test.describe('the archive build', () => {
   /* `npm run archive` swaps the cloud client for an inert stub and minifies,
      producing the artifact meant for permanent storage. It has to work with no
-     backend at all, and it has to stay under 100 KiB — that threshold is the
-     difference between free permanent storage and a paid account.
-     See docs/permanence.md. */
-  const ARCHIVE_LIMIT = 102400;   // 100 KiB
+     backend at all. Size is *reported*, not enforced — see below. */
+  const FREE_TIER = 102400;        // 100 KiB — ArDrive Turbo's free-upload tier
+  const SANITY = 400 * 1024;       // a runaway build, not a policy threshold
 
   test('boots, generates art, and carries no backend', async ({ page }) => {
     const errors = [];
@@ -240,11 +239,27 @@ test.describe('the archive build', () => {
     expect(await hashes(page)).toEqual(archived);
   });
 
-  test('stays under the 100 KiB free-upload threshold', async ({ page }) => {
+  test('reports its size against the free-upload tier', async ({ page }) => {
     const bytes = await page.request.get('/archive/index.html')
       .then((r) => r.body()).then((b) => b.byteLength);
-    console.log(`    archive: ${bytes} bytes (${(bytes / 1024).toFixed(1)} KiB) of ${ARCHIVE_LIMIT}`);
-    expect(bytes).toBeLessThanOrEqual(ARCHIVE_LIMIT);
+    const kib = (bytes / 1024).toFixed(1);
+
+    /* Deliberately not a gate. 100 KiB is ArDrive's free-tier policy, not an
+       engineering limit, and treating it as one meant the build started
+       shaping the product: features got cut to claw back a couple of hundred
+       bytes. Crossing it costs a one-time credit purchase (~$10, which covers
+       thousands of uploads at this size), not a per-upload fee. Report the
+       number, let a human decide. */
+    if (bytes <= FREE_TIER) {
+      console.log(`    archive: ${bytes} bytes (${kib} KiB) — inside the free tier, `
+                + `${FREE_TIER - bytes} to spare`);
+    } else {
+      console.log(`    archive: ${bytes} bytes (${kib} KiB) — OVER the ${FREE_TIER / 1024} KiB `
+                + `free tier by ${bytes - FREE_TIER}. Uploading now needs Turbo Credits: a `
+                + `one-time purchase, not a per-upload cost. See docs/permanence.md.`);
+    }
+    // Only a runaway build fails here.
+    expect(bytes).toBeLessThan(SANITY);
   });
 });
 
