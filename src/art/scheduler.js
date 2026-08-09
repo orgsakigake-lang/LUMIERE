@@ -15,6 +15,7 @@ import { ALGO_NAMES, ALGOS, makeTitle, finishArt } from './algos.js';
 import { persist, savePersist } from '../persist.js';
 import { cloud } from '../cloud/client.js';
 import { canvas, gl } from '../render/gl.js';
+import WORKER_SRC from 'lumiere:art-worker';
 import { player, visited } from '../render/state.js';
 
 let loans = null;
@@ -67,6 +68,7 @@ export function releaseOutside(){
   if (loans) loans.releaseOutside(player.gx, player.gz, 1);
 }
 export function freeAllArtSlots(){
+  discardPainted();
   for (const pool of [POOLS.L, POOLS.P, POOLS.S, POOLS.W, PPOOL])
     for (const s of pool.slots) releaseSlot(s);
 }
@@ -81,7 +83,14 @@ pscratch.width = 256; pscratch.height = 128;
 export const pctx = pscratch.getContext('2d', { alpha: false, willReadFrequently: true });
 
 export const artState = { jobs: new Map(), queue: [], active: null, uploadReady: null,
-                   placards: [], beheld: 0 };
+                   painted: [], placards: [], beheld: 0 };
+/** Drop every off-thread result still waiting for a texture. An ImageBitmap
+ *  holds its pixels until closed, so a teardown that forgets these leaks a
+ *  few megabytes every time the world is rebuilt. */
+export function discardPainted(){
+  for (const job of artState.painted){ if (job.bmp) job.bmp.close(); job.bmp = null; }
+  artState.painted.length = 0;
+}
 /* park in-flight jobs (they restart cleanly from their seeds) before anything
    else borrows the scratch canvas or the shared attractor accumulator */
 export function preemptArtJobs(){
@@ -121,6 +130,9 @@ export function syncArtJobs(){
     }
   for (const [k, job] of artState.jobs){
     if (want.has(k)) continue;
+    if (job.bmp){ job.bmp.close(); job.bmp = null; }
+    const pi = artState.painted.indexOf(job);
+    if (pi >= 0) artState.painted.splice(pi, 1);
     if (job.slot) releaseSlot(job.slot);
     if (artState.active === job) artState.active = null;
     if (artState.uploadReady === job) artState.uploadReady = null;
@@ -132,17 +144,116 @@ export function syncArtJobs(){
   artState.placards = artState.placards.filter(A => A.ptexWanted);
 }
 
+/* ————— the worker pool —————
+   Generation is arithmetic and rasterisation into a bitmap: nothing about it
+   needs the thread that is trying to hold sixty frames a second. Measured
+   before this: a fresh neighbourhood queued 54 works and took 604 frames —
+   ten seconds of walking — at 14.6 ms a frame against a 2.3 ms steady state.
+
+   Workers are optional. Everything below falls back to the cooperative
+   main-thread generators if the browser lacks Worker, OffscreenCanvas or
+   transferToImageBitmap, and that path is also what DBG.artHash and the
+   acquire render still use, since both want an answer synchronously. */
+let workerPool = null;          // null = not yet probed, [] = unavailable
+const inflight = new Map();     // job id → job
+let nextJobId = 1;
+
+/* ?nw pins the main-thread path. The fallback has to stay exercisable — it is
+   what a browser without OffscreenCanvas gets — and it is the only honest
+   control when measuring what moving off-thread actually bought. */
+const NO_WORKERS = /[?&]nw\b/.test(location.search);
+function initWorkers(){
+  if (workerPool) return workerPool;
+  workerPool = [];
+  if (NO_WORKERS){ artState.painters = 0; return workerPool; }
+  if (typeof Worker === 'undefined' || typeof OffscreenCanvas === 'undefined'
+      || !OffscreenCanvas.prototype.transferToImageBitmap) return workerPool;
+  try {
+    const url = URL.createObjectURL(new Blob([WORKER_SRC], { type: 'text/javascript' }));
+    /* Two is enough to keep ahead of a walking visitor and leaves the machine
+       to the renderer, which is the thing we were trying to protect. */
+    const n = Math.max(1, Math.min(2, (navigator.hardwareConcurrency || 4) - 2));
+    for (let i = 0; i < n; i++){
+      const w = new Worker(url);
+      w.onmessage = onPainted;
+      w.onerror = (e) => { console.warn('[gen] painter failed', e.message); retireWorkers(e.message); };
+      w.job = null;
+      workerPool.push(w);
+    }
+    URL.revokeObjectURL(url);
+    artState.painters = n;
+    trace(`[gen] ${n} painter${n === 1 ? '' : 's'} off the main thread`);
+  } catch(e){
+    console.warn('[gen] no worker — generating on the main thread', e);
+    workerPool = []; artState.painters = 0;
+  }
+  return workerPool;
+}
+/** A painter that throws takes the whole pool down and hands its work back to
+ *  the main thread. Releasing just the one worker looked tidier and was wrong:
+ *  the jobs it had been given were never re-queued, so they left the queue and
+ *  simply never arrived, which from the gallery looks like empty frames and no
+ *  error at all. */
+function retireWorkers(why){
+  const stranded = [];
+  for (const w of workerPool){
+    if (w.job) stranded.push(w.job);
+    w.job = null;
+    try { w.terminate(); } catch(e){}
+  }
+  workerPool.length = 0;
+  inflight.clear();
+  for (const job of stranded){
+    if (job.slot){ releaseSlot(job.slot); job.slot = null; }
+    if (artState.jobs.has(job.k)) artState.queue.unshift(job);
+  }
+  console.warn(`[gen] painting on the main thread instead — ${why}`);
+}
+function onPainted(e){
+  const { id, bmp, error, ms } = e.data;
+  if (ms){
+    artState.paintMs = artState.paintMs ? artState.paintMs*0.8 + ms*0.2 : ms;
+    const j = inflight.get(id);
+    (artState.paintLog || (artState.paintLog = [])).push({ algo: j ? j.effAlgo : -1, ms });
+    if (artState.paintLog.length > 40) artState.paintLog.shift();
+  }
+  const job = inflight.get(id);
+  inflight.delete(id);
+  for (const w of workerPool) if (w.job && w.job.id === id) w.job = null;
+  if (error){ console.warn('[gen] worker could not paint', error); if (job && job.slot) releaseSlot(job.slot); return; }
+  /* The visitor may have walked away while this was painting: the job is gone
+     from the register and its slot already reclaimed. Close the bitmap rather
+     than leaking it — an ImageBitmap holds its pixels until told otherwise. */
+  if (!job || !artState.jobs.has(job.k)){ bmp.close(); return; }
+  job.bmp = bmp;
+  artState.painted.push(job);
+}
+function dispatch(job){
+  for (const w of workerPool){
+    if (w.job) continue;
+    job.id = nextJobId++;
+    w.job = job;
+    inflight.set(job.id, job);
+    w.postMessage({ id: job.id, algo: job.effAlgo, seed: job.A.seed,
+                    pal: job.A.pal, w: job.w, h: job.h });
+    return true;
+  }
+  return false;
+}
+
 function startJob(job){
   const A = job.A;
   const [w, h] = TEX_SIZES[A.asp];
   job.slot = acquireSlot(POOLS[A.asp], A, job.r);
   if (!job.slot){ artState.queue.push(job); return false; }   // pool full — retry later
+  A.title = A.title || makeTitle(mulberry32(h2(A.seed, 0x717, WORLD_SEED)));
+  job.effAlgo = A.algo % ALGOS.length;
+  job.w = w; job.h = h;
+  if (initWorkers().length) return dispatch(job) ? 'worker' : (artState.queue.push(job), false);
+  /* Main-thread fallback: the cooperative generator, pumped under a budget. */
   scratch.width = w; scratch.height = h;
   const rnd = mulberry32(A.seed);
-  A.title = A.title || makeTitle(mulberry32(h2(A.seed, 0x717, WORLD_SEED)));
-  const effAlgo = A.algo % ALGOS.length;
-  job.effAlgo = effAlgo;
-  job.gen = ALGOS[effAlgo](sctx, w, h, rnd, jitterPal(A.pal, rnd));
+  job.gen = ALGOS[job.effAlgo](sctx, w, h, rnd, jitterPal(A.pal, rnd));
   return true;
 }
 
@@ -173,9 +284,34 @@ function renderPlacard(A){
   }
 }
 
+/** One finished work reaches the GPU per frame, wherever it was painted.
+ *  Keeping it to one is deliberate: texSubImage2D plus generateMipmap on a
+ *  512x384 is not free, and two in a frame is a visible hitch. */
+function uploadOne(job, source){
+  const A = job.A;
+  gl.bindTexture(gl.TEXTURE_2D, job.slot.tex);
+  gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, gl.RGBA, gl.UNSIGNED_BYTE, source);
+  gl.generateMipmap(gl.TEXTURE_2D);
+  A.tex = job.slot;
+  A.fadeAt = performance.now();
+  if (!A.mini){ A.ptexWanted = true; artState.placards.push(A); }
+  artState.jobs.delete(job.k);
+  if (job.r.gx === player.gx && job.r.gz === player.gz && !A.seen){
+    A.seen = true; artState.beheld++; updateHudStat();
+  }
+}
+
 export function pumpArt(budgetMs = 3.5){
-  /* one finished texture reaches the GPU per frame */
-  if (artState.uploadReady){
+  /* Painted off-thread and waiting for a texture. An ImageBitmap uploads
+     without a readback and must be closed by hand once it has. */
+  if (artState.painted.length){
+    const job = artState.painted.shift();
+    if (job.slot && artState.jobs.has(job.k)){
+      uploadOne(job, job.bmp);
+      trace(`[gen] art (${job.r.gx},${job.r.gz},${job.i}) off-thread algo=${job.effAlgo} seed=${job.A.seed}`);
+    } else if (job.slot) releaseSlot(job.slot);
+    job.bmp.close(); job.bmp = null;
+  } else if (artState.uploadReady){
     const job = artState.uploadReady; artState.uploadReady = null;
     const A = job.A;
     gl.bindTexture(gl.TEXTURE_2D, job.slot.tex);
@@ -203,6 +339,25 @@ export function pumpArt(budgetMs = 3.5){
       } else artState.placards.push(A);
     }
   }
+  /* With painters off-thread there is nothing to budget: hand them everything
+     they can hold and return to the frame. The queue is walked past works that
+     finished or were dropped while waiting, exactly as the main-thread path
+     does below. */
+  /* initWorkers, not workerPool: the pool is probed lazily, and reading it
+     before the first probe took the main-thread branch, dispatched the job to
+     a worker from inside startJob anyway, and then pumped a generator that was
+     never created. */
+  if (initWorkers().length){
+    for (let guard = 0; guard < 64; guard++){
+      if (!workerPool.some((w) => !w.job)) break;
+      let next = artState.queue.shift();
+      while (next && (next.A.tex || !artState.jobs.has(next.k))) next = artState.queue.shift();
+      if (!next) break;
+      if (startJob(next) !== 'worker') break;   // pool full, or no painter free
+    }
+    return;
+  }
+
   /* generation under a hard time budget — generous while the intro holds
      the visitor, so the first wing hangs before they step in */
   const deadline = performance.now() + budgetMs;

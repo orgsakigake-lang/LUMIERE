@@ -32,7 +32,7 @@ import { plasterTex, parquetTex, shadowTex, skyTex, makeSurfaceTextures,
          ensureSkyTex, dropSurfaceTextures } from './render/textures.js';
 import { player, M_P, M_V, M_MV, M_PV, vpW, vpH, setViewport,
          visited, setVisited, nearRooms, midRooms } from './render/state.js';
-import { setLoanProvider, releaseSlot, freeAllArtSlots, preemptArtJobs, artJobKey,
+import { setLoanProvider, releaseSlot, freeAllArtSlots, discardPainted, preemptArtJobs, artJobKey,
          syncArtJobs, pumpArt, updateHudStat, markSeen, paintBasis, makeRoomVAO,
          dropRoomGL, TEX_SIZES, LOAN_SIZES, POOLS, PPOOL, scratch, sctx, pscratch, pctx,
          artState, PB, SHA } from './art/scheduler.js';
@@ -1036,6 +1036,7 @@ function rebuildWorld(){
   artState.jobs.clear(); artState.queue.length = 0;
   artState.active = null; artState.uploadReady = null;
   artState.placards.length = 0;
+  discardPainted();
   for (const [, o] of curator.overrides){ gl.deleteTexture(o.tex); o.A.override = null; }
   curator.overrides.clear();
   for (const [, r] of rooms) dropRoomGL(r);
@@ -1814,7 +1815,7 @@ function frame(t){
         const nvy = M_V[1]*PB.n[0] + M_V[5]*PB.n[1] + M_V[9]*PB.n[2];
         const nvz = M_V[2]*PB.n[0] + M_V[6]*PB.n[1] + M_V[10]*PB.n[2];
         gl.uniform3f(uPaint.uN, nvx, nvy, nvz);
-        const fade = REDUCED ? 1 : Math.min(1, (nowMs - A.fadeAt) / 1400);
+        const fade = (REDUCED || frozenT !== null) ? 1 : Math.min(1, (nowMs - A.fadeAt) / 1400);
         gl.uniform3f(uPaint.uO, PB.o[0], -PB.o[1], PB.o[2]);
         gl.uniform3f(uPaint.uU, PB.u[0], PB.u[1], PB.u[2]);
         gl.uniform3f(uPaint.uV, 0, -A.h, 0);
@@ -1967,7 +1968,7 @@ function frame(t){
         const nvy = M_V[1]*PB.n[0] + M_V[5]*PB.n[1] + M_V[9]*PB.n[2];
         const nvz = M_V[2]*PB.n[0] + M_V[6]*PB.n[1] + M_V[10]*PB.n[2];
         gl.uniform3f(uPaint.uN, nvx, nvy, nvz);
-        const fade = REDUCED ? 1 : Math.min(1, (nowMs - A.fadeAt) / 1400);
+        const fade = (REDUCED || frozenT !== null) ? 1 : Math.min(1, (nowMs - A.fadeAt) / 1400);
         gl.uniform3f(uPaint.uO, PB.o[0], PB.o[1], PB.o[2]);
         gl.uniform3f(uPaint.uU, PB.u[0], PB.u[1], PB.u[2]);
         gl.uniform3f(uPaint.uV, PB.v[0], PB.v[1], PB.v[2]);
@@ -2170,6 +2171,8 @@ window.DBG = {
       cached: rooms.size,
       colliders: colN,
       fps: +fpsAvg.toFixed(1),
+      paintMs: artState.paintMs ? +artState.paintMs.toFixed(0) : null,
+      painters: artState.painters === undefined ? null : artState.painters,
       locked,
       auto: auto.on, post: post.on,
       beheld: artState.beheld, queued: artState.queue.length,
@@ -2310,7 +2313,13 @@ if (DBG_FULL) Object.assign(window.DBG, {
   /** Adjust the grade live: DBG.grade({exposure:1.9, grain:0.012}). */
   grade(patch){ if (patch) Object.assign(GRADE, patch); return { ...GRADE }; },
   /** Pin animation time so two renders can be compared pixel for pixel.
-   *  DBG.freeze(12.5) to pin, DBG.freeze(null) to let it run again. */
+   *  DBG.freeze(12.5) to pin, DBG.freeze(null) to let it run again.
+   *
+   *  Covers the shader clock, the grain, *and* the 1400 ms fade a work makes
+   *  as it arrives — that last one runs off the wall clock and is not part of
+   *  shaderT, so a frozen comparison still drifted with how recently each work
+   *  had finished painting. It cost an hour of chasing a determinism bug in
+   *  the art worker that did not exist. */
   freeze(t){
     frozenT = (t === undefined || t === null) ? null : +t;
     setPostTime(frozenT === null ? null : () => frozenT);
@@ -2377,6 +2386,8 @@ if (DBG_FULL) Object.assign(window.DBG, {
     }
     return { near: nearRooms.length, portal, frustum, mode: portalCull ? 'portal' : 'frustum' };
   },
+  /** Per-work paint times reported by the painters, newest last. */
+  paintLog(){ return (artState.paintLog || []).slice(); },
   /** Switch or read the gallery theme: DBG.theme('graphite'). */
   theme(name){
     if (name) applyTheme(name, true);

@@ -369,7 +369,10 @@ let grainPattern = null;
 export function resetGrain(){ grainPattern = null; }
 export function ensureGrain(ctx){
   if (grainPattern) return grainPattern;
-  const gc = document.createElement('canvas'); gc.width = gc.height = 96;
+  /* No document in a worker — the generators run off-thread now. */
+  const gc = typeof document !== 'undefined'
+    ? Object.assign(document.createElement('canvas'), { width: 96, height: 96 })
+    : new OffscreenCanvas(96, 96);
   const gx = gc.getContext('2d');
   const gr = mulberry32(0xBADA55);
   const gi = gx.createImageData(96, 96);

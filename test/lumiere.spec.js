@@ -563,6 +563,17 @@ test.describe.serial('inside the gallery', () => {
     await page.evaluate(() => window.DBG.theme('salon'));
   });
 
+  test('the painters run off the main thread, or say why not', async () => {
+    /* Generation moved into workers. The contract is that this is invisible:
+       same pixels, and a fallback that still works where OffscreenCanvas or
+       Worker is missing. ?nw pins that fallback so it stays exercisable. */
+    const on = await page.evaluate(() => window.DBG.stats().painters);
+    console.log(`    painters: ${on}`);
+    expect(on).not.toBeNull();
+    // Chromium has both, so the pool must have come up here.
+    expect(on).toBeGreaterThan(0);
+  });
+
   test('the upload review pre-fills how each work meets its frame', async () => {
     /* Forty uploads should not be forty decisions, so the prompt arrives with
        an answer already in it. A sheet of paper is a whole object and is always

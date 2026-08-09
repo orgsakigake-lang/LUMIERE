@@ -44,7 +44,11 @@ export const FOG = [0.0129, 0.0117, 0.0093];
 export const BUILD_R = 2, EVICT_R = 3;      // build 5×5, evict beyond 7×7
 export const DPR_CAP = 1.5;
 
-export const REDUCED = matchMedia('(prefers-reduced-motion: reduce)').matches;
+/* Guarded because config.js reaches the art worker through seed.js, and a
+   worker has no matchMedia — an unguarded call here killed both painters at
+   construction, and the only symptom was art quietly never arriving. */
+export const REDUCED = typeof matchMedia !== 'undefined'
+  && matchMedia('(prefers-reduced-motion: reduce)').matches;
 
 /* Per-room and per-artwork diagnostics are useful while building and are pure
    noise in a shipped gallery — 25 lines land in the console before the visitor

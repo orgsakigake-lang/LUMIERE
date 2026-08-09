@@ -78,6 +78,37 @@ const stripTracePlugin = {
   },
 };
 
+/* ————— the art worker —————
+   Generation runs off the main thread, but the museum still ships as one file
+   and one request. So the worker is bundled separately, inlined into the main
+   bundle as a string, and instantiated from a blob URL at runtime. Built with
+   the same flags, because it shares src/art with the main thread and the two
+   must not drift. */
+const WORKER_MODULE = 'lumiere:art-worker';
+async function buildWorkerSource() {
+  const r = await esbuild.build({
+    entryPoints: [join(ROOT, 'src/art/worker.js')],
+    bundle: true,
+    format: 'iife',
+    target: 'es2022',
+    charset: 'utf8',
+    minify: MINIFY,
+    legalComments: 'none',
+    plugins: MINIFY ? [stripTracePlugin] : [],
+    write: false,
+  });
+  return r.outputFiles[0].text;
+}
+const workerPlugin = (source) => ({
+  name: 'art-worker',
+  setup(b) {
+    b.onResolve({ filter: new RegExp('^' + WORKER_MODULE + '$') },
+      () => ({ path: WORKER_MODULE, namespace: 'art-worker' }));
+    b.onLoad({ filter: /.*/, namespace: 'art-worker' },
+      () => ({ contents: `export default ${JSON.stringify(source)};`, loader: 'js' }));
+  },
+});
+
 const buildOptions = {
   entryPoints: [join(ROOT, 'src/main.js')],
   bundle: true,
@@ -109,8 +140,10 @@ const minifyHTML = (s) => s.replace(/>\s+</g, '><').trim();
 
 async function emit() {
   const t0 = performance.now();
+  const workerSource = await buildWorkerSource();
   let [result, css, body, template] = await Promise.all([
-    esbuild.build(buildOptions),
+    esbuild.build({ ...buildOptions,
+                    plugins: [...buildOptions.plugins, workerPlugin(workerSource)] }),
     readFile(join(ROOT, 'src/ui/styles.css'), 'utf8'),
     readFile(join(ROOT, 'src/ui/body.html'), 'utf8'),
     readFile(join(ROOT, 'src/index.template.html'), 'utf8'),
@@ -147,10 +180,11 @@ if (WATCH) {
   /* Spread the existing plugins back in — overwriting the array dropped the
      GLSL loader, and watch mode failed on every .vert while quietly serving
      the last good index.html, which looks exactly like everything working. */
-  const ctx = await esbuild.context({ ...buildOptions, plugins: [...buildOptions.plugins, {
-    name: 'emit',
-    setup: (b) => b.onEnd(() => emit().catch((e) => console.error(e.message))),
-  }] });
+  const ctx = await esbuild.context({ ...buildOptions, plugins: [
+    ...buildOptions.plugins,
+    workerPlugin(await buildWorkerSource()),
+    { name: 'emit', setup: (b) => b.onEnd(() => emit().catch((e) => console.error(e.message))) },
+  ] });
   await ctx.watch();
 
   /* The template, stylesheet and body markup are spliced in by hand, so they
