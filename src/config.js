@@ -21,7 +21,14 @@ export const PR  = 0.35;   // player radius
 export const DOOR_P = 0.6;
 
 export const FOG_SIGMA = 0.15;
-export const FOG = [0.043, 0.039, 0.031];   // #0B0A08
+/* Fog is the floor of the image — every distant surface is mixed toward it, so
+   this constant, not ambient, is what sets the black point. It was ~3.3x higher
+   while the pipeline had no sRGB encode, where it displayed as roughly 1/255.
+   With the encode correct that same value showed as 64/255 and the museum lost
+   its blacks entirely. Re-tuned by measurement: the lit night frame now runs
+   7..232 with a mean of 29, against 1..212 with a mean of 14 and 85% of pixels
+   crushed into the bottom sixteenth. */
+export const FOG = [0.0129, 0.0117, 0.0093];
 
 export const BUILD_R = 2, EVICT_R = 3;      // build 5×5, evict beyond 7×7
 export const DPR_CAP = 1.5;

@@ -24,7 +24,7 @@ import { SCHEMES, buildRoomMesh, assembleLights } from './world/geometry.js';
 import { canvas, gl, compile, program } from './render/gl.js';
 import { PERF, dprCap } from './render/perf.js';
 import { post, postCaps, wantSamples, setForcedSamples, allocPost, runPost,
-         setPostPrograms, uBright, uBlur, uComp } from './render/post.js';
+         setPostPrograms, uBright, uBlur, uComp, GRADE } from './render/post.js';
 import { plasterTex, parquetTex, shadowTex, skyTex, makeSurfaceTextures,
          ensureSkyTex, dropSurfaceTextures } from './render/textures.js';
 import { player, M_P, M_V, M_MV, M_PV, vpW, vpH, setViewport,
@@ -101,7 +101,7 @@ function initPrograms(){
   uBright.uTex = gl.getUniformLocation(pBright, 'uTex');
   uBlur.uTex = gl.getUniformLocation(pBlur, 'uTex');
   uBlur.uDir = gl.getUniformLocation(pBlur, 'uDir');
-  for (const nm of ['uTex','uBloom','uTime','uRes'])
+  for (const nm of ['uTex','uBloom','uTime','uRes','uExposure','uGrain'])
     uComp[nm] = gl.getUniformLocation(pComp, nm);
 
   progFlame = program(VS_FLAME, FS_FLAME);
@@ -136,14 +136,14 @@ function initPrograms(){
   pctx.fillText('its recovery is quietly hoped for', 14, 96);
   stolenTex = gl.createTexture();
   gl.bindTexture(gl.TEXTURE_2D, stolenTex);
-  gl.texStorage2D(gl.TEXTURE_2D, 8, gl.RGBA8, 256, 128);
+  gl.texStorage2D(gl.TEXTURE_2D, 8, gl.SRGB8_ALPHA8, 256, 128);
   gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, gl.RGBA, gl.UNSIGNED_BYTE, pscratch);
   gl.generateMipmap(gl.TEXTURE_2D);
   gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR_MIPMAP_LINEAR);
   gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
   gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
 }
-const AMB_BASE = [0.058, 0.052, 0.043];
+const AMB_BASE = [0.0203, 0.0182, 0.0151];
 const LPOS = new Float32Array(32), LDIR = new Float32Array(32), LCOL = new Float32Array(32);
 /* one packer for both passes; the lamp switch spares only sunlight */
 function packLights(r, ox, oz){
@@ -181,7 +181,7 @@ let progFlame = null, uFlame = {};
 /* the two wall switches */
 const WIN = { on: false };
 let lightsOn = true;
-const DAY_FOG = [0.292, 0.268, 0.226];
+const DAY_FOG = [0.0876, 0.0804, 0.0678];   // see FOG in config.js — same re-tune
 function swUI(){
   document.getElementById('sw-lights').classList.toggle('on', lightsOn);
   document.getElementById('sw-shutters').classList.toggle('on', WIN.on);
@@ -818,7 +818,7 @@ async function applyPlacement(r, A, i){
     const tex = gl.createTexture();
     gl.bindTexture(gl.TEXTURE_2D, tex);
     const levels = Math.floor(Math.log2(Math.max(tw, th))) + 1;
-    gl.texStorage2D(gl.TEXTURE_2D, levels, gl.RGBA8, tw, th);
+    gl.texStorage2D(gl.TEXTURE_2D, levels, gl.SRGB8_ALPHA8, tw, th);   // a visitor's own image
     gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, gl.RGBA, gl.UNSIGNED_BYTE, cc);
     gl.generateMipmap(gl.TEXTURE_2D);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR_MIPMAP_LINEAR);
@@ -1781,6 +1781,41 @@ if (DBG_FULL) Object.assign(window.DBG, {
   },
   /** Pin the MSAA sample count (null restores tier control), for A/B tests. */
   samples(n){ setForcedSamples(n); allocPost(vpW, vpH); return DBG.postInfo(); },
+  /** Adjust the grade live: DBG.grade({exposure:1.9, grain:0.012}). */
+  grade(patch){ if (patch) Object.assign(GRADE, patch); return { ...GRADE }; },
+  /** Luminance histogram of the current frame. The colour pipeline cannot be
+   *  asserted by eye in CI, but the crush can: with no sRGB encode the lit
+   *  scene put 85% of its pixels in the bottom sixteenth of the code range. */
+  histogram(steps = 6){
+    /* Steps and reads in one call, deliberately. The default framebuffer's
+       contents are undefined once the browser has composited, so a read in a
+       later turn comes back all zeros. Keep `steps` small — stepping hundreds
+       of frames here is enough to kill the software rasteriser CI runs on. */
+    for (let i = 0; i < steps; i++) frame(performance.now());
+    const w = vpW, h = vpH;
+    const buf = new Uint8Array(w * h * 4);
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+    gl.readPixels(0, 0, w, h, gl.RGBA, gl.UNSIGNED_BYTE, buf);
+    let lo = 255, hi = 0, sum = 0, cnt = 0, bottom = 0;
+    for (let i = 0; i < w * h; i += 3){
+      const o = i * 4;
+      const L = 0.2126*buf[o] + 0.7152*buf[o+1] + 0.0722*buf[o+2];
+      if (L < lo) lo = L; if (L > hi) hi = L;
+      if (L < 16) bottom++;
+      sum += L; cnt++;
+    }
+    return { mean: +(sum/cnt).toFixed(1), lo: Math.round(lo), hi: Math.round(hi),
+             bottom16th: +(100*bottom/cnt).toFixed(1) };
+  },
+  /** Night and day fog colour — the real floor of the image, since every
+   *  distant surface is mixed toward it. DBG.fog([r,g,b], [r,g,b]). */
+  fog(night, day){
+    if (night) for (let i=0;i<3;i++) FOG[i] = night[i];
+    if (day)   for (let i=0;i<3;i++) DAY_FOG[i] = day[i];
+    return { night: [...FOG], day: [...DAY_FOG] };
+  },
+  /** Ambient base, the other half of the night mood. */
+  ambient(v){ if (v !== undefined){ AMB_BASE[0]=v[0]; AMB_BASE[1]=v[1]; AMB_BASE[2]=v[2]; } return [...AMB_BASE]; },
   cloudFetch(fn){ setFetch(fn); return { stubbed: !!fn }; },
   cloudLoadGallery(slug){ return cloudLoadGallery(slug); },
 });

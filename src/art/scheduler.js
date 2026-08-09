@@ -32,7 +32,8 @@ function acquireSlot(pool, A, r){
       s.tex = gl.createTexture();
       gl.bindTexture(gl.TEXTURE_2D, s.tex);
       const levels = Math.floor(Math.log2(Math.max(pool.w, pool.h))) + 1;
-      gl.texStorage2D(gl.TEXTURE_2D, levels, gl.RGBA8, pool.w, pool.h);
+      /* Artwork is colour, authored in sRGB by Canvas2D. */
+      gl.texStorage2D(gl.TEXTURE_2D, levels, gl.SRGB8_ALPHA8, pool.w, pool.h);
       gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR_MIPMAP_LINEAR);
       gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
       gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);

@@ -22,7 +22,10 @@ void main(){
   vec3 dd = vec3(6.76 - abs(vLp.x), min(vLp.y, 4.2 - vLp.y), 6.76 - abs(vLp.z));
   vec3 gg = 0.66 + 0.34 * clamp(dd / 0.85, 0.0, 1.0);
   float ao = min(1.0, gg.x * gg.y * gg.z * 1.515);
-  vec3 acc = uAmb * alb;
+  /* Occlusion belongs to the ambient term alone. This used to be `acc *= ao`
+     after the loop, which dimmed a spotlight's own pool wherever it crossed a
+     corner — light does not stop arriving because a wall is nearby. */
+  vec3 acc = uAmb * alb * ao;
   float gloss = smoothstep(0.86, 0.99, dot(n, uUpV));
   for (int i = 0; i < 8; i++){
     if (i >= uNL) break;
@@ -37,7 +40,6 @@ void main(){
     vec3 hv = normalize(L + vdir);
     acc += c * pow(max(dot(n, hv), 0.0), 56.0) * gloss * 0.65;
   }
-  acc *= ao;
   float f = 1.0 - exp(-uSigma * length(vPv));
   o = vec4(mix(acc, uFog, f), uAlpha);
 }

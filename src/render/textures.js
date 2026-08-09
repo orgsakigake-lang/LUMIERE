@@ -7,11 +7,15 @@ import { mulberry32 } from '../world/seed.js';
 import { gl } from './gl.js';
 
 export let plasterTex = null, parquetTex = null, shadowTex = null;
-function texFromCanvas(c, repeat){
+/* `srgb` distinguishes colour from data. Albedo is authored in sRGB and must be
+   decoded to linear before it reaches the lighting maths — uploading it as
+   RGBA8 fed gamma-encoded values into linear equations. Masks are not colour
+   and must stay untouched. */
+function texFromCanvas(c, repeat, srgb = true){
   const t = gl.createTexture();
   gl.bindTexture(gl.TEXTURE_2D, t);
   const levels = Math.floor(Math.log2(Math.max(c.width, c.height))) + 1;
-  gl.texStorage2D(gl.TEXTURE_2D, levels, gl.RGBA8, c.width, c.height);
+  gl.texStorage2D(gl.TEXTURE_2D, levels, srgb ? gl.SRGB8_ALPHA8 : gl.RGBA8, c.width, c.height);
   gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, gl.RGBA, gl.UNSIGNED_BYTE, c);
   gl.generateMipmap(gl.TEXTURE_2D);
   gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR_MIPMAP_LINEAR);
@@ -90,7 +94,7 @@ export function makeSurfaceTextures(){
     rg.addColorStop(0.55, 'rgba(0,0,0,0.34)');
     rg.addColorStop(1, 'rgba(0,0,0,0)');
     g.fillStyle = rg; g.fillRect(0, 0, 128, 128);
-    shadowTex = texFromCanvas(c, false);
+    shadowTex = texFromCanvas(c, false, false);   // an alpha mask, not colour
   }
 }
 
@@ -109,7 +113,7 @@ export function ensureSkyTex(){
   g.fillStyle = sun; g.fillRect(0, 0, 256, 384);
   skyTex = gl.createTexture();
   gl.bindTexture(gl.TEXTURE_2D, skyTex);
-  gl.texStorage2D(gl.TEXTURE_2D, 8, gl.RGBA8, 256, 384);
+  gl.texStorage2D(gl.TEXTURE_2D, 8, gl.SRGB8_ALPHA8, 256, 384);   // sky is colour
   gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, gl.RGBA, gl.UNSIGNED_BYTE, c);
   gl.generateMipmap(gl.TEXTURE_2D);
   gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR_MIPMAP_LINEAR);

@@ -9,6 +9,16 @@ import { trace } from '../config.js';
 import { gl } from './gl.js';
 import { PERF } from './perf.js';
 
+/* The grade, live-tunable. These are the numbers that were hand-fitted around
+   a broken colour pipeline: with no sRGB encode the whole frame was displayed
+   at L^2.2, so exposure and grain were compensating for a crush rather than
+   describing an intent. Now that the encode is correct they mean what they say.
+   DBG.grade({...}) adjusts them without a rebuild. */
+export const GRADE = {
+  exposure: 1.35,   // scene-linear multiplier before ACES
+  grain: 0.014,     // display-space dither, applied after the sRGB encode
+};
+
 export let progBright, progBlur, progComp;
 export const uBright = {}, uBlur = {}, uComp = {};
 export const post = { on: true, ready: false, w: 0, h: 0, qw: 0, qh: 0,
@@ -171,6 +181,8 @@ export function runPost(quadVAO){
   gl.uniform1i(uComp.uBloom, 1);
   gl.uniform1f(uComp.uTime, (performance.now() % 300000)/1000);
   gl.uniform2f(uComp.uRes, post.w, post.h);
+  gl.uniform1f(uComp.uExposure, GRADE.exposure);
+  gl.uniform1f(uComp.uGrain, GRADE.grain);
   gl.activeTexture(gl.TEXTURE0);
   gl.bindTexture(gl.TEXTURE_2D, post.texScene);
   gl.activeTexture(gl.TEXTURE1);

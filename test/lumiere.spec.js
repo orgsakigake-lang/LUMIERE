@@ -419,6 +419,29 @@ test.describe.serial('inside the gallery', () => {
     expect(dark).toBeLessThan(lit * 1.05);
   });
 
+  test('the image uses its tonal range instead of crushing into black', async () => {
+    /* The colour pipeline had no sRGB encode and no sRGB decode, so everything
+       was displayed at L^2.2 and the whole museum lived in about 70 of the 255
+       code values. Measured on this scene before the fix: mean 14, darkest
+       pixel 1, and 85% of pixels inside the bottom sixteenth. Colour has to be
+       judged by eye, but the crush is a number and this is it. */
+    await page.evaluate(() => {
+      window.DBG.tp(0, 0, 0);
+      if (!window.DBG.stats().lights) dispatchEvent(new KeyboardEvent('keydown', { code:'KeyL', bubbles:true }));
+      if (window.DBG.stats().shutters) dispatchEvent(new KeyboardEvent('keydown', { code:'KeyO', bubbles:true }));
+    });
+    /* One call: stepping and reading must not be split across turns, or the
+       browser composites in between and readPixels returns zeros. The art
+       queue is deliberately not drained — the tonal range of the room is set
+       by walls, floor and lighting. */
+    const h = await page.evaluate(() => window.DBG.histogram(10));
+    console.log(`    lit: mean ${h.mean}  range ${h.lo}–${h.hi}  bottom-16th ${h.bottom16th}%`);
+
+    expect(h.bottom16th).toBeLessThan(55);     // was 85.1
+    expect(h.hi).toBeGreaterThan(150);         // highlights survive
+    expect(h.lo).toBeLessThan(40);             // and so do the blacks
+  });
+
   test('the office opens with the visible field focused', async () => {
     await page.keyboard.press('KeyC');
     await expect(page.locator('#curator')).toBeVisible();
