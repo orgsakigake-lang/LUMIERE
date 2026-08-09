@@ -1412,6 +1412,18 @@ function frame(t){
   const ambLum = r => (AMB_BASE[1] + r.mood[1]) * (r.ambScale || 1) * ambMult;
   gl.clearColor(fogCur[0], fogCur[1], fogCur[2], 1);
   gl.enable(gl.DEPTH_TEST);
+  /* Stays off, and not by oversight — this was tried and reverted. The premise
+     that "every wall is shaded twice" is false: geometry.js `face()` emits one
+     quad per wall segment with the inward normal, so the architecture is
+     single-sided by construction and there is no back face to skip. Worse,
+     `p(u,y,depth)` mirrors handedness between opposite walls — the east wall
+     sits at +x with an inward normal of -x, the west at -x with +x — so the two
+     wind oppositely as seen from inside, and culling BACK deletes one of every
+     opposing pair. Measured: the room visibly opened up at its left and right
+     edges, and the frame was no faster (2.30ms culled vs 2.17ms not) because
+     there was nothing to cull. Making the winding consistent would be real work
+     across an axis-generic emitter, for a saving that only ever existed on the
+     handful of closed boxes — benches, frames, chandelier arms. */
   gl.disable(gl.CULL_FACE);
   gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
 
