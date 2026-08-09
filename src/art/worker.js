@@ -18,9 +18,8 @@
    OffscreenCanvas and an HTMLCanvasElement rasterise these operations to
    byte-identical pixels, so DBG.artHash still describes what hangs.
    ═══════════════════════════════════════════════════════════════════ */
-import { mulberry32 } from '../world/seed.js';
 import { jitterPal } from './palettes.js';
-import { ALGOS, finishArt, resetGrain } from './algos.js';
+import { paintArt, resetGrain } from './algos.js';
 
 let cv = null, ctx = null;
 
@@ -35,15 +34,14 @@ self.onmessage = (e) => {
       ctx = cv.getContext('2d', { alpha: false, willReadFrequently: true });
       resetGrain();          // the grain pattern belongs to the old context
     }
-    const rnd = mulberry32(seed);
-    /* Argument order is load-bearing: jitterPal draws from `rnd` before the
-       generator ever sees it, exactly as startJob does on the main thread.
-       Reordering these two would silently produce different art. */
-    const gen = ALGOS[algo](ctx, w, h, rnd, jitterPal(pal, rnd));
-    while (!gen.next().done);
-    finishArt(ctx, w, h);
+    /* paintArt owns the seed, the palette draw order and the gate, so the
+       wall, DBG.artHash and an acquired copy cannot disagree about what this
+       work is. It reports the seed it settled on: a gated re-roll derives a
+       new one, and acquire needs to render that same one later. */
+    const r = paintArt(ctx, w, h, algo, seed, pal, jitterPal);
     const bmp = cv.transferToImageBitmap();
-    self.postMessage({ id, bmp, ms: Math.round(performance.now() - t0) }, [bmp]);
+    self.postMessage({ id, bmp, seed: r.seed, attempts: r.attempts,
+                       ms: Math.round(performance.now() - t0) }, [bmp]);
   } catch (err){
     /* The main thread must hear about every job it dispatched, or the slot it
        reserved is held for the rest of the session. */

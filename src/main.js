@@ -12,7 +12,8 @@ import { S, HS, H, WT, DOORW, DOORH, EYE, PR, DOOR_P, FOG_SIGMA, DAY_SIGMA,
 import { h2, mulberry32, SALT_EX, SALT_EY, SALT_ROOM, SALT_ART, SALT_WIN,
          WORLD_SEED, setWorldSeed, edgeOpenX, edgeOpenZ } from './world/seed.js';
 import { PALETTES, jitterPal } from './art/palettes.js';
-import { ALGO_NAMES, ALGOS, makeTitle, finishArt, resetGrain } from './art/algos.js';
+import { ALGO_NAMES, ALGOS, makeTitle, finishArt, resetGrain,
+         paintArt, scoreArt } from './art/algos.js';
 import { mat4, perspective, mulM, mulT, viewMatrix, extractPlanes, boxVisible } from './render/mat4.js';
 import { storageOK, persist, savePersist } from './persist.js';
 import { flashHint, toggleLegend } from './ui/hint.js';
@@ -674,7 +675,10 @@ async function runAcquire(A, bw, bh, year){
     const bmp = loanRec.bmp || (loanRec.bmp = await createImageBitmap(loanRec.blob));
     mountWork(acqCtx, bmp, bw, bh, fillOf(loanRec.id));
   } else {
-    const rnd = mulberry32(A.seed);
+    /* A.gateSeed is what the painter settled on. Re-running the gate here
+       would judge a 1024² render and could pick a different seed, handing the
+       visitor a copy of a work that is not the one on the wall. */
+    const rnd = mulberry32(A.gateSeed || A.seed);
     const gen = ALGOS[A.algo % ALGOS.length](acqCtx, bw, bh, rnd, jitterPal(A.pal, rnd));
     let slices = 0;
     for (;;){
@@ -2145,14 +2149,14 @@ window.DBG = {
     if (!A) return 'no artwork ' + i;
     const [w, h] = TEX_SIZES[A.asp];
     scratch.width = w; scratch.height = h;
-    const rnd = mulberry32(A.seed);
-    const gen = ALGOS[A.algo % ALGOS.length](sctx, w, h, rnd, jitterPal(A.pal, rnd));
-    while (!gen.next().done){}
-    finishArt(sctx, w, h);
+    /* Through the gate, at pool size — the same call the painters make, so the
+       hash keeps describing what actually hangs even when the gate re-rolled. */
+    const g = paintArt(sctx, w, h, A.algo % ALGOS.length, A.seed, A.pal, jitterPal);
     const d = sctx.getImageData(0, 0, w, h).data;
     let hsh = 2166136261 >>> 0;
     for (let j = 0; j < d.length; j += 17) hsh = Math.imul(hsh ^ d[j], 16777619) >>> 0;
-    return { algo: A.algo % ALGOS.length, seed: A.seed, w, h, hash: hsh };
+    return { algo: A.algo % ALGOS.length, seed: A.seed, gated: g.seed,
+             attempts: g.attempts, score: g.score, w, h, hash: hsh };
   },
   /* Render at ACQUIRE resolution and report band luminance top to bottom.
      artHash renders at pool size, which is exactly why it never caught the

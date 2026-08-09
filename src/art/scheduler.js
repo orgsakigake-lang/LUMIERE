@@ -11,7 +11,8 @@ import { rooms, roomKey } from '../world/rooms.js';
 import { theme } from '../world/themes.js';
 import { buildRoomMesh, assembleLights } from '../world/geometry.js';
 import { jitterPal } from './palettes.js';
-import { ALGO_NAMES, ALGOS, makeTitle, finishArt } from './algos.js';
+import { ALGO_NAMES, ALGOS, makeTitle, finishArt, scoreArt,
+         GATE_ATTEMPTS } from './algos.js';
 import { persist, savePersist } from '../persist.js';
 import { cloud } from '../cloud/client.js';
 import { canvas, gl } from '../render/gl.js';
@@ -210,7 +211,7 @@ function retireWorkers(why){
   console.warn(`[gen] painting on the main thread instead — ${why}`);
 }
 function onPainted(e){
-  const { id, bmp, error, ms } = e.data;
+  const { id, bmp, error, ms, seed } = e.data;
   if (ms){
     artState.paintMs = artState.paintMs ? artState.paintMs*0.8 + ms*0.2 : ms;
     const j = inflight.get(id);
@@ -225,6 +226,9 @@ function onPainted(e){
      from the register and its slot already reclaimed. Close the bitmap rather
      than leaking it — an ImageBitmap holds its pixels until told otherwise. */
   if (!job || !artState.jobs.has(job.k)){ bmp.close(); return; }
+  /* What the gate settled on, so acquire renders this work and not the one the
+     seed would have produced un-gated. */
+  if (seed !== undefined) job.A.gateSeed = seed;
   job.bmp = bmp;
   artState.painted.push(job);
 }
@@ -400,6 +404,18 @@ export function pumpArt(budgetMs = 3.5){
     if (el > 6) console.warn(`[gen] slice ${el.toFixed(1)}ms > 6ms budget (algo ${job.effAlgo})`);
     if (done){
       finishArt(sctx, scratch.width, scratch.height);
+      /* The same gate the painters apply, kept cooperative: a failing work
+         restarts from a derived seed rather than blocking for three renders. */
+      const score = scoreArt(sctx, scratch.width, scratch.height);
+      if (!score.ok && (job.gateAttempt | 0) < GATE_ATTEMPTS - 1){
+        job.gateAttempt = (job.gateAttempt | 0) + 1;
+        const s2 = h2(job.A.seed, 0x6A7E + job.gateAttempt, 0x9E37);
+        job.A.gateSeed = s2;
+        const rnd2 = mulberry32(s2);
+        job.gen = ALGOS[job.effAlgo](sctx, scratch.width, scratch.height, rnd2,
+                                     jitterPal(job.A.pal, rnd2));
+        break;
+      }
       artState.uploadReady = job;
       artState.active = null;
       break;                       // the upload happens next frame

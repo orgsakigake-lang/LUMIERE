@@ -363,6 +363,72 @@ function* genRidge(ctx, W, Hh, rnd, pal){
 
 export const ALGOS = [genFlowField, genAttractor, genTruchet, genVoronoi, genBauhaus, genRidge];
 
+/* ————— the quality gate —————
+   Roughly three works in ten read as weak and one in twenty as very nearly
+   blank — 22% of Truchet outputs are a single tile at under 2% ink coverage.
+   Only one of the six generators checked its own output, so a seed that
+   happened to land on an empty parameter corner hung on the wall anyway.
+
+   Two numbers catch almost all of it, and both are cheap on a downsample:
+   how much of the paper the work actually marks, and how much the values
+   vary. A near-blank sheet fails the first; a flat wash of one tone that
+   covers everything fails the second.
+
+   A failing seed is not discarded — it is *derived from*, so the museum stays
+   a pure function of its world seed. Same room, same wall, same work, every
+   visit, on every machine. */
+export const GATE_ATTEMPTS = 3;
+const MIN_COVERAGE = 0.055;    // fraction of the sheet meaningfully marked
+const MIN_SPREAD   = 11;       // luminance standard deviation, 0..255
+
+/** Measure a finished work. Reads a coarse grid — the verdict does not need
+ *  every pixel and this runs inside the painting loop. */
+export function scoreArt(ctx, w, h){
+  const step = Math.max(1, Math.round(Math.min(w, h) / 96));
+  const d = ctx.getImageData(0, 0, w, h).data;
+  let n = 0, sum = 0, sum2 = 0;
+  const vals = [];
+  for (let y = 0; y < h; y += step)
+    for (let x = 0; x < w; x += step){
+      const o = (y*w + x)*4;
+      const v = 0.2126*d[o] + 0.7152*d[o+1] + 0.0722*d[o+2];
+      vals.push(v); sum += v; sum2 += v*v; n++;
+    }
+  const mean = sum/n;
+  const spread = Math.sqrt(Math.max(0, sum2/n - mean*mean));
+  /* "Paper" is the most common tone, so coverage is what departs from it —
+     which works whether the ground is bone white or near black. */
+  const hist = new Uint32Array(32);
+  for (const v of vals) hist[Math.min(31, v/8 | 0)]++;
+  let paper = 0;
+  for (let i = 1; i < 32; i++) if (hist[i] > hist[paper]) paper = i;
+  const paperV = paper*8 + 4;
+  let marked = 0;
+  for (const v of vals) if (Math.abs(v - paperV) > 18) marked++;
+  const coverage = marked/n;
+  return { coverage: +coverage.toFixed(4), spread: +spread.toFixed(1),
+           ok: coverage >= MIN_COVERAGE && spread >= MIN_SPREAD };
+}
+
+/** Paint one work, gated. The single path to a finished artwork — the worker,
+ *  artHash and the main-thread fallback all come through here, so what hangs,
+ *  what hashes and what downloads cannot disagree. */
+export function paintArt(ctx, w, h, algo, seed, palIndex, jitterPal){
+  let score = null, used = seed;
+  for (let attempt = 0; attempt < GATE_ATTEMPTS; attempt++){
+    used = attempt === 0 ? seed : h2(seed, 0x6A7E + attempt, 0x9E37);
+    const rnd = mulberry32(used);
+    const gen = ALGOS[algo](ctx, w, h, rnd, jitterPal(palIndex, rnd));
+    while (!gen.next().done);
+    finishArt(ctx, w, h);
+    score = scoreArt(ctx, w, h);
+    if (score.ok) return { seed: used, score, attempts: attempt + 1 };
+  }
+  /* Three strikes and the last one hangs. Better a weak work than a hole in
+     the wall, and at three attempts this is rare. */
+  return { seed: used, score, attempts: GATE_ATTEMPTS };
+}
+
 /* unified finishing pass: vignette + paper grain (one static tile) */
 let grainPattern = null;
 /** Context-loss safety: drop the cached Canvas2D pattern. */

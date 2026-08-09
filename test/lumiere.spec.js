@@ -143,6 +143,70 @@ test.describe('determinism', () => {
     }
   });
 
+  test('no work hangs near-blank', async ({ page }) => {
+    await boot(page);
+    /* Roughly one work in twenty used to hang almost empty — a seed landing in
+       a parameter corner where a generator draws almost nothing, and only one
+       of the six checked its own output. A gate now measures coverage and
+       value spread after finishing and re-rolls from a *derived* seed, so the
+       museum stays a pure function of its world seed. */
+    const rows = await page.evaluate(() => {
+      const out = [];
+      outer:
+      for (let gx = -3; gx <= 3; gx++) for (let gz = -3; gz <= 3; gz++)
+        for (const a of window.DBG.art(gx, gz)){
+          const r = window.DBG.artHash(gx, gz, a.i);
+          out.push({ algo: r.algo, attempts: r.attempts, ...r.score });
+          if (out.length >= 24) break outer;
+        }
+      return out;
+    });
+
+    const weak = rows.filter((r) => !r.ok);
+    const rerolled = rows.filter((r) => r.attempts > 1).length;
+    const minCov = Math.min(...rows.map((r) => r.coverage));
+    console.log(`    ${rows.length} works · ${rerolled} re-rolled · `
+              + `weakest coverage ${minCov} · ${weak.length} still weak`);
+
+    expect(rows.length).toBeGreaterThan(12);
+    expect(weak).toEqual([]);                 // nothing near-blank survives
+    expect(minCov).toBeGreaterThan(0.05);
+  });
+
+  test('every ink can be seen on its own paper', async ({ page }) => {
+    await boot(page);
+    /* Four slots sat between 1.65 and 2.15:1 against their own ground, which
+       is a stroke you cannot see — and jitterHex nudges lightness both ways,
+       so it could only ever make that worse. */
+    const worst = await page.evaluate(() => {
+      const lin = (v) => { v /= 255; return v <= 0.03928 ? v/12.92 : Math.pow((v+0.055)/1.055, 2.4); };
+      const L = (h) => 0.2126*lin(parseInt(h.slice(1,3),16))
+                     + 0.7152*lin(parseInt(h.slice(3,5),16))
+                     + 0.0722*lin(parseInt(h.slice(5,7),16));
+      const cr = (a, b) => { const x = L(a), y = L(b);
+        return (Math.max(x,y) + 0.05) / (Math.min(x,y) + 0.05); };
+      let budget = 120;
+      /* The jittered palettes, as actually painted — so this proves the
+         authored contrast survives jitterHex rather than only existing in the
+         table. */
+      let lo = { ratio: Infinity };
+      outer:
+      for (let gx = -4; gx <= 4; gx++) for (let gz = -4; gz <= 4; gz++)
+        for (const a of window.DBG.art(gx, gz)){
+          const pal = window.DBG.palette(gx, gz, a.i);
+          if (!pal) continue;
+          for (const ink of pal.inks){
+            const ratio = cr(pal.paper, ink);
+            if (ratio < lo.ratio) lo = { ratio: +ratio.toFixed(2), pal: pal.name, ink };
+          }
+          if (--budget <= 0) break outer;
+        }
+      return lo;
+    });
+    console.log(`    weakest ink: ${worst.pal} ${worst.ink} at ${worst.ratio}:1`);
+    expect(worst.ratio).toBeGreaterThan(2.5);
+  });
+
   test('every algorithm and palette index stays in range', async ({ page }) => {
     await boot(page);
     const bad = await page.evaluate(() => {
