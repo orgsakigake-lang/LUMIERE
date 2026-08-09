@@ -8,13 +8,35 @@
    ═══════════════════════════════════════════════════════════════════ */
 import { S, HS, H, WT, DOORW, DOORH } from '../config.js';
 import { SPECIAL, spotAt, getRoom, RIG } from './rooms.js';
+import { theme } from './themes.js';
 
+/* 0 ordinary · 1 vermilion · 2 archive · 3 dark room. The live values; a theme
+   overwrites index 0 outright and pulls the three set-pieces toward their own
+   grey by its `chroma`. Pulling rather than replacing is what keeps the
+   Vermilion Cabinet recognisably itself in a monochrome hall instead of
+   becoming another grey room — it goes quiet, not absent. */
 export const SCHEMES = [
   { wall:[0.166,0.150,0.132], floor:[0.105,0.094,0.082], ceil:[0.070,0.065,0.058], trim:[0.050,0.046,0.040] },
   { wall:[0.300,0.082,0.058], floor:[0.088,0.062,0.050], ceil:[0.078,0.050,0.040], trim:[0.360,0.280,0.140] },
   { wall:[0.190,0.170,0.140], floor:[0.100,0.090,0.078], ceil:[0.068,0.063,0.056], trim:[0.055,0.050,0.043] },
   { wall:[0.058,0.055,0.050], floor:[0.050,0.047,0.043], ceil:[0.040,0.038,0.035], trim:[0.030,0.028,0.025] },
 ];
+/* The unthemed originals, so switching themes re-derives from these instead of
+   desaturating an already-desaturated set. */
+const SCHEMES_BASE = SCHEMES.map(s => {
+  const o = {}; for (const k in s) o[k] = s[k].slice(); return o;
+});
+/** Overwrite the ordinary room's scheme and take the specials `chroma` of the
+ *  way to grey. Called by applyTheme; the caller rebuilds the meshes. */
+export function applyScheme(scheme, chroma){
+  for (const k in SCHEMES[0]) SCHEMES[0][k] = (scheme[k] || SCHEMES_BASE[0][k]).slice();
+  for (let i = 1; i < SCHEMES.length; i++)
+    for (const k in SCHEMES[i]){
+      const b = SCHEMES_BASE[i][k];
+      const y = 0.2126*b[0] + 0.7152*b[1] + 0.0722*b[2];
+      SCHEMES[i][k] = [0,1,2].map(c => y + (b[c] - y) * chroma);
+    }
+}
 
 export function buildRoomMesh(r, daylight){
   const V = [], I = [];
@@ -132,7 +154,14 @@ export function buildRoomMesh(r, daylight){
   }
 
   const BW = 0.075, BD = 0.055;                        // frame bar width/depth
-  const CANVAS_COL = [0.092, 0.082, 0.070];            // unlit canvas (real art overlays it)
+  /* Unlit canvas; real art overlays it. In a solo theme most frames stay empty
+     for good, so a dark warm rectangle in every one of them reads as a museum
+     that failed to load. Empty frames instead take the wall a shade darker and
+     recede — with their lamps off too, they are barely there, which is the
+     point: you see what you hung. */
+  const CANVAS_COL = theme().solo
+    ? SCH.wall.map(v => v * 0.86)
+    : [0.092, 0.082, 0.070];
   const PLACARD_COL = [0.295, 0.275, 0.238];
   for (const A of r.artworks){
     const u0 = A.u - A.w/2, u1 = A.u + A.w/2;

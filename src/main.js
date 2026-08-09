@@ -18,10 +18,12 @@ import { storageOK, persist, savePersist } from './persist.js';
 import { flashHint } from './ui/hint.js';
 import { audio, initAudio, bell, footstep, toggleMute, setAudioActive } from './audio.js';
 import { SPECIAL, rooms, roomKey, getRoom, spotAt, specialAt, RIG } from './world/rooms.js';
+import { THEMES, THEME_ORDER, DEFAULT_THEME, theme, themeName, setThemeName,
+         nextThemeName } from './world/themes.js';
 import { cloud, setFetch, cloudSaveSess, cloudSendCode, cloudVerify, cloudPublicURL,
          cloudUploadBlob, cloudDeleteUpload, cloudSetPlacement, cloudDelPlacement,
          cloudClaimSlug, cloudSetPublished, cloudLoadMine, cloudLoadGallery, cloudBoot } from './cloud/client.js';
-import { SCHEMES, buildRoomMesh, assembleLights, MAX_LIGHTS } from './world/geometry.js';
+import { SCHEMES, applyScheme, buildRoomMesh, assembleLights, MAX_LIGHTS } from './world/geometry.js';
 import { canvas, gl, compile, program } from './render/gl.js';
 import { PERF, dprCap } from './render/perf.js';
 import { post, postCaps, wantSamples, setForcedSamples, allocPost, runPost,
@@ -105,7 +107,8 @@ function initPrograms(){
   uBright.uTex = gl.getUniformLocation(pBright, 'uTex');
   uBlur.uTex = gl.getUniformLocation(pBlur, 'uTex');
   uBlur.uDir = gl.getUniformLocation(pBlur, 'uDir');
-  for (const nm of ['uTex','uBloom','uTime','uRes','uExposure','uGrain'])
+  for (const nm of ['uTex','uBloom','uTime','uRes','uExposure','uGrain',
+                    'uShadowTint','uLightTint','uVignette'])
     uComp[nm] = gl.getUniformLocation(pComp, nm);
 
   progFlame = program(VS_FLAME, FS_FLAME);
@@ -179,6 +182,7 @@ function packLights(r, ox, oz, force){
   const list = r.lights; let n = 0;
   for (let i = 0; i < list.length && n < MAX_LIGHTS; i++){
     const l = list[i];
+    if (l.off) continue;                       // a frame with nothing in it
     if (!lightsOn && !l.sun && !l.fill) continue;
     const dim = !lightsOn && l.fill;
     const b = n*4;
@@ -355,6 +359,7 @@ addEventListener('keydown', (e)=>{
   if (e.code === 'KeyC'){ curatorToggle(); return; }
   if (e.code === 'KeyH'){ curatorHang(); return; }
   if (e.code === 'KeyU'){ curatorUnhang(); return; }
+  if (e.code === 'KeyT'){ applyTheme(nextThemeName()); return; }
   if (e.code === 'Space'){ doJump(); return; }
   if (inspect.on && ['KeyW','KeyA','KeyS','KeyD'].includes(e.code)) inspectOff();
   keys.add(e.code);
@@ -877,6 +882,71 @@ function curatorClearPlacement(k){
   savePlacements();
   syncArtJobs();                                  // regenerate the seeded work if needed
 }
+/* ————— themes —————
+   Everything a theme touches is a live, mutable structure, so applying one is
+   an overwrite followed by a full rebuild. */
+function rebuildWorld(){
+  /* genLights runs once, inside getRoom, and rooms are cached — so rebuilding
+     the meshes alone reuses the old ownLights and any patch appears to do
+     nothing. The cache has to go. Releasing the art slots is not optional
+     either: they are keyed to the room objects being discarded, and leaving
+     them held starves every new job forever, since startJob re-queues rather
+     than failing. Shared by DBG.relight, DBG.seed and applyTheme, because
+     getting this teardown half-right is exactly how the pools got starved. */
+  freeAllArtSlots();
+  artState.jobs.clear(); artState.queue.length = 0;
+  artState.active = null; artState.uploadReady = null;
+  artState.placards.length = 0;
+  for (const [, o] of curator.overrides){ gl.deleteTexture(o.tex); o.A.override = null; }
+  curator.overrides.clear();
+  for (const [, r] of rooms) dropRoomGL(r);
+  rooms.clear();
+  onRoomChanged();
+}
+/** Write the active theme into every live constant. Safe before any room
+ *  exists — boot calls it so the first meshes are cut from the right schemes
+ *  and genLights reads the right rig. */
+function applyThemeConstants(){
+  const t = theme();
+  for (const k in t.rig) if (RIG[k]) RIG[k].col = t.rig[k].slice();
+  applyScheme(t.scheme, t.chroma);
+  for (let i = 0; i < 3; i++){ FOG[i] = t.fog[i]; AMB_BASE[i] = t.amb[i]; }
+  setSigma(t.sigma, t.daySigma);
+  GRADE.exposure = t.grade.exposure;
+  GRADE.grain = t.grade.grain;
+  GRADE.vignette = t.grade.vignette;
+  GRADE.shadowTint = t.grade.shadowTint.slice();
+  GRADE.lightTint  = t.grade.lightTint.slice();
+  Object.assign(MOUNT, t.mount);
+}
+/** The theme picker in the Curator's Office. Rebuilt rather than patched: it is
+ *  three buttons, and the alternative is keeping DOM and state in step by hand. */
+function themeUI(){
+  const box = document.getElementById('cur-themes');
+  if (!box) return;
+  box.textContent = '';
+  for (const name of THEME_ORDER){
+    const t = THEMES[name];
+    const b = document.createElement('button');
+    b.type = 'button'; b.className = 'cur-theme';
+    b.setAttribute('aria-pressed', String(name === themeName()));
+    const nm = document.createElement('span'); nm.className = 'nm'; nm.textContent = t.label;
+    const fw = document.createElement('span'); fw.className = 'fw'; fw.textContent = t.forWhat;
+    b.append(nm, fw);
+    b.addEventListener('click', () => { if (name !== themeName()) applyTheme(name); });
+    box.append(b);
+  }
+}
+function applyTheme(name, quiet){
+  setThemeName(name);
+  applyThemeConstants();
+  persist.theme = themeName(); savePersist();
+  rebuildWorld();
+  themeUI();
+  if (!quiet) flashHint(`<b>${theme().label}</b> — ${theme().forWhat}`);
+  return themeName();
+}
+
 /* ————— the window mount —————
    A drawing used to be cover-cropped to whatever frame it was hung in, so a
    portrait sheet in a landscape frame simply lost its top and bottom. A mount
@@ -899,6 +969,9 @@ function setFixture(r, i, paper){
   const F = paper ? RIG.paper
           : r.special === SPECIAL.VERMILION ? RIG.spotVermil : RIG.spot;
   L.col = F.col; L.inner = F.inner; L.outer = F.outer; L.invR2 = 1/(F.range*F.range);
+  /* A solo theme generates nothing, so taking a drawing down leaves the frame
+     genuinely empty — and an empty frame gets no lamp. */
+  L.off = !paper && theme().solo;
   assembleLights(r, WIN.on);
   return true;
 }
@@ -1958,19 +2031,7 @@ if (DBG_FULL) Object.assign(window.DBG, {
   /** Patch the lighting rig and rebuild every room: DBG.relight({spot:{col:[20,16,11]}}). */
   relight(patch){
     if (patch) for (const k of Object.keys(patch)) Object.assign(RIG[k], patch[k]);
-    /* genLights runs once, inside getRoom, and rooms are cached — so rebuilding
-       the meshes alone reuses the old ownLights and the patch appears to do
-       nothing. The cache has to go. Releasing the art slots is not optional
-       either: they are keyed to the room objects being discarded, and leaving
-       them held starves every new job forever, since startJob re-queues rather
-       than failing. Same teardown as DBG.seed. */
-    freeAllArtSlots();
-    artState.jobs.clear(); artState.queue.length = 0;
-    artState.active = null; artState.uploadReady = null;
-    artState.placards.length = 0;
-    for (const [, r] of rooms) dropRoomGL(r);
-    rooms.clear();
-    onRoomChanged();
+    rebuildWorld();
     return JSON.parse(JSON.stringify(RIG));
   },
   /** Night and day fog colour — the real floor of the image, since every
@@ -1988,6 +2049,12 @@ if (DBG_FULL) Object.assign(window.DBG, {
   },
   /** Whether an image would be stored lossless. Takes a canvas or a bitmap. */
   uploadKind(src){ return looksLikeLineArt(src) ? 'png' : 'jpeg'; },
+  /** Switch or read the gallery theme: DBG.theme('graphite'). */
+  theme(name){
+    if (name) applyTheme(name, true);
+    return { name: themeName(), solo: theme().solo, chroma: theme().chroma,
+             order: THEME_ORDER.slice() };
+  },
   /** Fog extinction per metre — how fast a surface stops being lit and starts
    *  being fog. Dominates every other lighting control. DBG.sigma(0.038). */
   sigma(night, day){ setSigma(night, day); return { night: FOG_SIGMA, day: DAY_SIGMA }; },
@@ -2055,6 +2122,11 @@ if (gl){
   lightsOn = persist.lightsOn !== false;      // both switches remember their setting
   WIN.on = !!persist.shutters;
   swUI();
+  /* Before the first room is built: the theme decides the schemes the meshes
+     are cut from and the rig genLights reads. */
+  setThemeName(persist.theme || DEFAULT_THEME);
+  applyThemeConstants();
+  themeUI();
   ensureBuilt();
   onRoomChanged();
   /* Booting with no network used to throw an unhandled rejection here and

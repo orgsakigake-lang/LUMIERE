@@ -4,6 +4,10 @@ in vec2 vUV;
 uniform sampler2D uTex; uniform sampler2D uBloom;
 uniform float uTime; uniform vec2 uRes;
 uniform float uExposure; uniform float uGrain;
+/* Split-tone and vignette are per-theme. The salon's teal-shadow/amber-light
+   film look is exactly what a monochrome room must not have, so a theme can
+   flatten these to identity rather than fight them. */
+uniform vec3 uShadowTint; uniform vec3 uLightTint; uniform float uVignette;
 out vec4 o;
 vec3 aces(vec3 x){
   return clamp((x*(2.51*x + 0.03)) / (x*(2.43*x + 0.59) + 0.14), 0.0, 1.0);
@@ -24,11 +28,11 @@ float hash(vec2 p){
 void main(){
   vec3 c = texture(uTex, vUV).rgb + texture(uBloom, vUV).rgb * 0.9;
   c = aces(c * uExposure);
-  /* split-tone: cool shadows, warm lights — the film look of old halls */
+  /* split-tone: the film look of old halls, or nothing at all */
   float lum = dot(c, vec3(0.299, 0.587, 0.114));
-  c *= mix(vec3(0.965, 0.99, 1.065), vec3(1.045, 1.0, 0.945), smoothstep(0.04, 0.62, lum));
+  c *= mix(uShadowTint, uLightTint, smoothstep(0.04, 0.62, lum));
   vec2 vg = vUV - 0.5;
-  c *= 1.0 - 0.34 * smoothstep(0.28, 0.72, dot(vg, vg));
+  c *= 1.0 - uVignette * smoothstep(0.28, 0.72, dot(vg, vg));
 
   /* Encode last. Without this the whole museum was displayed at L^2.2: an
      ambient-only wall computed 0.0052 and showed as 1/255 instead of 23/255,

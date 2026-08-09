@@ -4,6 +4,7 @@
    at them. No GL here — buildRoomMesh turns this into geometry.
    ═══════════════════════════════════════════════════════════════════ */
 import { S, HS, H, WT, DOORW } from '../config.js';
+import { theme } from './themes.js';
 import { h2, mulberry32, SALT_ROOM, SALT_ART, SALT_WIN, WORLD_SEED,
          edgeOpenX, edgeOpenZ } from './seed.js';
 import { PALETTES } from '../art/palettes.js';
@@ -125,6 +126,16 @@ const FRAME_COLS = [
   [[0.470,0.360,0.190], .15],   // brass
   [[0.300,0.230,0.150], .15],   // oak
 ];
+/* A gilt frame is a warm light source of its own once a lamp hits it, which is
+   the last thing a neutral hall wants. Mouldings take the theme's chroma along
+   with the walls: brass becomes pewter, walnut becomes graphite. Frames are
+   chosen at room build and rooms rebuild on a theme change, so this is enough. */
+function themedFrame(col){
+  const c = theme().chroma;
+  if (c >= 1) return col;
+  const y = 0.2126*col[0] + 0.7152*col[1] + 0.0722*col[2];
+  return col.map(v => y + (v - y) * c);
+}
 function pickW(rnd, table){
   let t = rnd(), acc = 0;
   for (const row of table){ acc += row[row.length-1]; if (t < acc) return row; }
@@ -139,7 +150,7 @@ function genArtworks(r, rnd){
                               : ['e','w','n','s'][Math.floor(rnd()*4)];
     const [asp, w, h] = pickW(rnd, ASPECTS);
     r.artworks.push({
-      wall, u: (rnd()-.5)*1.5, asp, w, h, frame: FRAME_COLS[1][0],
+      wall, u: (rnd()-.5)*1.5, asp, w, h, frame: themedFrame(FRAME_COLS[1][0]),
       segA: -HS+1, segB: HS-1,
       algo: Math.floor(rnd()*ALGOS.length), seed: (rnd()*4294967296)>>>0, pal: Math.floor(rnd()*PALETTES.length),
     });
@@ -157,7 +168,7 @@ function genArtworks(r, rnd){
           const u = -HS + 2 + (col + 0.5)*((2*HS - 4)/cols) + (rnd()-.5)*0.2;
           r.artworks.push({
             wall, u, asp: 'S', w: 0.62, h: 0.62, mini: true, hangY: 1.15 + row*0.95,
-            frame: FRAME_COLS[1][0], segA: -HS+0.5, segB: HS-0.5,
+            frame: themedFrame(FRAME_COLS[1][0]), segA: -HS+0.5, segB: HS-0.5,
             algo: Math.floor(rnd()*ALGOS.length), seed: (rnd()*4294967296)>>>0, pal: Math.floor(rnd()*PALETTES.length),
           });
         }
@@ -189,7 +200,7 @@ function genArtworks(r, rnd){
       const [frame] = pickW(rnd, FRAME_COLS);
       r.artworks.push({
         wall, u: c, asp, w, h,
-        frame: r.special === SPECIAL.VERMILION ? FRAME_COLS[2][0] : frame,
+        frame: themedFrame(r.special === SPECIAL.VERMILION ? FRAME_COLS[2][0] : frame),
         segA: a, segB: b,
         algo: Math.floor(rnd()*ALGOS.length),
         seed: (rnd() * 4294967296) >>> 0,
@@ -288,7 +299,11 @@ function genLights(r, rnd){
     const back = sign * (IN - 1.55), y = H - 0.22, ty = (A.hangY || 1.5);
     const p = horiz ? [back, y, A.u] : [A.u, y, back];
     const t = horiz ? [sign*IN, ty, A.u] : [A.u, ty, sign*IN];
-    r.ownLights.push(Object.assign(spotAt(p, t, S.col, S.inner, S.outer, S.range), { forArt: i }));
+    /* In a solo theme nothing is generated, so a frame is dark until something
+       of yours hangs in it — applyPlacement turns its lamp on. The moulding
+       stays either way: you need a frame to aim at in order to hang. */
+    r.ownLights.push(Object.assign(spotAt(p, t, S.col, S.inner, S.outer, S.range),
+                                   { forArt: i, off: theme().solo }));
   }
   /* the chandelier always burns at the centre — and lights its own ceiling */
   const C = RIG.chandelier, CU = RIG.chandUp;

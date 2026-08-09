@@ -8,6 +8,7 @@
 import { S, HS, WT, trace } from '../config.js';
 import { h2, mulberry32, WORLD_SEED } from '../world/seed.js';
 import { rooms, roomKey } from '../world/rooms.js';
+import { theme } from '../world/themes.js';
 import { buildRoomMesh, assembleLights } from '../world/geometry.js';
 import { jitterPal } from './palettes.js';
 import { ALGO_NAMES, ALGOS, makeTitle, finishArt } from './algos.js';
@@ -106,6 +107,9 @@ export function syncArtJobs(){
         const k = artJobKey(r, i);
         want.add(k);
         if (loans && loans.apply(r, A, i, k)) return;   // a private loan hangs here
+        /* A solo theme shows only what its curator hung: no seeded work is
+           generated, which also means none of the generation cost. */
+        if (theme().solo) return;
         if (A.tex) return;
         let job = artState.jobs.get(k);
         if (!job){

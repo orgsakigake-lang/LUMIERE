@@ -182,6 +182,19 @@ roughly a third of the intensity the paintings get, because paper hangs at about
 cooler than the generated paintings beside it. That is the intended reading, not
 a fault.
 
+**Pick the theme that matches your work.** Press `T`, or choose in the Curator's
+Office. If you are showing pencil, charcoal or ink, choose **Graphite**: the
+lamps go near-neutral, the walls drop to a low-chroma grey, and the grade's
+split-tone flattens to almost nothing — all of it so that no colour reaches a
+monochrome sheet from the lamp, from a bounced wall, or from the grade. Measured
+across the frame, mean chroma falls from 14.0 in the Salon to 2.9.
+
+Graphite also shows **only your work**: it generates no paintings of its own,
+and a frame with nothing in it keeps its moulding but not its lamp, so it
+recedes into the dark. Expect a mostly empty gallery until you have uploaded a
+lot — that is the trade. **Salon** and **Studio** both keep the generated
+collection, so switch to one of those if you want the museum full again.
+
 **Press `E` to take one home.** It re-renders at 1024² — mounted, the way it
 hangs — and offers a PNG. Saving is a separate click; nothing writes to your
 disk on a keypress.

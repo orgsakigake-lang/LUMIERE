@@ -490,6 +490,79 @@ test.describe.serial('inside the gallery', () => {
     expect(kinds.photo).toBe('jpeg');
   });
 
+  test('a theme changes the colour of the whole room, not just the walls', async () => {
+    /* The point of a theme is that a monochrome drawing meets no colour on its
+       way to the eye — not from the lamp, not bounced off a wall, not added by
+       the grade's split-tone. Mean chroma over the frame is the one number that
+       catches all three at once, so it is what this asserts. */
+    const measure = async () => page.evaluate(() => {
+      const c = document.getElementById('gl'), g = c.getContext('webgl2');
+      window.DBG.frame(6, 16.7);
+      const w = c.width, h = c.height, b = new Uint8Array(w*h*4);
+      g.readPixels(0, 0, w, h, g.RGBA, g.UNSIGNED_BYTE, b);
+      let n = 0, chroma = 0;
+      for (let y = 0; y < h; y += 6)
+        for (let x = 0; x < w; x += 6){
+          const o = ((h-1-y)*w + x)*4;
+          chroma += Math.max(b[o],b[o+1],b[o+2]) - Math.min(b[o],b[o+1],b[o+2]);
+          n++;
+        }
+      return chroma / n;
+    });
+    /* Deliberately no art drain. Chroma here comes from the walls, the floor,
+       the lamps and the grade — none of which need a generated painting, and
+       draining 54 works under SwiftShader kills the renderer outright. */
+    const settle = async (name) => {
+      await page.evaluate((t) => {
+        window.DBG.theme(t);
+        window.DBG.tp(0, 0, 0);
+        if (!window.DBG.stats().lights) dispatchEvent(new KeyboardEvent('keydown', { code:'KeyL', bubbles:true }));
+        if (window.DBG.stats().shutters) dispatchEvent(new KeyboardEvent('keydown', { code:'KeyO', bubbles:true }));
+      }, name);
+      return measure();
+    };
+
+    const salon = await settle('salon');
+    const graphite = await settle('graphite');
+    console.log(`    mean chroma: salon ${salon.toFixed(1)}  graphite ${graphite.toFixed(1)}`);
+
+    expect(salon).toBeGreaterThan(6);            // the warm hall is meant to be warm
+    expect(graphite).toBeLessThan(salon * 0.45); // and the monochrome hall is not
+    await page.evaluate(() => window.DBG.theme('salon'));
+  });
+
+  test('a solo theme hangs only what its curator hung', async () => {
+    /* Graphite is `solo`: it generates nothing, so an empty frame stays empty
+       and its lamp stays off. Getting the lamp wrong is the visible failure —
+       a room of brightly lit blank rectangles. */
+    /* Asserted on what is scheduled rather than what finished painting: the
+       claim is that solo never queues the work at all, and waiting for 54
+       generators under software GL is what kills this suite. */
+    const state = await page.evaluate(() => {
+      const out = {};
+      window.DBG.theme('graphite');
+      window.DBG.tp(0, 0, 0);
+      window.DBG.frame(4, 16.7);
+      out.soloQueued = window.DBG.stats().queued;
+      out.soloLights = window.DBG.lightsInfo().packed;
+
+      window.DBG.theme('salon');
+      window.DBG.tp(0, 0, 0);
+      window.DBG.frame(4, 16.7);
+      out.salonQueued = window.DBG.stats().queued;
+      out.salonLights = window.DBG.lightsInfo().packed;
+      return out;
+    });
+    console.log(`    solo: ${state.soloQueued} queued / ${state.soloLights} lights · `
+              + `salon: ${state.salonQueued} queued / ${state.salonLights} lights`);
+
+    expect(state.soloQueued).toBe(0);              // solo schedules no seeded work
+    expect(state.salonQueued).toBeGreaterThan(0);  // the ordinary hall still does
+    // every unhung frame's lamp is off, so solo keeps strictly fewer lights lit
+    expect(state.soloLights).toBeLessThan(state.salonLights);
+    await page.evaluate(() => window.DBG.theme('salon'));
+  });
+
   test('the image uses its tonal range instead of crushing into black', async () => {
     /* The colour pipeline had no sRGB encode and no sRGB decode, so everything
        was displayed at L^2.2 and the whole museum lived in about 70 of the 255

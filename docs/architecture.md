@@ -93,6 +93,43 @@ updates are pushed from state transitions, never polled per frame.
 1/64 thresholds written out twice. Both of these were real bugs waiting: adding
 a seventh algorithm used to silently do nothing.
 
+## Themes
+
+`world/themes.js` is a leaf holding three whole-room presets. A theme owns every
+lever that can put colour on a work: the rig's temperature and level, the wall
+and floor schemes, fog colour and extinction, the grade's exposure, grain,
+split-tone and vignette, and the mount stock. `main.js` owns applying it —
+`applyThemeConstants()` overwrites the live structures, `applyTheme()` adds
+persistence, a rebuild and the UI.
+
+Two rules keep it honest:
+
+- **Themes mutate, they do not shadow.** Every structure a theme touches was
+  already mutable, so nothing downstream needed a new read path. The cost is
+  that the live values drift from the source defaults, which is why
+  `SCHEMES_BASE` exists — the specials are re-derived from the originals on
+  every switch rather than desaturated again on top of themselves.
+- **Specials are pulled toward grey, not replaced.** `chroma` takes the
+  Vermilion Cabinet a fraction of the way to its own luminance, so in a
+  monochrome hall it goes quiet rather than becoming another grey room. Frame
+  mouldings take the same treatment — a gilt frame is a warm light source once
+  a lamp hits it.
+
+`solo` means the theme generates nothing: `syncArtJobs` returns early, and
+`genLights` marks each artwork's lamp `off` until `applyPlacement` turns it on.
+An empty frame keeps its moulding — you need something to aim at to hang — but
+without a lamp it recedes, and its canvas placeholder is the wall a shade darker
+rather than the usual dark warm rectangle, which in a mostly-empty room reads as
+a museum that failed to load.
+
+**Any theme change requires the full teardown**, so `rebuildWorld()` is shared
+by `applyTheme`, `DBG.relight` and `DBG.seed`. See the warning under the
+lighting model: half-doing this teardown is how the art pools got starved.
+
+Judge a theme with mean chroma over the frame — it catches a cast from the lamp,
+from a bounced wall, or from the grade, all at once. Salon measures 14.0 and
+graphite 2.9, and a test holds the ratio.
+
 ## The lighting model
 
 Read this before changing any light. It is the part of the codebase that has

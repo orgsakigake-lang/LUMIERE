@@ -59,8 +59,36 @@ Edge, or Firefox.
 | `E` | acquire — re-renders the work at 1024² and offers it as a PNG |
 | `L` | the lamps — on/off (also a wall switch, bottom right) |
 | `O` | the shutters — open them and sunlight pours through the windows |
+| `T` | cycle the gallery theme |
 | `C` | the Curator's Office |
 | `M` | sound on/off |
+
+## Themes
+
+A theme is not a colour swap — it is the whole room agreeing to serve one kind
+of work. Light is never neutral by accident: a 2700 K tungsten lamp is
+1 : 0.80 : 0.55, and everything it falls on is told that story. Walls matter for
+the same reason, since light bounces off them onto the work — a warm wall is a
+warm lamp you cannot switch off. So a theme sets the temperature and level of
+every fixture, the schemes the walls and floors are cut from, how far the air
+carries, where the grade puts its contrast, and what the mounts are made of.
+
+| theme | for | what changes |
+|---|---|---|
+| **Salon** | painted work — oil, pastel, gouache | 2700 K tungsten, deep warm walls, the film split-tone of old halls |
+| **Graphite** | monochrome work on paper — pencil, charcoal, ink | near-neutral lamps, low-chroma grey walls, split-tone flattened to almost nothing, cool-white rag mounts |
+| **Studio** | digital and contemporary work | the white cube: 60% albedo walls, ~5200 K daylight, air that barely carries, almost no vignette |
+
+**Graphite is `solo`:** it generates nothing. The only lit frames are the ones
+holding your work — empty frames keep their moulding, because you need
+something to aim at in order to hang, but their lamps stay off and unlit frames
+disappear into a dark room. You see what you hung, and nothing else.
+
+Measured, mean chroma across the frame: **salon 14.0 · graphite 2.9.** That
+number is the whole point — it catches a colour cast whether it came from the
+lamp, from a wall, or from the grade.
+
+Switch with `T`, or in the Curator's Office. The choice is remembered.
 
 ## The two switches
 

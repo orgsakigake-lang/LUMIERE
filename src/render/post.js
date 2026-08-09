@@ -14,9 +14,13 @@ import { PERF } from './perf.js';
    at L^2.2, so exposure and grain were compensating for a crush rather than
    describing an intent. Now that the encode is correct they mean what they say.
    DBG.grade({...}) adjusts them without a rebuild. */
+/* The live grade. Themes overwrite these — see world/themes.js. */
 export const GRADE = {
   exposure: 1.35,   // scene-linear multiplier before ACES
   grain: 0.014,     // display-space dither, applied after the sRGB encode
+  vignette: 0.34,
+  shadowTint: [0.965, 0.99, 1.065],
+  lightTint:  [1.045, 1.0,  0.945],
 };
 
 export let progBright, progBlur, progComp;
@@ -183,6 +187,9 @@ export function runPost(quadVAO){
   gl.uniform2f(uComp.uRes, post.w, post.h);
   gl.uniform1f(uComp.uExposure, GRADE.exposure);
   gl.uniform1f(uComp.uGrain, GRADE.grain);
+  gl.uniform3fv(uComp.uShadowTint, GRADE.shadowTint);
+  gl.uniform3fv(uComp.uLightTint, GRADE.lightTint);
+  gl.uniform1f(uComp.uVignette, GRADE.vignette);
   gl.activeTexture(gl.TEXTURE0);
   gl.bindTexture(gl.TEXTURE_2D, post.texScene);
   gl.activeTexture(gl.TEXTURE1);
