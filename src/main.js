@@ -12,6 +12,11 @@ import { h2, mulberry32, SALT_EX, SALT_EY, SALT_ROOM, SALT_ART, SALT_WIN,
          WORLD_SEED, setWorldSeed, edgeOpenX, edgeOpenZ } from './world/seed.js';
 import { PALETTES, jitterPal } from './art/palettes.js';
 import { ALGO_NAMES, ALGOS, makeTitle, finishArt, resetGrain } from './art/algos.js';
+import { mat4, perspective, mulM, mulT, viewMatrix, extractPlanes, boxVisible } from './render/mat4.js';
+import { storageOK, persist, savePersist } from './persist.js';
+import { flashHint } from './ui/hint.js';
+import { audio, initAudio, bell, footstep, toggleMute, setAudioActive } from './audio.js';
+import { SPECIAL, rooms, roomKey, getRoom, spotAt, specialAt } from './world/rooms.js';
 
 import VS_ARCH from './render/shaders/arch.vert';
 import FS_ARCH from './render/shaders/arch.frag';
@@ -27,227 +32,6 @@ import VS_POST from './render/shaders/post.vert';
 import FS_BRIGHT from './render/shaders/bright.frag';
 import FS_BLUR from './render/shaders/blur.frag';
 import FS_COMP from './render/shaders/composite.frag';
-
-/* ————— §2 World gen ————— */
-const SPECIAL = { NONE:0, VERMILION:1, ARCHIVE:2, DARKROOM:3 };
-const rooms = new Map();   // "gx,gz" → room record
-
-function roomKey(gx, gz){ return gx + ',' + gz; }
-
-function getRoom(gx, gz){
-  const k = roomKey(gx, gz);
-  let r = rooms.get(k);
-  if (r) return r;
-  const seed = h2(gx, gz, SALT_ROOM ^ WORLD_SEED);
-  const rnd = mulberry32(seed);
-  let special = SPECIAL.NONE;
-  const sroll = rnd();
-  if (gx !== 0 || gz !== 0){
-    if      (sroll < 1/64) special = SPECIAL.VERMILION;
-    else if (sroll < 2/64) special = SPECIAL.ARCHIVE;
-    else if (sroll < 3/64) special = SPECIAL.DARKROOM;
-  }
-  r = {
-    gx, gz, seed, special,
-    doors: {                       // e:+x  w:−x  n:+z  s:−z
-      e: edgeOpenX(gx, gz),
-      w: edgeOpenX(gx - 1, gz),
-      n: edgeOpenZ(gx, gz),
-      s: edgeOpenZ(gx, gz - 1),
-    },
-    mood: [0, 0, 0],
-    artworks: [],                  // {wall,u,asp,w,h,frame,algo,seed,pal}
-    ownLights: [],                 // room-local {p:[x,y,z], d:[x,y,z], col:[r,g,b], inner, outer, invR2}
-    lights: null,                  // final list incl. neighbour spill (assembled at VAO build)
-    vao: null, vbo: null, ibo: null, nIdx: 0,
-    colliders: [],                 // room-local {cx,cz,hx,hz}
-  };
-  const ar = mulberry32(h2(gx, gz, SALT_ART ^ WORLD_SEED));
-  r.mood = [(ar()-.5)*.02, (ar()-.5)*.016, (ar()-.5)*.02];
-  genArtworks(r, ar);
-  genLights(r, ar);
-  r.ambScale = r.special === SPECIAL.DARKROOM ? 0.30
-             : r.special === SPECIAL.VERMILION ? 1.12 : 1;
-  if (r.special === SPECIAL.DARKROOM && r.artworks[0]){
-    const A = r.artworks[0];
-    const sign = (A.wall==='e'||A.wall==='n') ? 1 : -1;
-    const horiz = (A.wall==='e'||A.wall==='w');
-    const back = sign * (HS - WT - 3.4);
-    r.bench = horiz ? { x: back, z: A.u, alongZ: true } : { x: A.u, z: back, alongZ: false };
-  } else if (!r.special){
-    const b1 = ar(), b2 = ar(), b3 = ar(), b4 = ar();
-    if (b1 < 0.30) r.bench = { x: (b2-.5)*2.2, z: (b3-.5)*2.2, alongZ: b4 < 0.5 };
-    else if (b2 < 0.13) r.pedestal = { x: (b3-.5)*3, z: (b4-.5)*3 };
-  }
-  if (r.special === SPECIAL.VERMILION || r.special === SPECIAL.ARCHIVE){
-    r.shaft = { x: (ar()<.5?-1:1)*(1.6+ar()*1.5), z: (ar()<.5?-1:1)*(1.6+ar()*1.5) };
-  }
-  /* window slots — computed always so the world stays deterministic;
-     glass and sunlight only materialise while the shutters are open */
-  r.windows = [];
-  if (r.special !== SPECIAL.DARKROOM){
-    const wr = mulberry32(h2(gx, gz, SALT_WIN ^ WORLD_SEED));
-    const walls = ['e','w','n','s'].filter(w => !r.doors[w]);
-    for (let i = walls.length-1; i > 0; i--){
-      const j = Math.floor(wr()*(i+1)); const t = walls[i]; walls[i] = walls[j]; walls[j] = t;
-    }
-    for (const wall of walls){
-      if (r.windows.length >= 2) break;
-      const spans = r.artworks.filter(A => A.wall === wall)
-        .map(A => [A.u - A.w/2 - 0.62, A.u + A.w/2 + 0.62])
-        .sort((a, b) => a[0] - b[0]);
-      let cur = -HS + 1.0; const gaps = [];
-      for (const [a, b] of spans){
-        if (a - cur >= 1.75) gaps.push([cur, a]);
-        cur = Math.max(cur, b);
-      }
-      if (HS - 1.0 - cur >= 1.75) gaps.push([cur, HS - 1.0]);
-      if (!gaps.length) continue;
-      const g = gaps[Math.floor(wr()*gaps.length)];
-      const u = (g[0]+g[1])/2 + (wr()-.5)*Math.max(0, g[1]-g[0]-1.75)*0.4;
-      r.windows.push({ wall, u, w: 1.3, h: 2.3, cy: 1.78 });
-    }
-  }
-  rooms.set(k, r);
-  return r;
-}
-
-/* Artwork placement: hangable segments per wall (doors carve flanks),
-   seed-shuffled, up to 6 works per room. Real pigment arrives with the
-   art pipeline; geometry (frames, placards) hangs from these records. */
-const ASPECTS = [
-  ['L', 1.87, 1.40, .30], ['P', 1.14, 1.52, .28],
-  ['S', 1.35, 1.35, .22], ['W', 2.24, 1.40, .20],
-];
-const FRAME_COLS = [
-  [[0.196,0.132,0.088], .45],   // walnut
-  [[0.055,0.052,0.048], .25],   // black lacquer
-  [[0.470,0.360,0.190], .15],   // brass
-  [[0.300,0.230,0.150], .15],   // oak
-];
-function pickW(rnd, table){
-  let t = rnd(), acc = 0;
-  for (const row of table){ acc += row[row.length-1]; if (t < acc) return row; }
-  return table[table.length-1];
-}
-function genArtworks(r, rnd){
-  const IN = HS - WT, DW = DOORW/2;
-  if (r.special === SPECIAL.DARKROOM){
-    /* one painting, one light, nothing else */
-    const walls = ['e','w','n','s'].filter(w => !r.doors[w]);
-    const wall = walls.length ? walls[Math.floor(rnd()*walls.length)]
-                              : ['e','w','n','s'][Math.floor(rnd()*4)];
-    const [asp, w, h] = pickW(rnd, ASPECTS);
-    r.artworks.push({
-      wall, u: (rnd()-.5)*1.5, asp, w, h, frame: FRAME_COLS[1][0],
-      segA: -HS+1, segB: HS-1,
-      algo: Math.floor(rnd()*ALGOS.length), seed: (rnd()*4294967296)>>>0, pal: Math.floor(rnd()*PALETTES.length),
-    });
-    return;
-  }
-  if (r.special === SPECIAL.ARCHIVE){
-    /* salon-hung grids of miniatures on the closed walls */
-    const walls = ['e','w','n','s'].filter(w => !r.doors[w]);
-    for (const wall of (walls.length ? walls : ['e'])){
-      if (r.artworks.length >= 12) break;
-      const cols = 3 + (rnd() < 0.5 ? 1 : 0);
-      for (let row = 0; row < 2; row++)
-        for (let col = 0; col < cols; col++){
-          if (r.artworks.length >= 12) break;
-          const u = -HS + 2 + (col + 0.5)*((2*HS - 4)/cols) + (rnd()-.5)*0.2;
-          r.artworks.push({
-            wall, u, asp: 'S', w: 0.62, h: 0.62, mini: true, hangY: 1.15 + row*0.95,
-            frame: FRAME_COLS[1][0], segA: -HS+0.5, segB: HS-0.5,
-            algo: Math.floor(rnd()*ALGOS.length), seed: (rnd()*4294967296)>>>0, pal: Math.floor(rnd()*PALETTES.length),
-          });
-        }
-    }
-    return;
-  }
-  const segs = [];
-  for (const wall of ['e','w','n','s']){
-    if (r.doors[wall]){
-      segs.push([wall, -HS+0.5, -DW-0.4], [wall, DW+0.4, HS-0.5]);
-    } else {
-      segs.push([wall, -HS+0.6, HS-0.6]);
-    }
-  }
-  for (let i = segs.length-1; i > 0; i--){       // seed-shuffle
-    const j = Math.floor(rnd() * (i+1));
-    const t = segs[i]; segs[i] = segs[j]; segs[j] = t;
-  }
-  for (const [wall, a, b] of segs){
-    if (r.artworks.length >= 6) break;
-    const len = b - a;
-    if (len < 2.2) continue;
-    const two = len > 5.6 && rnd() < 0.45 && r.artworks.length <= 4;
-    const centers = two ? [a + len*(0.26 + (rnd()-.5)*0.06), a + len*(0.74 + (rnd()-.5)*0.06)]
-                        : [a + len*(0.40 + rnd()*0.20)];
-    for (const c0 of centers){
-      const [asp, w, h] = pickW(rnd, ASPECTS);
-      const c = Math.max(a + w/2 + 0.3, Math.min(b - w/2 - 0.3, c0));
-      const [frame] = pickW(rnd, FRAME_COLS);
-      r.artworks.push({
-        wall, u: c, asp, w, h,
-        frame: r.special === SPECIAL.VERMILION ? FRAME_COLS[2][0] : frame,
-        segA: a, segB: b,
-        algo: Math.floor(rnd()*ALGOS.length),
-        seed: (rnd() * 4294967296) >>> 0,
-        pal: Math.floor(rnd()*PALETTES.length),
-      });
-    }
-  }
-}
-/* One tungsten spot per artwork; a soft centre downlight when there is
-   headroom. Neighbour spill (through open doors) joins at VAO build. */
-function spotAt(p, target, col, inner, outer, range){
-  const d = [target[0]-p[0], target[1]-p[1], target[2]-p[2]];
-  const dl = Math.hypot(d[0], d[1], d[2]);
-  return { p, d: [d[0]/dl, d[1]/dl, d[2]/dl], col, inner, outer, invR2: 1/(range*range) };
-}
-function genLights(r, rnd){
-  const IN = HS - WT;
-  if (r.special === SPECIAL.DARKROOM){
-    const A = r.artworks[0];
-    if (A){
-      const sign = (A.wall==='e'||A.wall==='n') ? 1 : -1;
-      const horiz = (A.wall==='e'||A.wall==='w');
-      const back = sign * (IN - 1.8), y = H - 0.2, ty = (A.hangY || 1.55);
-      const p = horiz ? [back, y, A.u] : [A.u, y, back];
-      const t = horiz ? [sign*IN, ty, A.u] : [A.u, ty, sign*IN];
-      r.ownLights.push(spotAt(p, t, [3.1, 2.5, 1.75], 0.965, 0.9, 6.5));
-    }
-    return;
-  }
-  if (r.special === SPECIAL.ARCHIVE){
-    const walls = new Set(r.artworks.map(A => A.wall));
-    for (const wall of walls){
-      if (r.ownLights.length >= 5) break;
-      const sign = (wall==='e'||wall==='n') ? 1 : -1;
-      const horiz = (wall==='e'||wall==='w');
-      const back = sign * (IN - 2.3), y = H - 0.2;
-      const p = horiz ? [back, y, 0] : [0, y, back];
-      const t = horiz ? [sign*IN, 1.6, 0] : [0, 1.6, sign*IN];
-      r.ownLights.push(spotAt(p, t, [1.9, 1.5, 1.0], 0.82, 0.5, 7.5));
-    }
-    r.ownLights.push(spotAt([0, H-0.3, 0], [0, 0, 0], [0.8, 0.7, 0.55], 0.72, 0.4, 8));
-    r.ownLights.push(spotAt([0, H-1.6, 0], [0, H, 0], [0.85, 0.66, 0.38], 0.78, 0.30, 4.5));
-    return;
-  }
-  const warm = r.special === SPECIAL.VERMILION ? [2.3, 1.55, 0.95] : [2.0, 1.6, 1.1];
-  for (const A of r.artworks){
-    if (r.ownLights.length >= 6) break;
-    const sign = (A.wall==='e'||A.wall==='n') ? 1 : -1;
-    const horiz = (A.wall==='e'||A.wall==='w');
-    const back = sign * (IN - 1.55), y = H - 0.22, ty = (A.hangY || 1.5);
-    const p = horiz ? [back, y, A.u] : [A.u, y, back];
-    const t = horiz ? [sign*IN, ty, A.u] : [A.u, ty, sign*IN];
-    r.ownLights.push(spotAt(p, t, warm, 0.92, 0.74, 5.2));
-  }
-  /* the chandelier always burns at the centre — and lights its own ceiling */
-  r.ownLights.push(spotAt([0, H-1.15, 0], [0, 0, 0], [0.95, 0.80, 0.60], 0.70, 0.36, 8.5));
-  r.ownLights.push(spotAt([0, H-1.6, 0], [0, H, 0], [0.85, 0.66, 0.38], 0.78, 0.30, 4.5));
-}
 
 /* ————— §3 Geometry: room → interleaved mesh → VAO —————
    Layout: pos(3) nor(3) uv(2) col(3) = 11 floats, stride 44 bytes.
@@ -1197,67 +981,6 @@ function dropRoomGL(r){
   r.flameVAO = r.flameVBO = null; r.nFlames = 0;
 }
 
-/* ————— mat4 (column-major, zero-alloc scratch) ————— */
-function mat4(){ return new Float32Array(16); }
-function ident(o){ o.fill(0); o[0]=o[5]=o[10]=o[15]=1; return o; }
-function perspective(o, fovy, asp, near, far){
-  const f = 1/Math.tan(fovy/2), nf = 1/(near - far);
-  o.fill(0);
-  o[0]=f/asp; o[5]=f; o[10]=(far+near)*nf; o[11]=-1; o[14]=2*far*near*nf;
-  return o;
-}
-function mulM(o, a, b){          // o = a·b  (o must not alias a or b)
-  for (let c=0; c<4; c++){
-    const b0=b[c*4], b1=b[c*4+1], b2=b[c*4+2], b3=b[c*4+3];
-    o[c*4  ] = a[0]*b0 + a[4]*b1 + a[8]*b2  + a[12]*b3;
-    o[c*4+1] = a[1]*b0 + a[5]*b1 + a[9]*b2  + a[13]*b3;
-    o[c*4+2] = a[2]*b0 + a[6]*b1 + a[10]*b2 + a[14]*b3;
-    o[c*4+3] = a[3]*b0 + a[7]*b1 + a[11]*b2 + a[15]*b3;
-  }
-  return o;
-}
-/* o = V · T(x,y,z) — cheap model-view for translation-only models */
-function mulT(o, v, x, y, z){
-  o.set(v);
-  o[12] = v[0]*x + v[4]*y + v[8]*z  + v[12];
-  o[13] = v[1]*x + v[5]*y + v[9]*z  + v[13];
-  o[14] = v[2]*x + v[6]*y + v[10]*z + v[14];
-  return o;
-}
-/* view = Rx(−pitch)·Ry(yaw)·T(−eye) */
-function viewMatrix(o, ex, ey, ez, yaw, pitch){
-  const cy = Math.cos(yaw), sy = Math.sin(yaw);
-  const cp = Math.cos(pitch), sp = Math.sin(pitch);
-  // rotation part R = Rx(−pitch)·Ry(yaw)
-  o[0]=cy;      o[4]=0;   o[8]=sy;       // row 1
-  o[1]=-sy*sp;  o[5]=cp;  o[9]=cy*sp;    // row 2
-  o[2]=-sy*cp;  o[6]=-sp; o[10]=cy*cp;   // row 3
-  o[3]=0; o[7]=0; o[11]=0; o[15]=1;
-  o[12]=-(o[0]*ex + o[4]*ey + o[8]*ez);
-  o[13]=-(o[1]*ex + o[5]*ey + o[9]*ez);
-  o[14]=-(o[2]*ex + o[6]*ey + o[10]*ez);
-  return o;
-}
-
-/* frustum planes from P·V (Gribb–Hartmann), preallocated 6×4 */
-const planes = new Float32Array(24);
-function extractPlanes(m){
-  const row = (i)=>[m[i], m[4+i], m[8+i], m[12+i]];
-  const r0=row(0), r1=row(1), r2=row(2), r3=row(3);
-  const put=(k, a,b)=>{ planes[k*4]=a[0]+b[0]; planes[k*4+1]=a[1]+b[1]; planes[k*4+2]=a[2]+b[2]; planes[k*4+3]=a[3]+b[3]; };
-  const putn=(k, a,b)=>{ planes[k*4]=a[0]-b[0]; planes[k*4+1]=a[1]-b[1]; planes[k*4+2]=a[2]-b[2]; planes[k*4+3]=a[3]-b[3]; };
-  put(0, r3, r0); putn(1, r3, r0);   // left, right
-  put(2, r3, r1); putn(3, r3, r1);   // bottom, top
-  put(4, r3, r2); putn(5, r3, r2);   // near, far
-}
-function boxVisible(cx, cy, cz, hx, hy, hz){
-  for (let k=0; k<6; k++){
-    const a=planes[k*4], b=planes[k*4+1], c=planes[k*4+2], dd=planes[k*4+3];
-    if (a*cx + b*cy + c*cz + dd < -(Math.abs(a)*hx + Math.abs(b)*hy + Math.abs(c)*hz)) return false;
-  }
-  return true;
-}
-
 /* ————— §7 Renderer state / floating origin ————— */
 const player = {
   gx: 0, gz: 0,          // anchor room (also the room the player is in)
@@ -1527,134 +1250,6 @@ function step(dt){
   while (player.z >  HS){ player.z -= S; player.gz++; moved = true; }
   while (player.z < -HS){ player.z += S; player.gz--; moved = true; }
   if (moved) onRoomChanged();
-}
-
-/* ————— §11 Audio — everything synthesized, nothing sampled ————— */
-const audio = { ctx: null, master: null, muted: false, ok: false,
-                stride: 0, arnd: mulberry32(0xA0D10), nextBell: 0, stepBuf: null };
-function initAudio(){
-  if (audio.ctx){ audio.ctx.resume().catch(()=>{}); return; }
-  try {
-    const AC = window.AudioContext || window.webkitAudioContext;
-    if (!AC) return;
-    const ctx = new AC();
-    audio.ctx = ctx;
-    const comp = ctx.createDynamicsCompressor();
-    comp.threshold.value = -22; comp.ratio.value = 8; comp.knee.value = 18;
-    const master = ctx.createGain(); master.gain.value = 0.9;
-    master.connect(comp); comp.connect(ctx.destination);
-    audio.master = master;
-    /* pad: two detuned saws through a slow-breathing lowpass */
-    const padF = ctx.createBiquadFilter(); padF.type = 'lowpass'; padF.frequency.value = 360; padF.Q.value = 0.7;
-    const padG = ctx.createGain(); padG.gain.value = 0.040;
-    padF.connect(padG); padG.connect(master);
-    for (const det of [-6, 5]){
-      const o = ctx.createOscillator(); o.type = 'sawtooth';
-      o.frequency.value = 55; o.detune.value = det;
-      o.connect(padF); o.start();
-    }
-    const lfo = ctx.createOscillator(); lfo.frequency.value = 0.055;
-    const lfoG = ctx.createGain(); lfoG.gain.value = 120;
-    lfo.connect(lfoG); lfoG.connect(padF.frequency); lfo.start();
-    /* room tone: looped brown noise, well below attention */
-    const len = (ctx.sampleRate * 2) | 0;
-    const buf = ctx.createBuffer(1, len, ctx.sampleRate);
-    const dch = buf.getChannelData(0);
-    let lv = 0; const nr = mulberry32(0xB00);
-    for (let i = 0; i < len; i++){ lv = (lv + (nr()*2 - 1)*0.02) * 0.997; dch[i] = lv * 3.5; }
-    const src = ctx.createBufferSource(); src.buffer = buf; src.loop = true;
-    const nf = ctx.createBiquadFilter(); nf.type = 'lowpass'; nf.frequency.value = 220;
-    const ng = ctx.createGain(); ng.gain.value = 0.05;
-    src.connect(nf); nf.connect(ng); ng.connect(master); src.start();
-    /* one footstep grain, revoiced per step */
-    const sl = (ctx.sampleRate * 0.075) | 0;
-    const sb = ctx.createBuffer(1, sl, ctx.sampleRate);
-    const sd = sb.getChannelData(0);
-    for (let i = 0; i < sl; i++) sd[i] = (nr()*2 - 1) * Math.pow(1 - i/sl, 2.3);
-    audio.stepBuf = sb;
-    audio.ok = true;
-    audio.nextBell = ctx.currentTime + 2.5;
-    setInterval(bellScheduler, 100);        // lookahead scheduler, ≥200 ms ahead
-  } catch(e){ /* a silent museum is still a museum */ }
-}
-const BELL_FREQS = [220, 261.63, 293.66, 329.63, 392.00, 440, 523.25, 587.33];
-function bellScheduler(){
-  if (!audio.ok) return;
-  const ctx = audio.ctx;
-  while (audio.nextBell < ctx.currentTime + 0.25){
-    const t = Math.max(audio.nextBell, ctx.currentTime + 0.02);
-    if (!audio.muted) bell(t, BELL_FREQS[Math.floor(audio.arnd()*BELL_FREQS.length)]);
-    audio.nextBell += 4 + audio.arnd()*5;
-  }
-}
-function bell(t, f){
-  const ctx = audio.ctx;
-  const g = ctx.createGain();
-  g.gain.setValueAtTime(0, t);
-  g.gain.linearRampToValueAtTime(0.10, t + 0.008);
-  g.gain.exponentialRampToValueAtTime(0.0004, t + 4.2);
-  g.connect(audio.master);
-  const o = ctx.createOscillator(); o.type = 'sine'; o.frequency.value = f;
-  o.connect(g); o.start(t); o.stop(t + 4.4);
-  const g2 = ctx.createGain(); g2.gain.value = 0.35;
-  const o2 = ctx.createOscillator(); o2.type = 'sine'; o2.frequency.value = f * 2.005;
-  o2.connect(g2); g2.connect(g); o2.start(t); o2.stop(t + 4.4);
-}
-function footstep(speed){
-  if (!audio.ok || audio.muted) return;
-  const ctx = audio.ctx;
-  const src = ctx.createBufferSource();
-  src.buffer = audio.stepBuf;
-  src.playbackRate.value = 0.8 + audio.arnd()*0.45;
-  const bp = ctx.createBiquadFilter(); bp.type = 'bandpass';
-  bp.frequency.value = 150 + audio.arnd()*90; bp.Q.value = 0.9;
-  const g = ctx.createGain(); g.gain.value = Math.min(0.35, 0.13 + speed*0.045);
-  src.connect(bp); bp.connect(g); g.connect(audio.master);
-  src.start();
-}
-document.addEventListener('visibilitychange', () => {
-  if (!audio.ctx) return;
-  if (document.hidden) audio.ctx.suspend().catch(()=>{});
-  else if (entered && !audio.muted) audio.ctx.resume().catch(()=>{});
-});
-function toggleMute(){
-  if (!audio.ok){ flashHint('this browser keeps the museum silent'); return; }
-  audio.muted = !audio.muted;
-  audio.master.gain.value = audio.muted ? 0 : 0.9;
-  flashHint(audio.muted ? 'sound off' : 'sound on');
-}
-
-/* ————— §12 Persistence (probed once; sandboxes throw on access) ————— */
-let storageOK = false;
-try { localStorage.setItem('rd_probe', '1'); localStorage.removeItem('rd_probe'); storageOK = true; }
-catch(e){ storageOK = false; }
-const persist = { visits: 0, rooms: 0, works: 0, acquired: 0 };
-if (storageOK){
-  try {
-    Object.assign(persist, JSON.parse(
-      localStorage.getItem('lumiere') || localStorage.getItem('rand-dom') || '{}'));
-  } catch(e){}
-}
-persist.visits = (persist.visits | 0) + 1;
-let saveTimer = 0;
-function savePersist(){
-  if (!storageOK) return;
-  clearTimeout(saveTimer);
-  saveTimer = setTimeout(() => {
-    try { localStorage.setItem('lumiere', JSON.stringify(persist)); } catch(e){}
-  }, 800);
-}
-savePersist();
-addEventListener('beforeunload', () => {
-  if (storageOK){ try { localStorage.setItem('lumiere', JSON.stringify(persist)); } catch(e){} }
-});
-
-function flashHint(msg){
-  const el = document.getElementById('hud-hint');
-  el.innerHTML = msg;
-  el.style.opacity = '1';
-  clearTimeout(flashHint.t);
-  flashHint.t = setTimeout(() => { el.style.opacity = '0'; }, 2600);
 }
 
 /* ————— §10 Inspect & acquire ————— */
@@ -2804,9 +2399,7 @@ window.DBG = {
         for (let dx = -rad; dx <= rad; dx++){
           if (Math.max(Math.abs(dx), Math.abs(dz)) !== rad) continue;
           const gx = player.gx + dx, gz = player.gz + dz;
-          if (gx === 0 && gz === 0) continue;
-          const sroll = mulberry32(h2(gx, gz, SALT_ROOM ^ WORLD_SEED))();
-          const sp = sroll < 1/64 ? 1 : sroll < 2/64 ? 2 : sroll < 3/64 ? 3 : 0;
+          const sp = specialAt(gx, gz);
           if (sp === type) return { gx, gz, type: sp };
         }
     return null;
@@ -2899,7 +2492,7 @@ const introEl = document.getElementById('intro');
   }, 350);
 }
 document.getElementById('enter').addEventListener('click', ()=>{
-  entered = true;
+  entered = true; setAudioActive(true);
   initAudio();               // inside the gesture — autoplay policy satisfied
   document.body.classList.add('entered');
   introEl.style.transition = REDUCED ? 'none' : 'opacity 1.1s ease';

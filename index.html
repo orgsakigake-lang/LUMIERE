@@ -876,53 +876,312 @@
     ctx.globalAlpha = 1;
   }
 
-  // src/render/shaders/arch.vert
-  var arch_default = "#version 300 es\nlayout(location=0) in vec3 aPos;\nlayout(location=1) in vec3 aNor;\nlayout(location=2) in vec2 aUV;\nlayout(location=3) in vec3 aCol;\nlayout(location=4) in float aMat;\nuniform mat4 uMV, uP;\nout vec3 vN; out vec3 vPv; out vec2 vUV; out vec3 vCol; out vec3 vLp; out float vMat;\nvoid main(){\n  vec4 pv = uMV * vec4(aPos, 1.0);\n  vPv = pv.xyz;\n  vN = mat3(uMV) * aNor;\n  vUV = aUV; vCol = aCol; vLp = aPos; vMat = aMat;\n  gl_Position = uP * pv;\n}\n";
+  // src/render/mat4.js
+  function mat4() {
+    return new Float32Array(16);
+  }
+  function perspective(o, fovy, asp, near, far) {
+    const f = 1 / Math.tan(fovy / 2), nf = 1 / (near - far);
+    o.fill(0);
+    o[0] = f / asp;
+    o[5] = f;
+    o[10] = (far + near) * nf;
+    o[11] = -1;
+    o[14] = 2 * far * near * nf;
+    return o;
+  }
+  function mulM(o, a, b) {
+    for (let c = 0; c < 4; c++) {
+      const b0 = b[c * 4], b1 = b[c * 4 + 1], b2 = b[c * 4 + 2], b3 = b[c * 4 + 3];
+      o[c * 4] = a[0] * b0 + a[4] * b1 + a[8] * b2 + a[12] * b3;
+      o[c * 4 + 1] = a[1] * b0 + a[5] * b1 + a[9] * b2 + a[13] * b3;
+      o[c * 4 + 2] = a[2] * b0 + a[6] * b1 + a[10] * b2 + a[14] * b3;
+      o[c * 4 + 3] = a[3] * b0 + a[7] * b1 + a[11] * b2 + a[15] * b3;
+    }
+    return o;
+  }
+  function mulT(o, v, x, y, z) {
+    o.set(v);
+    o[12] = v[0] * x + v[4] * y + v[8] * z + v[12];
+    o[13] = v[1] * x + v[5] * y + v[9] * z + v[13];
+    o[14] = v[2] * x + v[6] * y + v[10] * z + v[14];
+    return o;
+  }
+  function viewMatrix(o, ex, ey, ez, yaw, pitch) {
+    const cy = Math.cos(yaw), sy = Math.sin(yaw);
+    const cp = Math.cos(pitch), sp = Math.sin(pitch);
+    o[0] = cy;
+    o[4] = 0;
+    o[8] = sy;
+    o[1] = -sy * sp;
+    o[5] = cp;
+    o[9] = cy * sp;
+    o[2] = -sy * cp;
+    o[6] = -sp;
+    o[10] = cy * cp;
+    o[3] = 0;
+    o[7] = 0;
+    o[11] = 0;
+    o[15] = 1;
+    o[12] = -(o[0] * ex + o[4] * ey + o[8] * ez);
+    o[13] = -(o[1] * ex + o[5] * ey + o[9] * ez);
+    o[14] = -(o[2] * ex + o[6] * ey + o[10] * ez);
+    return o;
+  }
+  var planes = new Float32Array(24);
+  function extractPlanes(m) {
+    const row = (i) => [m[i], m[4 + i], m[8 + i], m[12 + i]];
+    const r0 = row(0), r1 = row(1), r2 = row(2), r3 = row(3);
+    const put = (k, a, b) => {
+      planes[k * 4] = a[0] + b[0];
+      planes[k * 4 + 1] = a[1] + b[1];
+      planes[k * 4 + 2] = a[2] + b[2];
+      planes[k * 4 + 3] = a[3] + b[3];
+    };
+    const putn = (k, a, b) => {
+      planes[k * 4] = a[0] - b[0];
+      planes[k * 4 + 1] = a[1] - b[1];
+      planes[k * 4 + 2] = a[2] - b[2];
+      planes[k * 4 + 3] = a[3] - b[3];
+    };
+    put(0, r3, r0);
+    putn(1, r3, r0);
+    put(2, r3, r1);
+    putn(3, r3, r1);
+    put(4, r3, r2);
+    putn(5, r3, r2);
+  }
+  function boxVisible(cx, cy, cz, hx, hy, hz) {
+    for (let k = 0; k < 6; k++) {
+      const a = planes[k * 4], b = planes[k * 4 + 1], c = planes[k * 4 + 2], dd = planes[k * 4 + 3];
+      if (a * cx + b * cy + c * cz + dd < -(Math.abs(a) * hx + Math.abs(b) * hy + Math.abs(c) * hz)) return false;
+    }
+    return true;
+  }
 
-  // src/render/shaders/arch.frag
-  var arch_default2 = "#version 300 es\nprecision highp float;\nin vec3 vN; in vec3 vPv; in vec2 vUV; in vec3 vCol; in vec3 vLp; in float vMat;\nuniform vec3 uFog; uniform float uSigma; uniform float uAlpha;\nuniform vec3 uAmb; uniform vec3 uUpV;\nuniform sampler2D uPlaster; uniform sampler2D uParquet;\nuniform int uNL;\nuniform vec4 uLPos[8];   // xyz view-space position, w 1/range\xB2\nuniform vec4 uLDir[8];   // xyz view-space axis,     w cos(outer)\nuniform vec4 uLCol[8];   // rgb colour\xB7intensity,    w cos(inner)\nout vec4 o;\nvoid main(){\n  vec3 n = normalize(vN);\n  vec3 vdir = normalize(-vPv);\n  if (dot(n, vdir) < 0.0) n = -n;\n  /* material grain */\n  vec3 alb = vCol;\n  if (vMat < 0.5)      alb *= texture(uPlaster, vUV * 0.5).rgb;\n  else if (vMat < 1.5) alb *= texture(uParquet, vUV * 0.5).rgb;\n  /* analytic corner occlusion \u2014 rooms are boxes, so distance to the two\n     other surface planes is a fine stand-in for baked AO */\n  vec3 dd = vec3(6.76 - abs(vLp.x), min(vLp.y, 4.2 - vLp.y), 6.76 - abs(vLp.z));\n  vec3 gg = 0.66 + 0.34 * clamp(dd / 0.85, 0.0, 1.0);\n  float ao = min(1.0, gg.x * gg.y * gg.z * 1.515);\n  vec3 acc = uAmb * alb;\n  float gloss = smoothstep(0.86, 0.99, dot(n, uUpV));\n  for (int i = 0; i < 8; i++){\n    if (i >= uNL) break;\n    vec3 L = uLPos[i].xyz - vPv;\n    float d2 = dot(L, L);\n    float dist = sqrt(d2);\n    L /= dist;\n    float att = 1.0 / (1.0 + d2 * uLPos[i].w);\n    float cone = smoothstep(uLDir[i].w, uLCol[i].w, dot(-L, uLDir[i].xyz));\n    vec3 c = uLCol[i].rgb * (att * cone);\n    acc += alb * c * max(dot(n, L), 0.0);\n    vec3 hv = normalize(L + vdir);\n    acc += c * pow(max(dot(n, hv), 0.0), 56.0) * gloss * 0.65;\n  }\n  acc *= ao;\n  float f = 1.0 - exp(-uSigma * length(vPv));\n  o = vec4(mix(acc, uFog, f), uAlpha);\n}\n";
+  // src/persist.js
+  var storageOK = false;
+  try {
+    localStorage.setItem("rd_probe", "1");
+    localStorage.removeItem("rd_probe");
+    storageOK = true;
+  } catch (e) {
+    storageOK = false;
+  }
+  var persist = { visits: 0, rooms: 0, works: 0, acquired: 0 };
+  if (storageOK) {
+    try {
+      Object.assign(persist, JSON.parse(
+        localStorage.getItem("lumiere") || localStorage.getItem("rand-dom") || "{}"
+      ));
+    } catch (e) {
+    }
+  }
+  persist.visits = (persist.visits | 0) + 1;
+  var saveTimer = 0;
+  function savePersist() {
+    if (!storageOK) return;
+    clearTimeout(saveTimer);
+    saveTimer = setTimeout(() => {
+      try {
+        localStorage.setItem("lumiere", JSON.stringify(persist));
+      } catch (e) {
+      }
+    }, 800);
+  }
+  savePersist();
+  addEventListener("beforeunload", () => {
+    if (storageOK) {
+      try {
+        localStorage.setItem("lumiere", JSON.stringify(persist));
+      } catch (e) {
+      }
+    }
+  });
 
-  // src/render/shaders/paint.vert
-  var paint_default = "#version 300 es\nlayout(location=0) in vec2 aQ;\nuniform mat4 uMV, uP;\nuniform vec3 uO, uU, uV;\nout vec2 vUV; out vec3 vPv;\nvoid main(){\n  vec3 p = uO + uU*aQ.x + uV*aQ.y;\n  vec4 pv = uMV * vec4(p, 1.0);\n  vPv = pv.xyz; vUV = vec2(aQ.x, 1.0 - aQ.y);\n  gl_Position = uP * pv;\n}\n";
+  // src/ui/hint.js
+  function flashHint(msg) {
+    const el = document.getElementById("hud-hint");
+    el.innerHTML = msg;
+    el.style.opacity = "1";
+    clearTimeout(flashHint.t);
+    flashHint.t = setTimeout(() => {
+      el.style.opacity = "0";
+    }, 2600);
+  }
 
-  // src/render/shaders/paint.frag
-  var paint_default2 = "#version 300 es\nprecision highp float;\nin vec2 vUV; in vec3 vPv;\nuniform sampler2D uTex;\nuniform vec3 uN;            // view-space surface normal\nuniform vec3 uFog; uniform float uSigma; uniform float uFade; uniform float uEm;\nuniform float uAT;          // 1 \u2192 texture alpha shapes the quad (contact shadows)\nuniform int uNL;\nuniform vec4 uLPos[8]; uniform vec4 uLDir[8]; uniform vec4 uLCol[8];\nout vec4 o;\nvoid main(){\n  vec4 t = texture(uTex, vUV);\n  vec3 alb = t.rgb;\n  vec3 n = normalize(uN);\n  vec3 vdir = normalize(-vPv);\n  if (dot(n, vdir) < 0.0) n = -n;\n  vec3 acc = alb * uEm;\n  for (int i = 0; i < 8; i++){\n    if (i >= uNL) break;\n    vec3 L = uLPos[i].xyz - vPv;\n    float d2 = dot(L, L); float dist = sqrt(d2); L /= dist;\n    float att = 1.0 / (1.0 + d2 * uLPos[i].w);\n    float cone = smoothstep(uLDir[i].w, uLCol[i].w, dot(-L, uLDir[i].xyz));\n    vec3 c = uLCol[i].rgb * (att * cone);\n    acc += alb * c * max(dot(n, L), 0.0);\n    vec3 hv = normalize(L + vdir);\n    acc += c * pow(max(dot(n, hv), 0.0), 24.0) * 0.055;   // varnish sheen\n  }\n  float f = 1.0 - exp(-uSigma * length(vPv));\n  o = vec4(mix(acc, uFog, f), uFade * mix(1.0, t.a, uAT));\n}\n";
+  // src/audio.js
+  var audio = {
+    ctx: null,
+    master: null,
+    muted: false,
+    ok: false,
+    active: false,
+    stride: 0,
+    arnd: mulberry32(658704),
+    nextBell: 0,
+    stepBuf: null
+  };
+  function initAudio() {
+    if (audio.ctx) {
+      audio.ctx.resume().catch(() => {
+      });
+      return;
+    }
+    try {
+      const AC = window.AudioContext || window.webkitAudioContext;
+      if (!AC) return;
+      const ctx = new AC();
+      audio.ctx = ctx;
+      const comp = ctx.createDynamicsCompressor();
+      comp.threshold.value = -22;
+      comp.ratio.value = 8;
+      comp.knee.value = 18;
+      const master = ctx.createGain();
+      master.gain.value = 0.9;
+      master.connect(comp);
+      comp.connect(ctx.destination);
+      audio.master = master;
+      const padF = ctx.createBiquadFilter();
+      padF.type = "lowpass";
+      padF.frequency.value = 360;
+      padF.Q.value = 0.7;
+      const padG = ctx.createGain();
+      padG.gain.value = 0.04;
+      padF.connect(padG);
+      padG.connect(master);
+      for (const det of [-6, 5]) {
+        const o = ctx.createOscillator();
+        o.type = "sawtooth";
+        o.frequency.value = 55;
+        o.detune.value = det;
+        o.connect(padF);
+        o.start();
+      }
+      const lfo = ctx.createOscillator();
+      lfo.frequency.value = 0.055;
+      const lfoG = ctx.createGain();
+      lfoG.gain.value = 120;
+      lfo.connect(lfoG);
+      lfoG.connect(padF.frequency);
+      lfo.start();
+      const len = ctx.sampleRate * 2 | 0;
+      const buf = ctx.createBuffer(1, len, ctx.sampleRate);
+      const dch = buf.getChannelData(0);
+      let lv = 0;
+      const nr = mulberry32(2816);
+      for (let i = 0; i < len; i++) {
+        lv = (lv + (nr() * 2 - 1) * 0.02) * 0.997;
+        dch[i] = lv * 3.5;
+      }
+      const src = ctx.createBufferSource();
+      src.buffer = buf;
+      src.loop = true;
+      const nf = ctx.createBiquadFilter();
+      nf.type = "lowpass";
+      nf.frequency.value = 220;
+      const ng = ctx.createGain();
+      ng.gain.value = 0.05;
+      src.connect(nf);
+      nf.connect(ng);
+      ng.connect(master);
+      src.start();
+      const sl = ctx.sampleRate * 0.075 | 0;
+      const sb = ctx.createBuffer(1, sl, ctx.sampleRate);
+      const sd = sb.getChannelData(0);
+      for (let i = 0; i < sl; i++) sd[i] = (nr() * 2 - 1) * Math.pow(1 - i / sl, 2.3);
+      audio.stepBuf = sb;
+      audio.ok = true;
+      audio.nextBell = ctx.currentTime + 2.5;
+      setInterval(bellScheduler, 100);
+    } catch (e) {
+    }
+  }
+  var BELL_FREQS = [220, 261.63, 293.66, 329.63, 392, 440, 523.25, 587.33];
+  function bellScheduler() {
+    if (!audio.ok) return;
+    const ctx = audio.ctx;
+    while (audio.nextBell < ctx.currentTime + 0.25) {
+      const t = Math.max(audio.nextBell, ctx.currentTime + 0.02);
+      if (!audio.muted) bell(t, BELL_FREQS[Math.floor(audio.arnd() * BELL_FREQS.length)]);
+      audio.nextBell += 4 + audio.arnd() * 5;
+    }
+  }
+  function bell(t, f) {
+    const ctx = audio.ctx;
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(0, t);
+    g.gain.linearRampToValueAtTime(0.1, t + 8e-3);
+    g.gain.exponentialRampToValueAtTime(4e-4, t + 4.2);
+    g.connect(audio.master);
+    const o = ctx.createOscillator();
+    o.type = "sine";
+    o.frequency.value = f;
+    o.connect(g);
+    o.start(t);
+    o.stop(t + 4.4);
+    const g2 = ctx.createGain();
+    g2.gain.value = 0.35;
+    const o2 = ctx.createOscillator();
+    o2.type = "sine";
+    o2.frequency.value = f * 2.005;
+    o2.connect(g2);
+    g2.connect(g);
+    o2.start(t);
+    o2.stop(t + 4.4);
+  }
+  function footstep(speed) {
+    if (!audio.ok || audio.muted) return;
+    const ctx = audio.ctx;
+    const src = ctx.createBufferSource();
+    src.buffer = audio.stepBuf;
+    src.playbackRate.value = 0.8 + audio.arnd() * 0.45;
+    const bp = ctx.createBiquadFilter();
+    bp.type = "bandpass";
+    bp.frequency.value = 150 + audio.arnd() * 90;
+    bp.Q.value = 0.9;
+    const g = ctx.createGain();
+    g.gain.value = Math.min(0.35, 0.13 + speed * 0.045);
+    src.connect(bp);
+    bp.connect(g);
+    g.connect(audio.master);
+    src.start();
+  }
+  document.addEventListener("visibilitychange", () => {
+    if (!audio.ctx) return;
+    if (document.hidden) audio.ctx.suspend().catch(() => {
+    });
+    else if (audio.active && !audio.muted) audio.ctx.resume().catch(() => {
+    });
+  });
+  function toggleMute() {
+    if (!audio.ok) {
+      flashHint("this browser keeps the museum silent");
+      return;
+    }
+    audio.muted = !audio.muted;
+    audio.master.gain.value = audio.muted ? 0 : 0.9;
+    flashHint(audio.muted ? "sound off" : "sound on");
+  }
+  function setAudioActive(v) {
+    audio.active = !!v;
+  }
 
-  // src/render/shaders/shaft.vert
-  var shaft_default = "#version 300 es\nlayout(location=0) in vec2 aQ;\nuniform mat4 uMV, uP;\nuniform vec3 uC; uniform vec2 uAxis; uniform vec2 uDim;\nout vec2 vQ;\nvoid main(){\n  vec3 p = vec3(uC.x + uAxis.x*(aQ.x-0.5)*uDim.x, aQ.y*uDim.y, uC.z + uAxis.y*(aQ.x-0.5)*uDim.x);\n  vQ = aQ;\n  gl_Position = uP * (uMV * vec4(p, 1.0));\n}\n";
-
-  // src/render/shaders/shaft.frag
-  var shaft_default2 = "#version 300 es\nprecision highp float;\nin vec2 vQ; uniform vec3 uCol; uniform float uTime;\nout vec4 o;\nvoid main(){\n  float ax = 1.0 - abs(vQ.x - 0.5)*2.0;\n  float ay = 1.0 - vQ.y*0.78;\n  float a = ax*ax*ay*0.11*(0.82 + 0.18*sin(uTime*0.37 + vQ.y*5.0));\n  o = vec4(uCol*a, 0.0);\n}\n";
-
-  // src/render/shaders/mote.vert
-  var mote_default = "#version 300 es\nlayout(location=0) in vec4 aS;\nuniform mat4 uMV, uP;\nuniform vec3 uC; uniform vec2 uDim; uniform float uTime;\nout float vA;\nvoid main(){\n  float ph = fract(aS.y + uTime*0.016 + uC.x*0.13);\n  float wob = sin(uTime*aS.w*2.0 + aS.x*23.0)*0.14;\n  vec3 p = vec3(uC.x + (aS.x-0.5)*uDim.x*0.8 + wob,\n                ph*uDim.y,\n                uC.z + (aS.z-0.5)*uDim.x*0.8 + wob*0.7);\n  vec4 pv = uMV * vec4(p, 1.0);\n  gl_Position = uP * pv;\n  gl_PointSize = clamp(9.0 / max(1.0, -pv.z), 1.5, 5.0);\n  vA = (0.55 + 0.45*sin(uTime*1.7 + aS.x*40.0)) * smoothstep(0.0, 0.12, ph) * smoothstep(1.0, 0.82, ph);\n}\n";
-
-  // src/render/shaders/mote.frag
-  var mote_default2 = "#version 300 es\nprecision highp float;\nin float vA; uniform vec3 uCol;\nout vec4 o;\nvoid main(){\n  vec2 d = gl_PointCoord - 0.5;\n  o = vec4(uCol * smoothstep(0.5, 0.12, length(d)) * vA * 0.5, 0.0);\n}\n";
-
-  // src/render/shaders/flame.vert
-  var flame_default = "#version 300 es\nlayout(location=0) in vec3 aP;\nuniform mat4 uMV, uP; uniform float uTime; uniform float uMY;\nout float vF;\nvoid main(){\n  vec3 p = vec3(aP.x, mix(aP.y, -aP.y, uMY), aP.z);\n  vec4 pv = uMV * vec4(p, 1.0);\n  gl_Position = uP * pv;\n  float h = fract(sin(aP.x*37.7 + aP.z*91.3)*43758.5);\n  vF = 0.70 + 0.30*sin(uTime*(5.0 + h*4.0) + h*40.0);\n  gl_PointSize = clamp(40.0 / max(1.0, -pv.z), 2.5, 20.0);\n}\n";
-
-  // src/render/shaders/flame.frag
-  var flame_default2 = "#version 300 es\nprecision highp float;\nin float vF; uniform vec3 uCol;\nout vec4 o;\nvoid main(){\n  vec2 d = gl_PointCoord - 0.5;\n  o = vec4(uCol * smoothstep(0.5, 0.05, length(d)) * vF, 0.0);\n}\n";
-
-  // src/render/shaders/post.vert
-  var post_default = "#version 300 es\nlayout(location=0) in vec2 aQ;\nout vec2 vUV;\nvoid main(){ vUV = aQ; gl_Position = vec4(aQ*2.0 - 1.0, 0.0, 1.0); }\n";
-
-  // src/render/shaders/bright.frag
-  var bright_default = "#version 300 es\nprecision highp float;\nin vec2 vUV; uniform sampler2D uTex;\nout vec4 o;\nvoid main(){\n  vec3 c = texture(uTex, vUV).rgb;\n  float l = dot(c, vec3(0.2126, 0.7152, 0.0722));\n  o = vec4(c * smoothstep(0.62, 1.05, l), 1.0);\n}\n";
-
-  // src/render/shaders/blur.frag
-  var blur_default = "#version 300 es\nprecision highp float;\nin vec2 vUV; uniform sampler2D uTex; uniform vec2 uDir;\nout vec4 o;\nvoid main(){\n  vec3 acc = texture(uTex, vUV).rgb * 0.227027;\n  vec2 o1 = uDir * 1.3846154, o2 = uDir * 3.2307692;\n  acc += texture(uTex, vUV + o1).rgb * 0.3162162;\n  acc += texture(uTex, vUV - o1).rgb * 0.3162162;\n  acc += texture(uTex, vUV + o2).rgb * 0.0702703;\n  acc += texture(uTex, vUV - o2).rgb * 0.0702703;\n  o = vec4(acc, 1.0);\n}\n";
-
-  // src/render/shaders/composite.frag
-  var composite_default = "#version 300 es\nprecision highp float;\nin vec2 vUV;\nuniform sampler2D uTex; uniform sampler2D uBloom;\nuniform float uTime; uniform vec2 uRes;\nout vec4 o;\nvec3 aces(vec3 x){\n  return clamp((x*(2.51*x + 0.03)) / (x*(2.43*x + 0.59) + 0.14), 0.0, 1.0);\n}\nfloat hash(vec2 p){\n  vec3 p3 = fract(vec3(p.xyx) * 0.1031);\n  p3 += dot(p3, p3.yzx + 33.33);\n  return fract((p3.x + p3.y) * p3.z);\n}\nvoid main(){\n  vec3 c = texture(uTex, vUV).rgb + texture(uBloom, vUV).rgb * 0.9;\n  c = aces(c * 1.35);\n  /* split-tone: cool shadows, warm lights \u2014 the film look of old halls */\n  float lum = dot(c, vec3(0.299, 0.587, 0.114));\n  c *= mix(vec3(0.965, 0.99, 1.065), vec3(1.045, 1.0, 0.945), smoothstep(0.04, 0.62, lum));\n  vec2 vg = vUV - 0.5;\n  c *= 1.0 - 0.34 * smoothstep(0.28, 0.72, dot(vg, vg));\n  c += (hash(vUV * uRes + fract(uTime)*371.0) - 0.5) * 0.028;\n  o = vec4(c, 1.0);\n}\n";
-
-  // src/main.js
+  // src/world/rooms.js
   var SPECIAL = { NONE: 0, VERMILION: 1, ARCHIVE: 2, DARKROOM: 3 };
   var rooms = /* @__PURE__ */ new Map();
   function roomKey(gx, gz) {
     return gx + "," + gz;
+  }
+  function classifySpecial(roll) {
+    if (roll < 1 / 64) return SPECIAL.VERMILION;
+    if (roll < 2 / 64) return SPECIAL.ARCHIVE;
+    if (roll < 3 / 64) return SPECIAL.DARKROOM;
+    return SPECIAL.NONE;
+  }
+  function specialAt(gx, gz) {
+    if (gx === 0 && gz === 0) return SPECIAL.NONE;
+    return classifySpecial(mulberry32(h2(gx, gz, SALT_ROOM ^ WORLD_SEED))());
   }
   function getRoom(gx, gz) {
     const k = roomKey(gx, gz);
@@ -930,13 +1189,8 @@
     if (r) return r;
     const seed = h2(gx, gz, SALT_ROOM ^ WORLD_SEED);
     const rnd = mulberry32(seed);
-    let special = SPECIAL.NONE;
     const sroll = rnd();
-    if (gx !== 0 || gz !== 0) {
-      if (sroll < 1 / 64) special = SPECIAL.VERMILION;
-      else if (sroll < 2 / 64) special = SPECIAL.ARCHIVE;
-      else if (sroll < 3 / 64) special = SPECIAL.DARKROOM;
-    }
+    const special = gx !== 0 || gz !== 0 ? classifySpecial(sroll) : SPECIAL.NONE;
     r = {
       gx,
       gz,
@@ -1171,6 +1425,50 @@
     r.ownLights.push(spotAt([0, H - 1.15, 0], [0, 0, 0], [0.95, 0.8, 0.6], 0.7, 0.36, 8.5));
     r.ownLights.push(spotAt([0, H - 1.6, 0], [0, H, 0], [0.85, 0.66, 0.38], 0.78, 0.3, 4.5));
   }
+
+  // src/render/shaders/arch.vert
+  var arch_default = "#version 300 es\nlayout(location=0) in vec3 aPos;\nlayout(location=1) in vec3 aNor;\nlayout(location=2) in vec2 aUV;\nlayout(location=3) in vec3 aCol;\nlayout(location=4) in float aMat;\nuniform mat4 uMV, uP;\nout vec3 vN; out vec3 vPv; out vec2 vUV; out vec3 vCol; out vec3 vLp; out float vMat;\nvoid main(){\n  vec4 pv = uMV * vec4(aPos, 1.0);\n  vPv = pv.xyz;\n  vN = mat3(uMV) * aNor;\n  vUV = aUV; vCol = aCol; vLp = aPos; vMat = aMat;\n  gl_Position = uP * pv;\n}\n";
+
+  // src/render/shaders/arch.frag
+  var arch_default2 = "#version 300 es\nprecision highp float;\nin vec3 vN; in vec3 vPv; in vec2 vUV; in vec3 vCol; in vec3 vLp; in float vMat;\nuniform vec3 uFog; uniform float uSigma; uniform float uAlpha;\nuniform vec3 uAmb; uniform vec3 uUpV;\nuniform sampler2D uPlaster; uniform sampler2D uParquet;\nuniform int uNL;\nuniform vec4 uLPos[8];   // xyz view-space position, w 1/range\xB2\nuniform vec4 uLDir[8];   // xyz view-space axis,     w cos(outer)\nuniform vec4 uLCol[8];   // rgb colour\xB7intensity,    w cos(inner)\nout vec4 o;\nvoid main(){\n  vec3 n = normalize(vN);\n  vec3 vdir = normalize(-vPv);\n  if (dot(n, vdir) < 0.0) n = -n;\n  /* material grain */\n  vec3 alb = vCol;\n  if (vMat < 0.5)      alb *= texture(uPlaster, vUV * 0.5).rgb;\n  else if (vMat < 1.5) alb *= texture(uParquet, vUV * 0.5).rgb;\n  /* analytic corner occlusion \u2014 rooms are boxes, so distance to the two\n     other surface planes is a fine stand-in for baked AO */\n  vec3 dd = vec3(6.76 - abs(vLp.x), min(vLp.y, 4.2 - vLp.y), 6.76 - abs(vLp.z));\n  vec3 gg = 0.66 + 0.34 * clamp(dd / 0.85, 0.0, 1.0);\n  float ao = min(1.0, gg.x * gg.y * gg.z * 1.515);\n  vec3 acc = uAmb * alb;\n  float gloss = smoothstep(0.86, 0.99, dot(n, uUpV));\n  for (int i = 0; i < 8; i++){\n    if (i >= uNL) break;\n    vec3 L = uLPos[i].xyz - vPv;\n    float d2 = dot(L, L);\n    float dist = sqrt(d2);\n    L /= dist;\n    float att = 1.0 / (1.0 + d2 * uLPos[i].w);\n    float cone = smoothstep(uLDir[i].w, uLCol[i].w, dot(-L, uLDir[i].xyz));\n    vec3 c = uLCol[i].rgb * (att * cone);\n    acc += alb * c * max(dot(n, L), 0.0);\n    vec3 hv = normalize(L + vdir);\n    acc += c * pow(max(dot(n, hv), 0.0), 56.0) * gloss * 0.65;\n  }\n  acc *= ao;\n  float f = 1.0 - exp(-uSigma * length(vPv));\n  o = vec4(mix(acc, uFog, f), uAlpha);\n}\n";
+
+  // src/render/shaders/paint.vert
+  var paint_default = "#version 300 es\nlayout(location=0) in vec2 aQ;\nuniform mat4 uMV, uP;\nuniform vec3 uO, uU, uV;\nout vec2 vUV; out vec3 vPv;\nvoid main(){\n  vec3 p = uO + uU*aQ.x + uV*aQ.y;\n  vec4 pv = uMV * vec4(p, 1.0);\n  vPv = pv.xyz; vUV = vec2(aQ.x, 1.0 - aQ.y);\n  gl_Position = uP * pv;\n}\n";
+
+  // src/render/shaders/paint.frag
+  var paint_default2 = "#version 300 es\nprecision highp float;\nin vec2 vUV; in vec3 vPv;\nuniform sampler2D uTex;\nuniform vec3 uN;            // view-space surface normal\nuniform vec3 uFog; uniform float uSigma; uniform float uFade; uniform float uEm;\nuniform float uAT;          // 1 \u2192 texture alpha shapes the quad (contact shadows)\nuniform int uNL;\nuniform vec4 uLPos[8]; uniform vec4 uLDir[8]; uniform vec4 uLCol[8];\nout vec4 o;\nvoid main(){\n  vec4 t = texture(uTex, vUV);\n  vec3 alb = t.rgb;\n  vec3 n = normalize(uN);\n  vec3 vdir = normalize(-vPv);\n  if (dot(n, vdir) < 0.0) n = -n;\n  vec3 acc = alb * uEm;\n  for (int i = 0; i < 8; i++){\n    if (i >= uNL) break;\n    vec3 L = uLPos[i].xyz - vPv;\n    float d2 = dot(L, L); float dist = sqrt(d2); L /= dist;\n    float att = 1.0 / (1.0 + d2 * uLPos[i].w);\n    float cone = smoothstep(uLDir[i].w, uLCol[i].w, dot(-L, uLDir[i].xyz));\n    vec3 c = uLCol[i].rgb * (att * cone);\n    acc += alb * c * max(dot(n, L), 0.0);\n    vec3 hv = normalize(L + vdir);\n    acc += c * pow(max(dot(n, hv), 0.0), 24.0) * 0.055;   // varnish sheen\n  }\n  float f = 1.0 - exp(-uSigma * length(vPv));\n  o = vec4(mix(acc, uFog, f), uFade * mix(1.0, t.a, uAT));\n}\n";
+
+  // src/render/shaders/shaft.vert
+  var shaft_default = "#version 300 es\nlayout(location=0) in vec2 aQ;\nuniform mat4 uMV, uP;\nuniform vec3 uC; uniform vec2 uAxis; uniform vec2 uDim;\nout vec2 vQ;\nvoid main(){\n  vec3 p = vec3(uC.x + uAxis.x*(aQ.x-0.5)*uDim.x, aQ.y*uDim.y, uC.z + uAxis.y*(aQ.x-0.5)*uDim.x);\n  vQ = aQ;\n  gl_Position = uP * (uMV * vec4(p, 1.0));\n}\n";
+
+  // src/render/shaders/shaft.frag
+  var shaft_default2 = "#version 300 es\nprecision highp float;\nin vec2 vQ; uniform vec3 uCol; uniform float uTime;\nout vec4 o;\nvoid main(){\n  float ax = 1.0 - abs(vQ.x - 0.5)*2.0;\n  float ay = 1.0 - vQ.y*0.78;\n  float a = ax*ax*ay*0.11*(0.82 + 0.18*sin(uTime*0.37 + vQ.y*5.0));\n  o = vec4(uCol*a, 0.0);\n}\n";
+
+  // src/render/shaders/mote.vert
+  var mote_default = "#version 300 es\nlayout(location=0) in vec4 aS;\nuniform mat4 uMV, uP;\nuniform vec3 uC; uniform vec2 uDim; uniform float uTime;\nout float vA;\nvoid main(){\n  float ph = fract(aS.y + uTime*0.016 + uC.x*0.13);\n  float wob = sin(uTime*aS.w*2.0 + aS.x*23.0)*0.14;\n  vec3 p = vec3(uC.x + (aS.x-0.5)*uDim.x*0.8 + wob,\n                ph*uDim.y,\n                uC.z + (aS.z-0.5)*uDim.x*0.8 + wob*0.7);\n  vec4 pv = uMV * vec4(p, 1.0);\n  gl_Position = uP * pv;\n  gl_PointSize = clamp(9.0 / max(1.0, -pv.z), 1.5, 5.0);\n  vA = (0.55 + 0.45*sin(uTime*1.7 + aS.x*40.0)) * smoothstep(0.0, 0.12, ph) * smoothstep(1.0, 0.82, ph);\n}\n";
+
+  // src/render/shaders/mote.frag
+  var mote_default2 = "#version 300 es\nprecision highp float;\nin float vA; uniform vec3 uCol;\nout vec4 o;\nvoid main(){\n  vec2 d = gl_PointCoord - 0.5;\n  o = vec4(uCol * smoothstep(0.5, 0.12, length(d)) * vA * 0.5, 0.0);\n}\n";
+
+  // src/render/shaders/flame.vert
+  var flame_default = "#version 300 es\nlayout(location=0) in vec3 aP;\nuniform mat4 uMV, uP; uniform float uTime; uniform float uMY;\nout float vF;\nvoid main(){\n  vec3 p = vec3(aP.x, mix(aP.y, -aP.y, uMY), aP.z);\n  vec4 pv = uMV * vec4(p, 1.0);\n  gl_Position = uP * pv;\n  float h = fract(sin(aP.x*37.7 + aP.z*91.3)*43758.5);\n  vF = 0.70 + 0.30*sin(uTime*(5.0 + h*4.0) + h*40.0);\n  gl_PointSize = clamp(40.0 / max(1.0, -pv.z), 2.5, 20.0);\n}\n";
+
+  // src/render/shaders/flame.frag
+  var flame_default2 = "#version 300 es\nprecision highp float;\nin float vF; uniform vec3 uCol;\nout vec4 o;\nvoid main(){\n  vec2 d = gl_PointCoord - 0.5;\n  o = vec4(uCol * smoothstep(0.5, 0.05, length(d)) * vF, 0.0);\n}\n";
+
+  // src/render/shaders/post.vert
+  var post_default = "#version 300 es\nlayout(location=0) in vec2 aQ;\nout vec2 vUV;\nvoid main(){ vUV = aQ; gl_Position = vec4(aQ*2.0 - 1.0, 0.0, 1.0); }\n";
+
+  // src/render/shaders/bright.frag
+  var bright_default = "#version 300 es\nprecision highp float;\nin vec2 vUV; uniform sampler2D uTex;\nout vec4 o;\nvoid main(){\n  vec3 c = texture(uTex, vUV).rgb;\n  float l = dot(c, vec3(0.2126, 0.7152, 0.0722));\n  o = vec4(c * smoothstep(0.62, 1.05, l), 1.0);\n}\n";
+
+  // src/render/shaders/blur.frag
+  var blur_default = "#version 300 es\nprecision highp float;\nin vec2 vUV; uniform sampler2D uTex; uniform vec2 uDir;\nout vec4 o;\nvoid main(){\n  vec3 acc = texture(uTex, vUV).rgb * 0.227027;\n  vec2 o1 = uDir * 1.3846154, o2 = uDir * 3.2307692;\n  acc += texture(uTex, vUV + o1).rgb * 0.3162162;\n  acc += texture(uTex, vUV - o1).rgb * 0.3162162;\n  acc += texture(uTex, vUV + o2).rgb * 0.0702703;\n  acc += texture(uTex, vUV - o2).rgb * 0.0702703;\n  o = vec4(acc, 1.0);\n}\n";
+
+  // src/render/shaders/composite.frag
+  var composite_default = "#version 300 es\nprecision highp float;\nin vec2 vUV;\nuniform sampler2D uTex; uniform sampler2D uBloom;\nuniform float uTime; uniform vec2 uRes;\nout vec4 o;\nvec3 aces(vec3 x){\n  return clamp((x*(2.51*x + 0.03)) / (x*(2.43*x + 0.59) + 0.14), 0.0, 1.0);\n}\nfloat hash(vec2 p){\n  vec3 p3 = fract(vec3(p.xyx) * 0.1031);\n  p3 += dot(p3, p3.yzx + 33.33);\n  return fract((p3.x + p3.y) * p3.z);\n}\nvoid main(){\n  vec3 c = texture(uTex, vUV).rgb + texture(uBloom, vUV).rgb * 0.9;\n  c = aces(c * 1.35);\n  /* split-tone: cool shadows, warm lights \u2014 the film look of old halls */\n  float lum = dot(c, vec3(0.299, 0.587, 0.114));\n  c *= mix(vec3(0.965, 0.99, 1.065), vec3(1.045, 1.0, 0.945), smoothstep(0.04, 0.62, lum));\n  vec2 vg = vUV - 0.5;\n  c *= 1.0 - 0.34 * smoothstep(0.28, 0.72, dot(vg, vg));\n  c += (hash(vUV * uRes + fract(uTime)*371.0) - 0.5) * 0.028;\n  o = vec4(c, 1.0);\n}\n";
+
+  // src/main.js
   var SCHEMES = [
     { wall: [0.166, 0.15, 0.132], floor: [0.105, 0.094, 0.082], ceil: [0.07, 0.065, 0.058], trim: [0.05, 0.046, 0.04] },
     { wall: [0.3, 0.082, 0.058], floor: [0.088, 0.062, 0.05], ceil: [0.078, 0.05, 0.04], trim: [0.36, 0.28, 0.14] },
@@ -2349,87 +2647,6 @@
     r.flameVAO = r.flameVBO = null;
     r.nFlames = 0;
   }
-  function mat4() {
-    return new Float32Array(16);
-  }
-  function perspective(o, fovy, asp, near, far) {
-    const f = 1 / Math.tan(fovy / 2), nf = 1 / (near - far);
-    o.fill(0);
-    o[0] = f / asp;
-    o[5] = f;
-    o[10] = (far + near) * nf;
-    o[11] = -1;
-    o[14] = 2 * far * near * nf;
-    return o;
-  }
-  function mulM(o, a, b) {
-    for (let c = 0; c < 4; c++) {
-      const b0 = b[c * 4], b1 = b[c * 4 + 1], b2 = b[c * 4 + 2], b3 = b[c * 4 + 3];
-      o[c * 4] = a[0] * b0 + a[4] * b1 + a[8] * b2 + a[12] * b3;
-      o[c * 4 + 1] = a[1] * b0 + a[5] * b1 + a[9] * b2 + a[13] * b3;
-      o[c * 4 + 2] = a[2] * b0 + a[6] * b1 + a[10] * b2 + a[14] * b3;
-      o[c * 4 + 3] = a[3] * b0 + a[7] * b1 + a[11] * b2 + a[15] * b3;
-    }
-    return o;
-  }
-  function mulT(o, v, x, y, z) {
-    o.set(v);
-    o[12] = v[0] * x + v[4] * y + v[8] * z + v[12];
-    o[13] = v[1] * x + v[5] * y + v[9] * z + v[13];
-    o[14] = v[2] * x + v[6] * y + v[10] * z + v[14];
-    return o;
-  }
-  function viewMatrix(o, ex, ey, ez, yaw, pitch) {
-    const cy = Math.cos(yaw), sy = Math.sin(yaw);
-    const cp = Math.cos(pitch), sp = Math.sin(pitch);
-    o[0] = cy;
-    o[4] = 0;
-    o[8] = sy;
-    o[1] = -sy * sp;
-    o[5] = cp;
-    o[9] = cy * sp;
-    o[2] = -sy * cp;
-    o[6] = -sp;
-    o[10] = cy * cp;
-    o[3] = 0;
-    o[7] = 0;
-    o[11] = 0;
-    o[15] = 1;
-    o[12] = -(o[0] * ex + o[4] * ey + o[8] * ez);
-    o[13] = -(o[1] * ex + o[5] * ey + o[9] * ez);
-    o[14] = -(o[2] * ex + o[6] * ey + o[10] * ez);
-    return o;
-  }
-  var planes = new Float32Array(24);
-  function extractPlanes(m) {
-    const row = (i) => [m[i], m[4 + i], m[8 + i], m[12 + i]];
-    const r0 = row(0), r1 = row(1), r2 = row(2), r3 = row(3);
-    const put = (k, a, b) => {
-      planes[k * 4] = a[0] + b[0];
-      planes[k * 4 + 1] = a[1] + b[1];
-      planes[k * 4 + 2] = a[2] + b[2];
-      planes[k * 4 + 3] = a[3] + b[3];
-    };
-    const putn = (k, a, b) => {
-      planes[k * 4] = a[0] - b[0];
-      planes[k * 4 + 1] = a[1] - b[1];
-      planes[k * 4 + 2] = a[2] - b[2];
-      planes[k * 4 + 3] = a[3] - b[3];
-    };
-    put(0, r3, r0);
-    putn(1, r3, r0);
-    put(2, r3, r1);
-    putn(3, r3, r1);
-    put(4, r3, r2);
-    putn(5, r3, r2);
-  }
-  function boxVisible(cx, cy, cz, hx, hy, hz) {
-    for (let k = 0; k < 6; k++) {
-      const a = planes[k * 4], b = planes[k * 4 + 1], c = planes[k * 4 + 2], dd = planes[k * 4 + 3];
-      if (a * cx + b * cy + c * cz + dd < -(Math.abs(a) * hx + Math.abs(b) * hy + Math.abs(c) * hz)) return false;
-    }
-    return true;
-  }
   var player = {
     gx: 0,
     gz: 0,
@@ -2815,204 +3032,6 @@
       moved = true;
     }
     if (moved) onRoomChanged();
-  }
-  var audio = {
-    ctx: null,
-    master: null,
-    muted: false,
-    ok: false,
-    stride: 0,
-    arnd: mulberry32(658704),
-    nextBell: 0,
-    stepBuf: null
-  };
-  function initAudio() {
-    if (audio.ctx) {
-      audio.ctx.resume().catch(() => {
-      });
-      return;
-    }
-    try {
-      const AC = window.AudioContext || window.webkitAudioContext;
-      if (!AC) return;
-      const ctx = new AC();
-      audio.ctx = ctx;
-      const comp = ctx.createDynamicsCompressor();
-      comp.threshold.value = -22;
-      comp.ratio.value = 8;
-      comp.knee.value = 18;
-      const master = ctx.createGain();
-      master.gain.value = 0.9;
-      master.connect(comp);
-      comp.connect(ctx.destination);
-      audio.master = master;
-      const padF = ctx.createBiquadFilter();
-      padF.type = "lowpass";
-      padF.frequency.value = 360;
-      padF.Q.value = 0.7;
-      const padG = ctx.createGain();
-      padG.gain.value = 0.04;
-      padF.connect(padG);
-      padG.connect(master);
-      for (const det of [-6, 5]) {
-        const o = ctx.createOscillator();
-        o.type = "sawtooth";
-        o.frequency.value = 55;
-        o.detune.value = det;
-        o.connect(padF);
-        o.start();
-      }
-      const lfo = ctx.createOscillator();
-      lfo.frequency.value = 0.055;
-      const lfoG = ctx.createGain();
-      lfoG.gain.value = 120;
-      lfo.connect(lfoG);
-      lfoG.connect(padF.frequency);
-      lfo.start();
-      const len = ctx.sampleRate * 2 | 0;
-      const buf = ctx.createBuffer(1, len, ctx.sampleRate);
-      const dch = buf.getChannelData(0);
-      let lv = 0;
-      const nr = mulberry32(2816);
-      for (let i = 0; i < len; i++) {
-        lv = (lv + (nr() * 2 - 1) * 0.02) * 0.997;
-        dch[i] = lv * 3.5;
-      }
-      const src = ctx.createBufferSource();
-      src.buffer = buf;
-      src.loop = true;
-      const nf = ctx.createBiquadFilter();
-      nf.type = "lowpass";
-      nf.frequency.value = 220;
-      const ng = ctx.createGain();
-      ng.gain.value = 0.05;
-      src.connect(nf);
-      nf.connect(ng);
-      ng.connect(master);
-      src.start();
-      const sl = ctx.sampleRate * 0.075 | 0;
-      const sb = ctx.createBuffer(1, sl, ctx.sampleRate);
-      const sd = sb.getChannelData(0);
-      for (let i = 0; i < sl; i++) sd[i] = (nr() * 2 - 1) * Math.pow(1 - i / sl, 2.3);
-      audio.stepBuf = sb;
-      audio.ok = true;
-      audio.nextBell = ctx.currentTime + 2.5;
-      setInterval(bellScheduler, 100);
-    } catch (e) {
-    }
-  }
-  var BELL_FREQS = [220, 261.63, 293.66, 329.63, 392, 440, 523.25, 587.33];
-  function bellScheduler() {
-    if (!audio.ok) return;
-    const ctx = audio.ctx;
-    while (audio.nextBell < ctx.currentTime + 0.25) {
-      const t = Math.max(audio.nextBell, ctx.currentTime + 0.02);
-      if (!audio.muted) bell(t, BELL_FREQS[Math.floor(audio.arnd() * BELL_FREQS.length)]);
-      audio.nextBell += 4 + audio.arnd() * 5;
-    }
-  }
-  function bell(t, f) {
-    const ctx = audio.ctx;
-    const g = ctx.createGain();
-    g.gain.setValueAtTime(0, t);
-    g.gain.linearRampToValueAtTime(0.1, t + 8e-3);
-    g.gain.exponentialRampToValueAtTime(4e-4, t + 4.2);
-    g.connect(audio.master);
-    const o = ctx.createOscillator();
-    o.type = "sine";
-    o.frequency.value = f;
-    o.connect(g);
-    o.start(t);
-    o.stop(t + 4.4);
-    const g2 = ctx.createGain();
-    g2.gain.value = 0.35;
-    const o2 = ctx.createOscillator();
-    o2.type = "sine";
-    o2.frequency.value = f * 2.005;
-    o2.connect(g2);
-    g2.connect(g);
-    o2.start(t);
-    o2.stop(t + 4.4);
-  }
-  function footstep(speed) {
-    if (!audio.ok || audio.muted) return;
-    const ctx = audio.ctx;
-    const src = ctx.createBufferSource();
-    src.buffer = audio.stepBuf;
-    src.playbackRate.value = 0.8 + audio.arnd() * 0.45;
-    const bp = ctx.createBiquadFilter();
-    bp.type = "bandpass";
-    bp.frequency.value = 150 + audio.arnd() * 90;
-    bp.Q.value = 0.9;
-    const g = ctx.createGain();
-    g.gain.value = Math.min(0.35, 0.13 + speed * 0.045);
-    src.connect(bp);
-    bp.connect(g);
-    g.connect(audio.master);
-    src.start();
-  }
-  document.addEventListener("visibilitychange", () => {
-    if (!audio.ctx) return;
-    if (document.hidden) audio.ctx.suspend().catch(() => {
-    });
-    else if (entered && !audio.muted) audio.ctx.resume().catch(() => {
-    });
-  });
-  function toggleMute() {
-    if (!audio.ok) {
-      flashHint("this browser keeps the museum silent");
-      return;
-    }
-    audio.muted = !audio.muted;
-    audio.master.gain.value = audio.muted ? 0 : 0.9;
-    flashHint(audio.muted ? "sound off" : "sound on");
-  }
-  var storageOK = false;
-  try {
-    localStorage.setItem("rd_probe", "1");
-    localStorage.removeItem("rd_probe");
-    storageOK = true;
-  } catch (e) {
-    storageOK = false;
-  }
-  var persist = { visits: 0, rooms: 0, works: 0, acquired: 0 };
-  if (storageOK) {
-    try {
-      Object.assign(persist, JSON.parse(
-        localStorage.getItem("lumiere") || localStorage.getItem("rand-dom") || "{}"
-      ));
-    } catch (e) {
-    }
-  }
-  persist.visits = (persist.visits | 0) + 1;
-  var saveTimer = 0;
-  function savePersist() {
-    if (!storageOK) return;
-    clearTimeout(saveTimer);
-    saveTimer = setTimeout(() => {
-      try {
-        localStorage.setItem("lumiere", JSON.stringify(persist));
-      } catch (e) {
-      }
-    }, 800);
-  }
-  savePersist();
-  addEventListener("beforeunload", () => {
-    if (storageOK) {
-      try {
-        localStorage.setItem("lumiere", JSON.stringify(persist));
-      } catch (e) {
-      }
-    }
-  });
-  function flashHint(msg) {
-    const el = document.getElementById("hud-hint");
-    el.innerHTML = msg;
-    el.style.opacity = "1";
-    clearTimeout(flashHint.t);
-    flashHint.t = setTimeout(() => {
-      el.style.opacity = "0";
-    }, 2600);
   }
   var inspect = { on: false, t: 0, A: null, r: null, to: null };
   function paintingCenter(A, r) {
@@ -4389,9 +4408,7 @@
           for (let dx = -rad; dx <= rad; dx++) {
             if (Math.max(Math.abs(dx), Math.abs(dz)) !== rad) continue;
             const gx = player.gx + dx, gz = player.gz + dz;
-            if (gx === 0 && gz === 0) continue;
-            const sroll = mulberry32(h2(gx, gz, SALT_ROOM ^ WORLD_SEED))();
-            const sp = sroll < 1 / 64 ? 1 : sroll < 2 / 64 ? 2 : sroll < 3 / 64 ? 3 : 0;
+            const sp = specialAt(gx, gz);
             if (sp === type) return { gx, gz, type: sp };
           }
       return null;
@@ -4514,6 +4531,7 @@
   }
   document.getElementById("enter").addEventListener("click", () => {
     entered = true;
+    setAudioActive(true);
     initAudio();
     document.body.classList.add("entered");
     introEl.style.transition = REDUCED ? "none" : "opacity 1.1s ease";
