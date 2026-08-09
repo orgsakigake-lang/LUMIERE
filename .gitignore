@@ -6,3 +6,4 @@ blob-report/
 *.log
 # built by npm run archive; upload it, don't commit it
 archive/
+dev/

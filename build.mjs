@@ -18,7 +18,11 @@ const MINIFY = process.argv.includes('--archive') || process.argv.includes('--mi
    stub. See docs/permanence.md — it is both the honest artifact for permanent
    storage and what takes the page under the 100 KiB free-upload threshold. */
 const ARCHIVE = process.argv.includes('--archive');
-const OUT = ARCHIVE ? 'archive/index.html' : 'index.html';
+/* Watch mode writes somewhere else entirely. Pointing it at index.html meant
+   every dev session and every test run silently overwrote the committed,
+   minified artifact with an unminified one — which is how a 173 KB build once
+   got committed in place of a 103 KB one. */
+const OUT = ARCHIVE ? 'archive/index.html' : WATCH ? 'dev/index.html' : 'index.html';
 const PORT = 8000;
 
 /* GLSL goes in as raw text, so esbuild's minifier never sees it. Strip
@@ -157,7 +161,7 @@ if (WATCH) {
 
   createServer(async (req, res) => {
     const path = (req.url || '/').split('?')[0];
-    const file = join(ROOT, path === '/' ? 'index.html' : path);
+    const file = join(ROOT, path === '/' ? OUT : path);
     try {
       const data = await readFile(file);
       res.writeHead(200, {
