@@ -21,9 +21,13 @@ export default defineConfig({
   },
   projects: [{ name: 'chromium', use: { ...devices['Desktop Chrome'] } }],
   webServer: {
-    command: 'node build.mjs --watch',
+    /* --minify, for two reasons. It exercises the artifact that actually
+       ships rather than a readable variant of it. And without it the watch
+       server rewrites the committed index.html unminified on every test run,
+       which is how a 173 KB build once got committed in place of a 103 KB one. */
+    command: 'node build.mjs --minify --watch',
     url: 'http://localhost:8000',
-    reuseExistingServer: true,
+    reuseExistingServer: false,
     stdout: 'ignore',
   },
 });
