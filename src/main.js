@@ -25,6 +25,14 @@ import { canvas, gl, compile, program } from './render/gl.js';
 import { PERF, dprCap } from './render/perf.js';
 import { post, postCaps, wantSamples, setForcedSamples, allocPost, runPost,
          setPostPrograms, uBright, uBlur, uComp } from './render/post.js';
+import { plasterTex, parquetTex, shadowTex, skyTex, makeSurfaceTextures,
+         ensureSkyTex, dropSurfaceTextures } from './render/textures.js';
+import { player, M_P, M_V, M_MV, M_PV, vpW, vpH, setViewport,
+         visited, setVisited, nearRooms, midRooms } from './render/state.js';
+import { setLoanProvider, releaseSlot, freeAllArtSlots, preemptArtJobs, artJobKey,
+         syncArtJobs, pumpArt, updateHudStat, markSeen, paintBasis, makeRoomVAO,
+         dropRoomGL, TEX_SIZES, POOLS, PPOOL, scratch, sctx, pscratch, pctx,
+         artState, PB, SHA } from './art/scheduler.js';
 
 import VS_ARCH from './render/shaders/arch.vert';
 import FS_ARCH from './render/shaders/arch.frag';
@@ -170,119 +178,6 @@ const MOON = [0.42, 0.52, 0.72];
 /* candle flames on the chandeliers — additive points, gentle flicker */
 let progFlame = null, uFlame = {};
 
-/* ————— surface grain: plaster + walnut parquet, generated once ————— */
-let plasterTex = null, parquetTex = null, shadowTex = null;
-function texFromCanvas(c, repeat){
-  const t = gl.createTexture();
-  gl.bindTexture(gl.TEXTURE_2D, t);
-  const levels = Math.floor(Math.log2(Math.max(c.width, c.height))) + 1;
-  gl.texStorage2D(gl.TEXTURE_2D, levels, gl.RGBA8, c.width, c.height);
-  gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, gl.RGBA, gl.UNSIGNED_BYTE, c);
-  gl.generateMipmap(gl.TEXTURE_2D);
-  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR_MIPMAP_LINEAR);
-  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, repeat ? gl.REPEAT : gl.CLAMP_TO_EDGE);
-  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, repeat ? gl.REPEAT : gl.CLAMP_TO_EDGE);
-  if (window.__aniso)
-    gl.texParameterf(gl.TEXTURE_2D, window.__aniso.ext.TEXTURE_MAX_ANISOTROPY_EXT, window.__aniso.max);
-  return t;
-}
-function makeSurfaceTextures(){
-  const rnd = mulberry32(0x7E47);
-  /* plaster: near-flat fine grain with soft blotches */
-  {
-    const c = document.createElement('canvas'); c.width = c.height = 256;
-    const g = c.getContext('2d');
-    g.fillStyle = '#FFFFFF'; g.fillRect(0, 0, 256, 256);
-    const img = g.getImageData(0, 0, 256, 256);
-    for (let i = 0; i < 256*256; i++){
-      const v = 246 + rnd()*10 - 5 + Math.sin(i*0.31)*1.5;
-      img.data[i*4] = img.data[i*4+1] = img.data[i*4+2] = v;
-    }
-    g.putImageData(img, 0, 0);
-    g.globalAlpha = 0.026;
-    for (let b = 0; b < 40; b++){
-      g.fillStyle = rnd() < 0.5 ? '#000000' : '#FFFFFF';
-      g.beginPath();
-      g.arc(rnd()*256, rnd()*256, 22 + rnd()*50, 0, 7);
-      g.fill();
-    }
-    g.globalAlpha = 1;
-    plasterTex = texFromCanvas(c, true);
-  }
-  /* parquet: 8 staggered planks per 2 m tile, grain and seams */
-  {
-    const c = document.createElement('canvas'); c.width = c.height = 512;
-    const g = c.getContext('2d');
-    g.fillStyle = '#C9C2B8'; g.fillRect(0, 0, 512, 512);
-    const PL = 512/8;
-    for (let p = 0; p < 8; p++){
-      const y0 = p*PL;
-      const base = 188 + (rnd()-0.5)*46;
-      g.fillStyle = `rgb(${base|0},${(base*0.965)|0},${(base*0.92)|0})`;
-      g.fillRect(0, y0, 512, PL);
-      /* lengthwise grain */
-      for (let s = 0; s < 26; s++){
-        const gy = y0 + rnd()*PL;
-        g.strokeStyle = `rgba(${rnd()<0.5?30:236},${rnd()<0.5?24:230},${20},${0.05 + rnd()*0.07})`;
-        g.lineWidth = 0.7 + rnd()*1.4;
-        g.beginPath();
-        g.moveTo(-8, gy);
-        for (let x = 0; x <= 512; x += 64) g.lineTo(x, gy + Math.sin(x*0.02 + s)*1.6);
-        g.stroke();
-      }
-      /* butt joints, staggered */
-      g.fillStyle = 'rgba(18,14,10,0.55)';
-      const off = (p*197) % 512;
-      g.fillRect(off, y0, 2, PL);
-      g.fillRect((off + 256) % 512, y0, 2, PL);
-      /* seam between planks */
-      g.fillRect(0, y0, 512, 1.6);
-      /* the odd knot */
-      if (rnd() < 0.4){
-        g.fillStyle = 'rgba(40,28,18,0.5)';
-        g.beginPath(); g.arc(rnd()*512, y0 + rnd()*PL, 2.2 + rnd()*2.6, 0, 7); g.fill();
-      }
-    }
-    parquetTex = texFromCanvas(c, true);
-  }
-  /* a soft dark rectangle for contact shadows (alpha in .a) */
-  {
-    const c = document.createElement('canvas'); c.width = c.height = 128;
-    const g = c.getContext('2d');
-    g.clearRect(0, 0, 128, 128);
-    const rg = g.createRadialGradient(64, 64, 8, 64, 64, 62);
-    rg.addColorStop(0, 'rgba(0,0,0,0.62)');
-    rg.addColorStop(0.55, 'rgba(0,0,0,0.34)');
-    rg.addColorStop(1, 'rgba(0,0,0,0)');
-    g.fillStyle = rg; g.fillRect(0, 0, 128, 128);
-    shadowTex = texFromCanvas(c, false);
-  }
-}
-
-/* daylight — a single procedural sky, shared by every window */
-let skyTex = null;
-function ensureSkyTex(){
-  if (skyTex) return skyTex;
-  const c = document.createElement('canvas'); c.width = 256; c.height = 384;
-  const g = c.getContext('2d');
-  const grad = g.createLinearGradient(0, 0, 0, 384);
-  grad.addColorStop(0, '#FDF6E3'); grad.addColorStop(0.55, '#FBE9C4'); grad.addColorStop(1, '#F2D49B');
-  g.fillStyle = grad; g.fillRect(0, 0, 256, 384);
-  const sun = g.createRadialGradient(176, 118, 6, 176, 118, 130);
-  sun.addColorStop(0, 'rgba(255,253,244,0.95)'); sun.addColorStop(0.25, 'rgba(255,244,214,0.45)');
-  sun.addColorStop(1, 'rgba(255,244,214,0)');
-  g.fillStyle = sun; g.fillRect(0, 0, 256, 384);
-  skyTex = gl.createTexture();
-  gl.bindTexture(gl.TEXTURE_2D, skyTex);
-  gl.texStorage2D(gl.TEXTURE_2D, 8, gl.RGBA8, 256, 384);
-  gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, gl.RGBA, gl.UNSIGNED_BYTE, c);
-  gl.generateMipmap(gl.TEXTURE_2D);
-  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR_MIPMAP_LINEAR);
-  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
-  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
-  return skyTex;
-}
-
 /* the two wall switches */
 const WIN = { on: false };
 let lightsOn = true;
@@ -308,309 +203,23 @@ function setShutters(on, quiet){
 }
 
 
-const TEX_SIZES = { L: [512, 384], P: [384, 512], S: [448, 448], W: [512, 320] };
-function makePool(n, w, h){
-  return { w, h, slots: Array.from({length: n}, () => ({ tex: null, used: false, A: null, r: null })) };
-}
-const POOLS = { L: makePool(24,512,384), P: makePool(24,384,512), S: makePool(24,448,448), W: makePool(24,512,320) };
-const PPOOL = makePool(64, 256, 128);
-function acquireSlot(pool, A, r){
-  for (const s of pool.slots){
-    if (s.used) continue;
-    if (!s.tex){
-      s.tex = gl.createTexture();
-      gl.bindTexture(gl.TEXTURE_2D, s.tex);
-      const levels = Math.floor(Math.log2(Math.max(pool.w, pool.h))) + 1;
-      gl.texStorage2D(gl.TEXTURE_2D, levels, gl.RGBA8, pool.w, pool.h);
-      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR_MIPMAP_LINEAR);
-      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
-      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
-      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
-      if (window.__aniso)
-        gl.texParameterf(gl.TEXTURE_2D, window.__aniso.ext.TEXTURE_MAX_ANISOTROPY_EXT, window.__aniso.max);
-    }
-    s.used = true; s.A = A; s.r = r;
-    return s;
-  }
-  return null;
-}
-function releaseSlot(s){
-  if (s.A){ if (s.A.tex === s) s.A.tex = null; if (s.A.ptex === s) s.A.ptex = null; }
-  s.used = false; s.A = null; s.r = null;
-}
-function releaseOutside(){
-  for (const pool of [POOLS.L, POOLS.P, POOLS.S, POOLS.W, PPOOL])
-    for (const s of pool.slots)
-      if (s.used && s.r &&
-          Math.max(Math.abs(s.r.gx - player.gx), Math.abs(s.r.gz - player.gz)) > 1)
-        releaseSlot(s);
-  for (const [k, o] of curator.overrides)
-    if (Math.max(Math.abs(o.r.gx - player.gx), Math.abs(o.r.gz - player.gz)) > 1){
-      gl.deleteTexture(o.tex);
-      o.A.override = null;                 // reapplied from the blob on return
-      curator.overrides.delete(k);
-    }
-}
-function freeAllArtSlots(){
-  for (const pool of [POOLS.L, POOLS.P, POOLS.S, POOLS.W, PPOOL])
-    for (const s of pool.slots) releaseSlot(s);
-}
-
-/* scratch canvases (one for paintings, one for placards) */
-/* willReadFrequently keeps these CPU-side: stroke raster then lands inside
-   the budgeted generator slices instead of one giant flush at upload time */
-const scratch = document.createElement('canvas');
-const sctx = scratch.getContext('2d', { alpha: false, willReadFrequently: true });
-const pscratch = document.createElement('canvas');
-pscratch.width = 256; pscratch.height = 128;
-const pctx = pscratch.getContext('2d', { alpha: false, willReadFrequently: true });
-
-const artState = { jobs: new Map(), queue: [], active: null, uploadReady: null,
-                   placards: [], beheld: 0 };
-/* park in-flight jobs (they restart cleanly from their seeds) before anything
-   else borrows the scratch canvas or the shared attractor accumulator */
-function preemptArtJobs(){
-  for (const j of [artState.active, artState.uploadReady]){
-    if (!j) continue;
-    if (j.slot) releaseSlot(j.slot);
-    j.slot = null; j.gen = null; j.ms = 0;
-    artState.queue.unshift(j);
-  }
-  artState.active = null; artState.uploadReady = null;
-}
-function artJobKey(r, i){ return r.gx + ',' + r.gz + ':' + i; }
-
-function syncArtJobs(){
-  releaseOutside();
-  const want = new Set();
-  for (let dj=-1; dj<=1; dj++)
-    for (let di=-1; di<=1; di++){
-      const r = rooms.get(roomKey(player.gx + di, player.gz + dj));
-      if (!r) continue;
-      const prio = Math.max(Math.abs(di), Math.abs(dj));
-      r.artworks.forEach((A, i) => {
-        const k = artJobKey(r, i);
-        want.add(k);
-        if (curator.placements.has(k)){ applyPlacement(r, A, i); return; }
-        if (A.tex) return;
-        let job = artState.jobs.get(k);
-        if (!job){
-          job = { k, r, A, i, prio, gen: null, slot: null, ms: 0 };
-          artState.jobs.set(k, job);
-          artState.queue.push(job);
-        } else job.prio = prio;
-      });
-    }
-  for (const [k, job] of artState.jobs){
-    if (want.has(k)) continue;
-    if (job.slot) releaseSlot(job.slot);
-    if (artState.active === job) artState.active = null;
-    if (artState.uploadReady === job) artState.uploadReady = null;
-    artState.jobs.delete(k);
-    const qi = artState.queue.indexOf(job);
-    if (qi >= 0) artState.queue.splice(qi, 1);
-  }
-  artState.queue.sort((a, b) => a.prio - b.prio);
-  artState.placards = artState.placards.filter(A => A.ptexWanted);
-}
-
-function startJob(job){
-  const A = job.A;
-  const [w, h] = TEX_SIZES[A.asp];
-  job.slot = acquireSlot(POOLS[A.asp], A, job.r);
-  if (!job.slot){ artState.queue.push(job); return false; }   // pool full — retry later
-  scratch.width = w; scratch.height = h;
-  const rnd = mulberry32(A.seed);
-  A.title = A.title || makeTitle(mulberry32(h2(A.seed, 0x717, WORLD_SEED)));
-  const effAlgo = A.algo % ALGOS.length;
-  job.effAlgo = effAlgo;
-  job.gen = ALGOS[effAlgo](sctx, w, h, rnd, jitterPal(A.pal, rnd));
-  return true;
-}
-
-function renderPlacard(A){
-  const g = pctx;
-  g.fillStyle = '#E9E2D2'; g.fillRect(0, 0, 256, 128);
-  g.fillStyle = '#D6CDB8'; g.fillRect(0, 0, 256, 3);
-  g.fillStyle = '#1F1C18';
-  g.font = 'italic 20px Georgia, serif'; g.textBaseline = 'alphabetic';
-  let title = A.title || 'Untitled';
-  if (g.measureText(title).width > 230){
-    while (g.measureText(title + '…').width > 230 && title.length > 4) title = title.slice(0, -1);
-    title += '…';
-  }
-  g.fillText(title, 14, 38);
-  g.font = '13px Georgia, serif'; g.fillStyle = '#5D574C';
-  if (A.overrideName){
-    g.fillText('private loan', 14, 66);
-    g.font = '12px Georgia, serif'; g.fillStyle = '#837C6E';
-    g.fillText('the curator’s collection', 14, 90);
-    g.fillText('on generous terms', 14, 110);
-  } else {
-    const year = 1870 + (h2(A.seed, 0x9999, WORLD_SEED) % 200);
-    g.fillText(`${ALGO_NAMES[A.algo % ALGOS.length]}, ${year}`, 14, 66);
-    g.font = '12px Georgia, serif'; g.fillStyle = '#837C6E';
-    g.fillText(`algorithm & seed ${A.seed}`, 14, 90);
-    g.fillText('edition 1 of 1', 14, 110);
-  }
-}
-
-function pumpArt(){
-  /* one finished texture reaches the GPU per frame */
-  if (artState.uploadReady){
-    const job = artState.uploadReady; artState.uploadReady = null;
-    const A = job.A;
-    gl.bindTexture(gl.TEXTURE_2D, job.slot.tex);
-    gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, gl.RGBA, gl.UNSIGNED_BYTE, scratch);
-    gl.generateMipmap(gl.TEXTURE_2D);
-    A.tex = job.slot;
-    A.fadeAt = performance.now();
-    if (!A.mini){ A.ptexWanted = true; artState.placards.push(A); }
-    artState.jobs.delete(job.k);
-    if (job.r.gx === player.gx && job.r.gz === player.gz && !A.seen){
-      A.seen = true; artState.beheld++; updateHudStat();
-    }
-    trace(`[gen] art (${job.r.gx},${job.r.gz},${job.i}) ${job.ms|0}ms algo=${job.effAlgo} seed=${A.seed}`);
-  } else if (artState.placards.length){
-    /* placards are tiny — one per otherwise-idle upload window */
-    const A = artState.placards.shift();
-    if (A.ptexWanted && A.tex && A.tex.r){
-      const slot = acquireSlot(PPOOL, A, A.tex.r);
-      if (slot){
-        renderPlacard(A);
-        gl.bindTexture(gl.TEXTURE_2D, slot.tex);
-        gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, gl.RGBA, gl.UNSIGNED_BYTE, pscratch);
-        gl.generateMipmap(gl.TEXTURE_2D);
-        A.ptex = slot;
-      } else artState.placards.push(A);
-    }
-  }
-  /* generation under a hard time budget — generous while the intro holds
-     the visitor, so the first wing hangs before they step in */
-  const deadline = performance.now() + (entered ? 3.5 : 9);
-  while (performance.now() < deadline){
-    if (!artState.active){
-      let next = artState.queue.shift();
-      while (next && (next.A.tex || !artState.jobs.has(next.k))) next = artState.queue.shift();
-      if (!next) break;
-      if (!startJob(next)) break;
-      artState.active = next;
-    }
-    const job = artState.active;
-    const t1 = performance.now();
-    const { done } = job.gen.next();
-    const el = performance.now() - t1;
-    job.ms += el;
-    if (el > 6) console.warn(`[gen] slice ${el.toFixed(1)}ms > 6ms budget (algo ${job.effAlgo})`);
-    if (done){
-      finishArt(sctx, scratch.width, scratch.height);
-      artState.uploadReady = job;
-      artState.active = null;
-      break;                       // the upload happens next frame
-    }
-  }
-}
-
-function updateHudStat(){
-  const el = document.getElementById('hud-stat');
-  const guest = (typeof cloud !== 'undefined' && cloud.viewing) ? `guest of ${cloud.viewing.slug} · ` : '';
-  el.textContent = `${guest}${visited.size} room${visited.size===1?'':'s'} · ${artState.beheld} work${artState.beheld===1?'':'s'}`;
-}
-function markSeen(){
-  const r = rooms.get(roomKey(player.gx, player.gz));
-  if (!r) return;
-  let ch = false;
-  for (const A of r.artworks)
-    if (A.tex && !A.seen){ A.seen = true; artState.beheld++; persist.works = (persist.works|0) + 1; ch = true; }
-  if (ch){ updateHudStat(); savePersist(); }
-}
-
-/* per-wall painting frame: origin corner + right/up spans (viewer-correct) */
-function paintBasis(A, out, PD = 0.028){
-  const IN2 = HS - WT, PPD = 0.016;
-  const y0 = (A.hangY || 1.55) - A.h/2;
-  const horiz = (A.wall==='e'||A.wall==='w');
-  const sign = (A.wall==='e'||A.wall==='n') ? 1 : -1;
-  const flip = (A.wall==='w'||A.wall==='n') ? -1 : 1;
-  const u0 = flip > 0 ? A.u - A.w/2 : A.u + A.w/2;
-  const wallC = sign * (IN2 - PD);
-  if (horiz){ out.o[0]=wallC; out.o[1]=y0; out.o[2]=u0; out.u[0]=0; out.u[1]=0; out.u[2]=flip*A.w; out.n[0]=-sign; out.n[1]=0; out.n[2]=0; }
-  else      { out.o[0]=u0; out.o[1]=y0; out.o[2]=wallC; out.u[0]=flip*A.w; out.u[1]=0; out.u[2]=0; out.n[0]=0; out.n[1]=0; out.n[2]=-sign; }
-  out.v[0]=0; out.v[1]=A.h; out.v[2]=0;
-  out.pwallC = sign * (IN2 - PPD);
-  return out;
-}
-const PB = { o:[0,0,0], u:[0,0,0], v:[0,0,0], n:[0,0,0], pwallC:0 };
-const SHA = { wall:'e', u:0, w:1, h:1, hangY:1.55 };   // scratch for shadow quads
-
-/* adaptive quality: 2 full · 1 lighter DPR · 0 low DPR, no reflections */
-
-function makeRoomVAO(r){
-  const mesh = buildRoomMesh(r, WIN.on);
-  const vao = gl.createVertexArray();
-  gl.bindVertexArray(vao);
-  const vbo = gl.createBuffer();
-  gl.bindBuffer(gl.ARRAY_BUFFER, vbo);
-  gl.bufferData(gl.ARRAY_BUFFER, mesh.verts, gl.STATIC_DRAW);
-  const ibo = gl.createBuffer();
-  gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, ibo);
-  gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, mesh.idx, gl.STATIC_DRAW);
-  const ST = 48;
-  gl.enableVertexAttribArray(0); gl.vertexAttribPointer(0, 3, gl.FLOAT, false, ST, 0);
-  gl.enableVertexAttribArray(1); gl.vertexAttribPointer(1, 3, gl.FLOAT, false, ST, 12);
-  gl.enableVertexAttribArray(2); gl.vertexAttribPointer(2, 2, gl.FLOAT, false, ST, 24);
-  gl.enableVertexAttribArray(3); gl.vertexAttribPointer(3, 3, gl.FLOAT, false, ST, 32);
-  gl.enableVertexAttribArray(4); gl.vertexAttribPointer(4, 1, gl.FLOAT, false, ST, 44);
-  gl.bindVertexArray(null);
-  r.vao = vao; r.vbo = vbo; r.ibo = ibo; r.nIdx = mesh.idx.length;
-  r.floorStart = mesh.floorStart;
-  if (r.flames && r.flames.length){
-    r.flameVAO = gl.createVertexArray();
-    gl.bindVertexArray(r.flameVAO);
-    r.flameVBO = gl.createBuffer();
-    gl.bindBuffer(gl.ARRAY_BUFFER, r.flameVBO);
-    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(r.flames), gl.STATIC_DRAW);
-    gl.enableVertexAttribArray(0);
-    gl.vertexAttribPointer(0, 3, gl.FLOAT, false, 12, 0);
-    gl.bindVertexArray(null);
-    r.nFlames = r.flames.length / 3;
-  }
-  assembleLights(r, WIN.on);
-  trace(`[world] built room (${r.gx},${r.gz}) seed=${r.seed}`);
-}
-function dropRoomGL(r){
-  if (r.vao){ gl.deleteVertexArray(r.vao); gl.deleteBuffer(r.vbo); gl.deleteBuffer(r.ibo); }
-  if (r.flameVAO){ gl.deleteVertexArray(r.flameVAO); gl.deleteBuffer(r.flameVBO); }
-  r.vao = r.vbo = r.ibo = null; r.nIdx = 0;
-  r.flameVAO = r.flameVBO = null; r.nFlames = 0;
-}
-
+/* The scheduler must know whether a private loan hangs on a frame, but it
+   has no business knowing what a curator is. The Curator's Office registers
+   itself here at boot; without one — the archive build, or a guest view —
+   the scheduler simply hangs the seeded work. */
 /* ————— §7 Renderer state / floating origin ————— */
-const player = {
-  gx: 0, gz: 0,          // anchor room (also the room the player is in)
-  x: 0, z: 0,            // anchor-local position
-  yaw: 0, pitch: 0,
-  vx: 0, vz: 0,
-  py: 0, vy: 0,          // height above the floor, vertical speed
-  jumps: 0, lastJumpT: 0,
-};
-const M_P = mat4(), M_V = mat4(), M_MV = mat4(), M_PV = mat4();
-let vpW = 0, vpH = 0;
 
 function resize(){
   const dpr = Math.min(devicePixelRatio || 1, dprCap());
   const w = Math.max(1, Math.floor(canvas.clientWidth * dpr));
   const h = Math.max(1, Math.floor(canvas.clientHeight * dpr));
   if (w !== vpW || h !== vpH){
-    vpW = w; vpH = h;
+    setViewport(w, h);
     canvas.width = w; canvas.height = h;
   }
 }
 addEventListener('resize', resize);
 
-let visited = new Set();
-/* per-anchor room caches — the frame loop must not chase map keys */
-const nearRooms = [], midRooms = [];
 function refreshNear(){
   nearRooms.length = 0; midRooms.length = 0;
   for (let dj=-BUILD_R; dj<=BUILD_R; dj++)
@@ -636,7 +245,7 @@ function ensureBuilt(){
   for (let dj=-BUILD_R; dj<=BUILD_R; dj++)
     for (let di=-BUILD_R; di<=BUILD_R; di++){
       const r = getRoom(player.gx + di, player.gz + dj);
-      if (!r.vao) makeRoomVAO(r);
+      if (!r.vao) makeRoomVAO(r, WIN.on);
     }
 }
 function evict(){
@@ -651,6 +260,12 @@ function evict(){
 /* ————— §8 Controls & collision ————— */
 const keys = new Set();
 let entered = false, locked = false, dragging = false, lastMX = 0, lastMY = 0;
+
+/* Drop every held key and any in-progress drag. Anything that steals focus —
+   the Curator's Office, a modal — calls this rather than reaching in and
+   assigning `dragging` itself, which is how a walk key stayed stuck down
+   behind an open panel. */
+function releaseInput(){ keys.clear(); dragging = false; }
 
 addEventListener('keydown', (e)=>{
   if (!entered || e.repeat) return;
@@ -1226,7 +841,7 @@ function curatorToggle(){
   const p = document.getElementById('curator');
   p.hidden = !p.hidden;
   if (!p.hidden){
-    keys.clear(); dragging = false; inspectOff();
+    releaseInput(); inspectOff();
     curatorRefresh();
     if (!curator.unlocked) setTimeout(focusFirstField, 50);
   } else canvas.focus();
@@ -1350,6 +965,24 @@ function reportWrite(promise, msg){
   promise.then((r) => { if (!r || !r.ok) flashHint(msg); })
          .catch(() => flashHint(msg));
 }
+
+/* The Curator's Office answering the scheduler's loan questions. Registered
+   rather than imported, so the scheduler stays ignorant of it. */
+setLoanProvider({
+  releaseOutside(gx, gz, radius){
+    for (const [k, o] of curator.overrides)
+      if (Math.max(Math.abs(o.r.gx - gx), Math.abs(o.r.gz - gz)) > radius){
+        gl.deleteTexture(o.tex);
+        o.A.override = null;               // reapplied from the blob on return
+        curator.overrides.delete(k);
+      }
+  },
+  apply(r, A, i, k){
+    if (!curator.placements.has(k)) return false;
+    applyPlacement(r, A, i);
+    return true;
+  },
+});
 
 /* ————— cloud adapters —————
    The cloud module returns data; this is where it becomes state. Keeping the
@@ -1804,7 +1437,7 @@ function frame(t){
   gl.disable(gl.BLEND);
   gl.bindVertexArray(null);
   if (usePost) runPost(quadVAO);
-  pumpArt();
+  pumpArt(entered ? 3.5 : 9);
 
   if (probeRequest){
     gl.readPixels((vpW>>1)-16, (vpH>>1)-16, 32, 32, gl.RGBA, gl.UNSIGNED_BYTE, probeBuf);
@@ -1822,6 +1455,46 @@ function frame(t){
 
 /* ————— §12 DBG hooks (quiet; for scripted verification) ————— */
 window.DBG = {
+  artHash(gx, gz, i){
+    preemptArtJobs();
+    const r = getRoom(gx, gz), A = r.artworks[i];
+    if (!A) return 'no artwork ' + i;
+    const [w, h] = TEX_SIZES[A.asp];
+    scratch.width = w; scratch.height = h;
+    const rnd = mulberry32(A.seed);
+    const gen = ALGOS[A.algo % ALGOS.length](sctx, w, h, rnd, jitterPal(A.pal, rnd));
+    while (!gen.next().done){}
+    finishArt(sctx, w, h);
+    const d = sctx.getImageData(0, 0, w, h).data;
+    let hsh = 2166136261 >>> 0;
+    for (let j = 0; j < d.length; j += 17) hsh = Math.imul(hsh ^ d[j], 16777619) >>> 0;
+    return { algo: A.algo % ALGOS.length, seed: A.seed, w, h, hash: hsh };
+  },
+  stats(){
+    return {
+      room: [player.gx, player.gz],
+      pos: [+player.x.toFixed(2), +player.z.toFixed(2)],
+      py: +player.py.toFixed(2), jumps: player.jumps,
+      lights: lightsOn, shutters: WIN.on,
+      yaw: +player.yaw.toFixed(2),
+      visited: visited.size,
+      cached: rooms.size,
+      colliders: colN,
+      fps: +fpsAvg.toFixed(1),
+      locked,
+      auto: auto.on, post: post.on,
+      beheld: artState.beheld, queued: artState.queue.length,
+      persist: { ...persist },
+    };
+  },
+  cloudState(){ return { on: cloud.on, signedIn: !!cloud.sess, viewing: cloud.viewing, slug: cloud.slug }; },
+};
+
+/* The rest of the debug surface exists for the dev harness and the test
+   suite. DBG_FULL is a build-time constant: archive builds define it false
+   and esbuild drops this whole block, which is what keeps that artifact
+   under the 100 KiB free-upload threshold. See docs/permanence.md. */
+if (DBG_FULL) Object.assign(window.DBG, {
   tp(gx, gz, yaw = 0){
     player.gx = gx|0; player.gz = gz|0;
     player.x = 0; player.z = 0; player.yaw = yaw; player.pitch = 0;
@@ -1839,7 +1512,7 @@ window.DBG = {
     artState.placards.length = 0; artState.beheld = 0;
     for (const [, r] of rooms) dropRoomGL(r);
     rooms.clear();
-    visited = new Set([roomKey(player.gx, player.gz)]);
+    setVisited(new Set([roomKey(player.gx, player.gz)]));
     onRoomChanged();
     return `world seed ${WORLD_SEED}`;
   },
@@ -1851,21 +1524,6 @@ window.DBG = {
   },
   /* full synchronous render of one artwork → FNV checksum of its pixels.
      Cross-reload equality on the same machine = determinism proof. */
-  artHash(gx, gz, i){
-    preemptArtJobs();
-    const r = getRoom(gx, gz), A = r.artworks[i];
-    if (!A) return 'no artwork ' + i;
-    const [w, h] = TEX_SIZES[A.asp];
-    scratch.width = w; scratch.height = h;
-    const rnd = mulberry32(A.seed);
-    const gen = ALGOS[A.algo % ALGOS.length](sctx, w, h, rnd, jitterPal(A.pal, rnd));
-    while (!gen.next().done){}
-    finishArt(sctx, w, h);
-    const d = sctx.getImageData(0, 0, w, h).data;
-    let hsh = 2166136261 >>> 0;
-    for (let j = 0; j < d.length; j += 17) hsh = Math.imul(hsh ^ d[j], 16777619) >>> 0;
-    return { algo: A.algo % ALGOS.length, seed: A.seed, w, h, hash: hsh };
-  },
   roomSeed(gx, gz){ return h2(gx, gz, SALT_ROOM ^ WORLD_SEED); },
   doors(gx, gz){ const r = getRoom(gx, gz); return {...r.doors}; },
   art(gx, gz){
@@ -1934,23 +1592,6 @@ window.DBG = {
     if (auto.on){ auto.wp = null; inspectOff(); }
     return 'autopilot ' + (auto.on ? 'on' : 'off');
   },
-  stats(){
-    return {
-      room: [player.gx, player.gz],
-      pos: [+player.x.toFixed(2), +player.z.toFixed(2)],
-      py: +player.py.toFixed(2), jumps: player.jumps,
-      lights: lightsOn, shutters: WIN.on,
-      yaw: +player.yaw.toFixed(2),
-      visited: visited.size,
-      cached: rooms.size,
-      colliders: colN,
-      fps: +fpsAvg.toFixed(1),
-      locked,
-      auto: auto.on, post: post.on,
-      beheld: artState.beheld, queued: artState.queue.length,
-      persist: { ...persist },
-    };
-  },
   post(on = true){ post.on = !!on; return 'post ' + (post.on ? 'on' : 'off'); },
   cloudConfig(url, key){
     try {
@@ -1972,8 +1613,7 @@ window.DBG = {
   samples(n){ setForcedSamples(n); allocPost(vpW, vpH); return DBG.postInfo(); },
   cloudFetch(fn){ setFetch(fn); return { stubbed: !!fn }; },
   cloudLoadGallery(slug){ return cloudLoadGallery(slug); },
-  cloudState(){ return { on: cloud.on, signedIn: !!cloud.sess, viewing: cloud.viewing, slug: cloud.slug }; },
-};
+});
 
 /* ————— boot ————— */
 canvas.addEventListener('webglcontextlost', (e)=>{
@@ -1993,7 +1633,7 @@ canvas.addEventListener('webglcontextrestored', ()=>{
   curator.overrides.clear();
   post.ready = false;
   resetGrain();
-  skyTex = null;
+  dropSurfaceTextures();
   initPrograms();
   ensureBuilt(); syncArtJobs(); refreshNear();
 });

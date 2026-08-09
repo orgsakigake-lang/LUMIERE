@@ -10,16 +10,20 @@ what made the original 3843-line file hard to extend.
 npm run dev        # watch + server on :8000, unminified
 npm run build      # index.html, minified — what GitHub Pages serves
 npm run archive    # archive/index.html, no backend, under 100 KiB
-npm run test:fast  # boot + cloud layer only, ~55s — use this while working
-npm test           # everything, ~3.5 min — use this before committing
+npm run test:fast  # boot + cloud layer, ~1 min — use this while working
+npm test           # everything, 4–7 min — use this before committing
 ```
 
-**Use `test:fast` in the inner loop.** The full suite is slow for one reason:
-software rendering. Entering the gallery costs ~12s and each `artHash` runs a
-generator to completion. Parallel workers barely help — the in-gallery group is
-`describe.serial` and four software-rendered browsers starve each other on the
-same cores. `test:fast` catches the failure that actually happens during
-extraction, which is a `ReferenceError` at boot.
+**Use `test:fast` in the inner loop.** The full suite is slow because CI has no
+GPU: entering the gallery costs ~12s on SwiftShader and every `artHash` runs a
+generator to completion. Tests boot at `?q=0`, which pins the cheapest quality
+tier — without that, 4× MSAA into a float buffer roughly doubles the run. The
+two renderer tests opt back into full quality because that is what they are
+testing.
+
+`test:fast` catches the failure that actually happens when moving code between
+modules: a `ReferenceError` at boot. Reach for the full suite at commits, and
+for a single test with `-g` when fixing that one test.
 
 `index.html` is committed, so the repo deploys with no CI and no tooling.
 
@@ -27,8 +31,11 @@ extraction, which is a `ReferenceError` at boot.
 
 ```
 src/
-  main.js              the parts not yet extracted (see below)
+  main.js              composition root: initPrograms, controls, inspect,
+                       the Curator's Office, the frame loop, DBG, boot
   config.js            dimensions, tuning constants, DEV/trace
+  persist.js           localStorage visit counters
+  audio.js             synthesized bells and footsteps
   world/
     seed.js            h2, mulberry32, WORLD_SEED, door hashes — pure
     rooms.js           what exists at (gx,gz): doors, specials, art, lights
@@ -36,7 +43,13 @@ src/
   art/
     palettes.js        12 palettes + the HSL jitter
     algos.js           the 6 generators, titles, the finishing pass
+    scheduler.js       texture pools, budgeted generation, room VAOs
   render/
+    gl.js              the WebGL2 context and program helpers
+    state.js           player, camera matrices, viewport, room caches
+    perf.js            the adaptive quality tier
+    post.js            HDR scene buffer, MSAA resolve, bloom, composite
+    textures.js        procedural plaster, parquet, contact shadow, sky
     mat4.js            matrices and frustum planes — pure
     shaders/*.vert     14 GLSL files
   cloud/
@@ -46,8 +59,6 @@ src/
     styles.css         spliced into the template at build
     body.html          spliced into the template at build
     hint.js            flashHint
-  audio.js             synthesized bells and footsteps
-  persist.js           localStorage visit counters
 tools/scope.mjs        extraction helper — see below
 ```
 
@@ -95,14 +106,26 @@ mistake so far, usually on the boot test.
 
 ### What is left, and why it is left
 
-`main.js` still holds GL setup, the art scheduler and texture pools, the post
-stack, controls and collision, inspect/acquire, the Curator's Office, and the
-frame loop.
+`main.js` is 1681 lines, down from 3843. What remains is the composition
+root — program creation, controls and collision, inspect/acquire, the Curator's
+Office, the frame loop, DBG and boot.
 
-These are the coupled core. The inspect block alone reaches for 23 names. They
-will not come apart by moving lines, because the frame loop has no pass
-abstraction — there is no seam to cut along. Build that first, as part of the
-renderer work, and the modules fall out as a consequence.
+Those are not waiting on tidying; they are mutually recursive. The scheduler
+needs to know whether a loan hangs on a frame, the curator needs the artwork
+the visitor is facing, input needs the camera, and the frame loop drives all of
+it. Two of those knots are already untied by inversion rather than by moving
+lines — the scheduler asks a registered loan provider instead of reaching into
+the curator, and it takes a frame budget rather than reading `entered` — and
+the same trick would work for the rest. What it needs first is a render-pass
+abstraction, so the 400-line frame loop stops being the only place a draw call
+can live. Do that as part of the renderer work, not as a refactor for its own
+sake.
+
+The pattern that unblocked everything so far: **state can be a leaf,
+orchestration cannot.** `render/state.js` holds the player and the camera and
+imports nothing; the functions that maintain them stayed in `main.js` because
+they call the scheduler and the HUD. Splitting on that line turns a cycle into
+a tree.
 
 ## Testing
 

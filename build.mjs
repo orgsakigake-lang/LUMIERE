@@ -85,6 +85,10 @@ const buildOptions = {
   target: 'es2022',
   charset: 'utf8',        /* keep È — · ’ as UTF-8 bytes; the default \uXXXX escaping doubles them */
   minify: MINIFY,
+  /* The dev half of window.DBG exists for the harness. Archive builds define
+     this false so esbuild drops the whole block — the structural cut that keeps
+     that artifact under the 100 KiB free-upload threshold. */
+  define: { DBG_FULL: ARCHIVE ? 'false' : 'true' },
   legalComments: 'none',
   plugins: [glslPlugin, ...(MINIFY ? [stripTracePlugin] : []), ...(ARCHIVE ? [stubCloudPlugin] : [])],
   write: false,
