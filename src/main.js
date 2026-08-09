@@ -19,7 +19,7 @@ import { audio, initAudio, bell, footstep, toggleMute, setAudioActive } from './
 import { SPECIAL, rooms, roomKey, getRoom, spotAt, specialAt } from './world/rooms.js';
 import { cloud, setFetch, cloudSaveSess, cloudSendCode, cloudVerify, cloudPublicURL,
          cloudUploadBlob, cloudDeleteUpload, cloudSetPlacement, cloudDelPlacement,
-         cloudClaimSlug, cloudLoadMine, cloudLoadGallery, cloudBoot } from './cloud/client.js';
+         cloudClaimSlug, cloudSetPublished, cloudLoadMine, cloudLoadGallery, cloudBoot } from './cloud/client.js';
 import { SCHEMES, buildRoomMesh, assembleLights } from './world/geometry.js';
 import { canvas, gl, compile, program } from './render/gl.js';
 import { PERF, dprCap } from './render/perf.js';
@@ -853,9 +853,18 @@ function curatorRefresh(){
       document.getElementById('cur-who').textContent = 'signed in as ' + (cloud.sess.email || 'you');
       const slugIn = document.getElementById('cur-slug');
       if (cloud.slug && !slugIn.value) slugIn.value = cloud.slug;
-      document.getElementById('cur-share-link').textContent = cloud.slug
-        ? 'share: ' + location.origin + location.pathname + '?gallery=' + cloud.slug
-        : 'claim a name to get a share link';
+      /* Claiming a name reserves it; publishing is what actually lets anyone
+         else in. Until then the RLS policies hide the collection and the slug
+         does not resolve, so the link is yours alone. */
+      const pub = document.getElementById('cur-publish');
+      pub.hidden = !cloud.slug;
+      pub.classList.toggle('on', !!cloud.published);
+      pub.textContent = cloud.published ? 'anyone with the link can walk it'
+                                        : 'private — only you can see it';
+      document.getElementById('cur-share-link').textContent =
+        !cloud.slug ? 'claim a name, then decide who can see it'
+        : cloud.published ? 'share: ' + location.origin + location.pathname + '?gallery=' + cloud.slug
+        : 'not published yet — the link will not open for anyone else';
       let hasLocal = false;
       for (const rec of curator.uploads.values()) if (!rec.cloudRec && rec.blob){ hasLocal = true; break; }
       document.getElementById('cur-migrate').hidden = !hasLocal;
@@ -963,6 +972,16 @@ document.getElementById('curator').addEventListener('keydown', (e) => {
     if (!/^[a-z0-9-]{3,32}$/.test(slug)){ flashHint('names are 3–32 letters, digits, dashes'); return; }
     try { await cloudClaimSlug(slug); curatorRefresh(); flashHint('the gallery answers to <b>' + slug + '</b> now'); }
     catch(e){ flashHint(String(e.message || e)); }
+  });
+  document.getElementById('cur-publish').addEventListener('click', async () => {
+    if (!cloud.sess || !cloud.slug) return;
+    const next = !cloud.published;
+    try {
+      await cloudSetPublished(next);
+      curatorRefresh();
+      flashHint(next ? 'published — anyone with the link can walk your gallery'
+                     : 'unpublished — the gallery is yours alone again');
+    } catch(e){ flashHint(String(e.message || e)); }
   });
   document.getElementById('cur-migrate').addEventListener('click', async () => {
     if (!cloud.sess) return;

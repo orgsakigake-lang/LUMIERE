@@ -21,7 +21,7 @@ export const cloud = (() => {
     if (o && o.url && o.key){ url = o.url; key = o.key; }
   } catch(e){}
   return { url: url.replace(/\/+$/, ''), key, on: !!(url && key),
-           sess: null, viewing: null, slug: null };
+           sess: null, viewing: null, slug: null, published: false };
 })();
 
 /* Injection seam. cfetch used to close over the global fetch, which made the
@@ -139,6 +139,19 @@ export async function cloudDelPlacement(k){
   return { ok: rs.ok };
 }
 
+/** Publish or unpublish. Claiming a name does not expose anything on its own;
+ *  until this is on, the RLS policies hide the collection from everyone else
+ *  and the slug does not resolve. */
+export async function cloudSetPublished(on){
+  const rs = await cfetch('/rest/v1/profiles?id=eq.' + cloud.sess.uid, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json', Prefer: 'return=minimal' },
+    body: JSON.stringify({ published: !!on }),
+  });
+  if (!rs.ok) throw new Error('could not change who can see this gallery — has supabase-setup.sql been re-run?');
+  cloud.published = !!on;
+}
+
 export async function cloudClaimSlug(slug){
   const rs = await cfetch('/rest/v1/profiles', {
     method: 'POST',
@@ -165,14 +178,16 @@ export async function cloudLoadMine(){
   const [ur, pr, sr] = await Promise.all([
     cfetch('/rest/v1/uploads?owner=eq.' + cloud.sess.uid + '&select=id,name,path&order=created_at'),
     cfetch('/rest/v1/placements?owner=eq.' + cloud.sess.uid + '&select=k,upload_id'),
-    cfetch('/rest/v1/profiles?id=eq.' + cloud.sess.uid + '&select=slug'),
+    cfetch('/rest/v1/profiles?id=eq.' + cloud.sess.uid + '&select=*'),
   ]);
-  const slugRows = await rowsOf(sr);
-  cloud.slug = slugRows[0] ? slugRows[0].slug : null;
+  const me = (await rowsOf(sr))[0];
+  cloud.slug = me ? me.slug : null;
+  /* Absent before the RLS migration is applied; absent means not published. */
+  cloud.published = !!(me && me.published);
   return {
     uploads: (await rowsOf(ur)).map(asUpload),
     placements: (await rowsOf(pr)).map((row) => [row.k, row.upload_id]),
-    slug: cloud.slug,
+    slug: cloud.slug, published: cloud.published,
   };
 }
 

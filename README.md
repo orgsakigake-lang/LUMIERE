@@ -82,12 +82,20 @@ The gallery accepts *private loans* — your own images:
   selected work there (cover-cropped, with a *private loan* placard).
   **U** takes it down and the seeded work returns.
 
-> **"Private" means private to your collection, not private on the network.**
-> In local mode nothing leaves the machine. In cloud mode it does: the `loans`
-> bucket is public-read and `uploads` has a `using (true)` select policy, both
-> so that shared galleries work. Anyone holding the (publishable) anon key can
-> therefore enumerate uploaded images. Do not put anything sensitive in a cloud
-> collection until that policy is tightened.
+> **Galleries are private until you publish them.** In local mode nothing
+> leaves the machine. In cloud mode your collection is visible only to you
+> until you claim a name *and* turn on sharing in the Curator's Office —
+> row-level security hides the rows from everyone else, and an unpublished
+> slug does not resolve.
+>
+> One caveat worth knowing: image objects themselves stay fetchable by anyone
+> holding the exact URL, because a guest viewing a published gallery has no
+> session to sign URLs with. Paths are UUIDs, so they cannot be guessed or
+> listed — but that is unguessability, not access control. Genuinely private
+> images need a private bucket and an Edge Function to sign for guests.
+>
+> **Re-run `supabase-setup.sql` to get this** — it adds the `published`
+> column and the new policies, and is safe to run again.
 
 ## Cloud mode — accounts, sync, shareable galleries
 

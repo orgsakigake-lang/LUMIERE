@@ -15,7 +15,7 @@
    mark where permanent storage is free — see docs/permanence.md.
    ═══════════════════════════════════════════════════════════════════ */
 
-export const cloud = { url: '', key: '', on: false, sess: null, viewing: null, slug: null };
+export const cloud = { url: '', key: '', on: false, sess: null, viewing: null, slug: null, published: false };
 
 export function setFetch(){}
 export function cloudSaveSess(){}
@@ -26,6 +26,7 @@ export const cloudSendCode = unreachable;
 export const cloudVerify = unreachable;
 export const cloudUploadBlob = unreachable;
 export const cloudClaimSlug = unreachable;
+export const cloudSetPublished = unreachable;
 
 /* Writes report failure rather than throwing: the curator calls these
    fire-and-forget, and an archive copy should stay quiet, not nag. */
