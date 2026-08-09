@@ -293,6 +293,26 @@ test.describe('the cloud layer', () => {
     expect(result.seen.some((u) => u.includes('/rest/v1/profiles?slug=eq.somebody'))).toBe(true);
   });
 
+  test('a guest is put in front of the work, not at the origin', async ({ page }) => {
+    await boot(page);
+    /* The failure this guards: works hang wherever the curator walked, so a
+       visitor dropped at (0,0) sees generated art, assumes that is all there
+       is, and leaves without finding the collection at all. */
+    const out = await page.evaluate(() => {
+      window.DBG.tp(0, 0);
+      const hung = ['7,-4:1', '-2,9:0', '3,3:2'];      // scattered, none at origin
+      hung.forEach((k, n) => window.DBG.placeForTest(k, 'u' + n));
+      const at = window.DBG.collectionSpawn();
+      return { at, origin: [0, 0] };
+    });
+
+    expect(out.at).not.toBeNull();
+    // nearest by rooms-walked: 3,3 (ring 3) beats 7,-4 (7) and -2,9 (9)
+    expect([out.at.gx, out.at.gz]).toEqual([3, 3]);
+    expect([out.at.gx, out.at.gz]).not.toEqual(out.origin);
+    expect(Number.isFinite(out.at.yaw)).toBe(true);
+  });
+
   test('an unknown gallery name resolves to null, not an exception', async ({ page }) => {
     await boot(page);
     const data = await page.evaluate(async () => {

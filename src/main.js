@@ -231,6 +231,40 @@ function refreshNear(){
       if (Math.abs(di) <= 1 && Math.abs(dj) <= 1) midRooms.push(e);
     }
 }
+/** Put the visitor at the centre of a room, facing `yaw`, and rebuild around them. */
+function goToRoom(gx, gz, yaw = 0){
+  player.gx = gx | 0; player.gz = gz | 0;
+  player.x = 0; player.z = 0; player.yaw = yaw; player.pitch = 0;
+  player.vx = player.vz = 0;
+  onRoomChanged();
+}
+
+/* Which way to look to face a given wall from the middle of a room.
+   Forward is (sin yaw, −cos yaw), so south — the −z wall — is yaw 0. */
+const YAW_FACING = { s: 0, n: Math.PI, e: Math.PI / 2, w: -Math.PI / 2 };
+
+/** Drop the visitor in front of the nearest hung work. Returns false if the
+ *  collection is empty.
+ *
+ *  A shared gallery's works hang wherever the curator happened to walk — which
+ *  can be a dozen rooms out in an infinite museum. Spawning a guest at the
+ *  origin and wishing them luck is not showing them anything: they see
+ *  generated art, assume that is all there is, and leave. */
+function spawnAtCollection(placements){
+  let best = null;
+  for (const k of placements.keys()){
+    const m = /^(-?\d+),(-?\d+):(\d+)$/.exec(k);
+    if (!m) continue;
+    const gx = +m[1], gz = +m[2];
+    const d = Math.max(Math.abs(gx), Math.abs(gz));   // rooms walked, not metres
+    if (!best || d < best.d) best = { gx, gz, i: +m[3], d };
+  }
+  if (!best) return false;
+  const A = getRoom(best.gx, best.gz).artworks[best.i];
+  goToRoom(best.gx, best.gz, A ? (YAW_FACING[A.wall] ?? 0) : 0);
+  return true;
+}
+
 function onRoomChanged(){
   const k0 = roomKey(player.gx, player.gz);
   if (!visited.has(k0)){ persist.rooms = (persist.rooms|0) + 1; savePersist(); }
@@ -1010,7 +1044,11 @@ async function bootCloud(){
     applyCloudUploads(data.uploads);
     applyCloudPlacements(data.placements);
     updateHudStat();
-    flashHint('you are walking <b>' + data.slug + '</b>’s gallery — their loans hang here');
+    /* Stand them in front of the work rather than at the origin. */
+    const placed = spawnAtCollection(curator.placements);
+    flashHint(placed
+      ? 'you are walking <b>' + data.slug + '</b>’s gallery — their first work hangs before you'
+      : '<b>' + data.slug + '</b> has not hung anything yet');
     syncArtJobs();
   } else if (mode === 'missing'){
     flashHint('no gallery answers to that name');
@@ -1496,11 +1534,18 @@ window.DBG = {
    under the 100 KiB free-upload threshold. See docs/permanence.md. */
 if (DBG_FULL) Object.assign(window.DBG, {
   tp(gx, gz, yaw = 0){
-    player.gx = gx|0; player.gz = gz|0;
-    player.x = 0; player.z = 0; player.yaw = yaw; player.pitch = 0;
-    player.vx = player.vz = 0;
-    onRoomChanged();
+    goToRoom(gx, gz, yaw);
     return `room (${player.gx},${player.gz}) yaw=${yaw}`;
+  },
+  /** Register a placement without a backend, so guest arrival is testable. */
+  placeForTest(k, uploadId){ curator.placements.set(k, uploadId); return curator.placements.size; },
+  /** Where a guest would be dropped — {gx,gz} or null for an empty collection. */
+  collectionSpawn(){
+    const before = [player.gx, player.gz];
+    const found = spawnAtCollection(curator.placements);
+    const at = found ? { gx: player.gx, gz: player.gz, yaw: player.yaw } : null;
+    if (!found) goToRoom(before[0], before[1]);
+    return at;
   },
   seed(n){
     setWorldSeed(n);
