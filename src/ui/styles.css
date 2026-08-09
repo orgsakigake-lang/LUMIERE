@@ -1,0 +1,176 @@
+  /* ————————————————————————————————————————————————————————————————
+     RAND·DOM — night-museum identity. Deliberately single-theme:
+     the museum is open only at night, in every viewer theme.
+     ink      #0B0A08  void / fog
+     charcoal #161310  panels
+     bone     #EDE6D8  primary text (paper under tungsten)
+     bone-dim #A99F8C  secondary text
+     brass    #C9A96A  rules, key hints, accents
+     ———————————————————————————————————————————————————————————————— */
+  :root{
+    --ink:#0B0A08; --charcoal:#161310; --bone:#EDE6D8; --bone-dim:#A99F8C;
+    --brass:#C9A96A; --brass-faint:rgba(201,169,106,.38);
+    --serif: Georgia, 'Iowan Old Style', 'Palatino Linotype', 'Times New Roman', serif;
+  }
+  html,body{height:100%;}
+  body{margin:0; background:var(--ink); color:var(--bone); font-family:var(--serif); overflow:hidden;}
+  #gl{position:fixed; inset:0; width:100%; height:100%; display:block; outline:none; cursor:crosshair;}
+  body.locked #gl{cursor:none;}
+
+  /* `hidden` has to outrank the display rules further down. .row{display:flex}
+     was silently beating the UA sheet, which leaked the six-digit OTP field
+     into view before a code had ever been requested. */
+  [hidden]{display:none !important;}
+
+  /* center aim dot, only once inside */
+  #aim{position:fixed; left:50%; top:50%; width:4px; height:4px; margin:-2px 0 0 -2px;
+       border-radius:50%; background:var(--brass); opacity:0; pointer-events:none;
+       transition:opacity .8s ease;}
+  body.entered #aim{opacity:.35;}
+
+  /* ——— overlays share a plate ——— */
+  .plate{position:fixed; inset:0; display:flex; align-items:center; justify-content:center;
+         background:radial-gradient(120% 90% at 50% 42%, rgba(22,19,16,.94), rgba(11,10,8,.985));
+         z-index:10;}
+  .card{max-width:34rem; padding:3rem 2.5rem; text-align:center;}
+
+  .rule{width:9rem; height:1px; margin:1.4rem auto; border:0;
+        background:linear-gradient(90deg, transparent, var(--brass-faint), transparent);}
+  .kicker{font-size:.72rem; letter-spacing:.42em; text-transform:uppercase; color:var(--bone-dim);}
+  h1{font-size:clamp(2.6rem, 7vw, 4.2rem); font-weight:400; letter-spacing:.18em;
+     margin:.9rem 0 .2rem; text-wrap:balance; color:var(--bone);}
+  h1 .dot{color:var(--brass);}
+  .hook{font-style:italic; font-size:1.02rem; line-height:1.75; color:var(--bone-dim);
+        max-width:30rem; margin:1.1rem auto 0; text-wrap:balance;}
+  .hook em{color:var(--bone); font-style:italic;}
+
+  #enter{margin-top:2.2rem; padding:.85rem 2.6rem; background:none; color:var(--brass);
+         border:1px solid var(--brass-faint); font-family:var(--serif);
+         font-size:.8rem; letter-spacing:.34em; text-transform:uppercase; cursor:pointer;
+         transition:background .35s ease, color .35s ease, border-color .35s ease;}
+  #enter:hover, #enter:focus-visible{background:var(--brass); color:var(--ink); border-color:var(--brass); outline:none;}
+
+  .legend{margin-top:2.4rem; font-size:.72rem; letter-spacing:.16em; color:var(--bone-dim);
+          text-transform:uppercase; line-height:2.1;}
+  .legend b{color:var(--bone); font-weight:400; border:1px solid rgba(237,230,216,.22);
+            padding:.1em .5em; margin:0 .15em; letter-spacing:.08em;}
+  .fine{margin-top:2rem; font-size:.68rem; letter-spacing:.3em; text-transform:uppercase; color:rgba(169,159,140,.55);}
+
+  /* ——— HUD ——— */
+  #hud{position:fixed; inset:0; pointer-events:none; z-index:5; opacity:0; transition:opacity 1.2s ease;}
+  body.entered #hud{opacity:1;}
+  .hud-corner{position:fixed; font-size:.7rem; letter-spacing:.3em; text-transform:uppercase;
+              color:rgba(169,159,140,.75); font-variant-numeric:tabular-nums;}
+  #hud-loc{left:1.6rem; top:1.4rem;}
+  #hud-stat{right:1.6rem; top:1.4rem; text-align:right;}
+  #hud-hint{left:50%; bottom:1.5rem; transform:translateX(-50%); white-space:nowrap;
+            transition:opacity 2s ease;}
+  #hud-hint b{color:rgba(201,169,106,.8); font-weight:400;}
+
+  /* ——— inspect lower-third ——— */
+  #lt{position:fixed; left:50%; bottom:2.6rem; transform:translateX(-50%) translateY(12px);
+      text-align:center; pointer-events:none; z-index:6; opacity:0;
+      transition:opacity .5s ease, transform .5s ease; max-width:min(80vw, 40rem);}
+  #lt.show{opacity:1; transform:translateX(-50%) translateY(0);}
+  #lt .t{font-style:italic; font-size:1.35rem; color:var(--bone); text-wrap:balance;}
+  #lt .m{margin-top:.45rem; font-size:.68rem; letter-spacing:.28em; text-transform:uppercase;
+         color:var(--bone-dim); font-variant-numeric:tabular-nums;}
+  #lt .k{margin-top:.55rem; font-size:.66rem; letter-spacing:.24em; text-transform:uppercase;
+         color:rgba(201,169,106,.75);}
+
+  /* ——— acquire modal ——— */
+  #modal{z-index:20; cursor:pointer;}
+  #modal .frame{background:#241a10; padding:clamp(10px, 1.8vw, 26px);
+                width:fit-content; margin:0 auto;
+                box-shadow:0 30px 80px rgba(0,0,0,.75), inset 0 0 0 1px rgba(201,169,106,.25);}
+  #modal img{display:block; max-width:min(76vw, 58rem); max-height:62vh;}
+  #modal .cap{margin-top:1.3rem; text-align:center; max-width:min(80vw, 44rem); margin-inline:auto;}
+  #modal .cap .t{font-style:italic; font-size:1.2rem; color:var(--bone);}
+  #modal .cap .m{margin-top:.4rem; font-size:.66rem; letter-spacing:.26em; text-transform:uppercase; color:var(--bone-dim);}
+  #modal .cap .s{margin-top:.9rem; font-size:.64rem; letter-spacing:.2em; text-transform:uppercase; color:rgba(201,169,106,.7);}
+
+  #intro-note{margin-top:1.6rem; font-size:.66rem; letter-spacing:.26em; text-transform:uppercase;
+              color:rgba(169,159,140,.6); min-height:1em; font-variant-numeric:tabular-nums;}
+
+  /* ——— wall switches ——— */
+  #switches{position:fixed; right:1.6rem; bottom:1.4rem; display:flex; gap:1.4rem;
+            pointer-events:auto; z-index:7;}
+  .sw{background:none; border:0; padding:.2rem 0; cursor:pointer; font-family:var(--serif);
+      font-size:.66rem; letter-spacing:.3em; text-transform:uppercase;
+      color:rgba(169,159,140,.65); transition:color .3s ease;}
+  /* drawn, not typed. ○ and ● are absent from Georgia, so they fell back to a
+     system symbol font and shifted baseline and weight on every OS. */
+  .sw::before{content:''; display:inline-block; width:.42em; height:.42em; margin-right:.6em;
+              vertical-align:.02em; border-radius:50%;
+              border:1px solid rgba(169,159,140,.55);
+              transition:background-color .3s ease, border-color .3s ease;}
+  .sw.on{color:var(--brass);}
+  .sw.on::before{background-color:var(--brass); border-color:var(--brass);}
+  .sw:hover{color:var(--bone);}
+  .sw:focus{outline:none;}
+  .sw:focus-visible{outline:none; color:var(--bone);
+                    box-shadow:0 -2px 0 0 var(--brass-faint) inset;}
+
+  /* ——— curator panel ——— */
+  #curator{z-index:15; cursor:default;}
+  #curator .panel{width:min(88vw, 46rem); max-height:82vh; overflow-y:auto;
+                  background:#14110D; border:1px solid rgba(201,169,106,.28);
+                  padding:2.2rem 2.4rem; box-shadow:0 30px 80px rgba(0,0,0,.8);
+                  scrollbar-width:thin; scrollbar-color:rgba(201,169,106,.32) transparent;}
+  #curator .panel::-webkit-scrollbar{width:10px;}
+  #curator .panel::-webkit-scrollbar-track{background:transparent;}
+  #curator .panel::-webkit-scrollbar-thumb{background:rgba(201,169,106,.28);
+                  border:3px solid #14110D;}
+  #curator .panel::-webkit-scrollbar-thumb:hover{background:rgba(201,169,106,.5);}
+  #curator h2{font-weight:400; font-size:1.15rem; letter-spacing:.3em; text-transform:uppercase;
+              color:var(--bone); margin:0 0 .4rem;}
+  #curator .sub{font-size:.66rem; letter-spacing:.22em; text-transform:uppercase;
+                color:var(--bone-dim); line-height:2;}
+  #curator .rule{margin:1.2rem 0;}
+  /* every input, not just password/text — the sign-in field is type=email and
+     was rendering as a stock white browser box in the middle of the panel. */
+  #curator input:not([type=file]){
+      background:#0C0A08; border:1px solid rgba(201,169,106,.3); color:var(--bone);
+      font-family:var(--serif); font-size:.95rem; padding:.6rem .9rem; width:14rem;}
+  #curator input:focus{outline:none; border-color:var(--brass);}
+  #curator ::placeholder{color:rgba(169,159,140,.5); opacity:1;}
+  #curator .btn{background:none; border:1px solid var(--brass-faint); color:var(--brass);
+      font-family:var(--serif); font-size:.68rem; letter-spacing:.28em; text-transform:uppercase;
+      padding:.55rem 1.3rem; cursor:pointer;
+      transition:background-color .3s ease, color .3s ease, border-color .3s ease;}
+  #curator .btn:hover{background:var(--brass); color:var(--ink);}
+  #curator .btn:focus-visible{outline:none; border-color:var(--brass);
+      box-shadow:0 0 0 1px var(--brass);}
+  #curator .row{display:flex; gap:.8rem; align-items:center; flex-wrap:wrap; margin-top:1rem;}
+  #cur-grid{display:grid; grid-template-columns:repeat(auto-fill, minmax(7.2rem, 1fr));
+            gap:1rem; margin-top:1.3rem;}
+  .cur-item{position:relative; cursor:pointer; border:1px solid rgba(201,169,106,.16);
+            padding:.4rem; background:#0D0B09; transition:border-color .25s ease;}
+  .cur-item:hover{border-color:rgba(201,169,106,.5);}
+  .cur-item.sel{border-color:var(--brass); box-shadow:0 0 0 1px var(--brass);}
+  .cur-item img{width:100%; aspect-ratio:1; object-fit:cover; display:block; filter:saturate(.92);}
+  .cur-item .nm{margin-top:.4rem; font-size:.6rem; letter-spacing:.12em; color:var(--bone-dim);
+                white-space:nowrap; overflow:hidden; text-overflow:ellipsis; text-transform:uppercase;}
+  /* a real <button>, and a drawn cross — Georgia's × is a small maths glyph
+     that sits below the optical centre of the box. Always visible: opacity:0
+     until :hover left this unreachable on touch. */
+  .cur-item .rm{position:absolute; top:.15rem; right:.15rem; width:1.4rem; height:1.4rem;
+                display:grid; place-items:center; padding:0;
+                background:rgba(11,10,8,.85); border:1px solid rgba(201,169,106,.35);
+                cursor:pointer; opacity:.55; transition:opacity .2s ease, border-color .2s ease;}
+  .cur-item .rm::before, .cur-item .rm::after{content:''; position:absolute;
+                width:.62rem; height:1px; background:var(--bone-dim);
+                transition:background-color .2s ease;}
+  .cur-item .rm::before{transform:rotate(45deg);}
+  .cur-item .rm::after{transform:rotate(-45deg);}
+  .cur-item:hover .rm, .cur-item .rm:focus-visible{opacity:1;}
+  .cur-item .rm:hover, .cur-item .rm:focus-visible{border-color:#C96B5A; outline:none;}
+  .cur-item .rm:hover::before, .cur-item .rm:hover::after,
+  .cur-item .rm:focus-visible::before, .cur-item .rm:focus-visible::after{background:#C96B5A;}
+  .cur-note{margin-top:1.2rem; font-size:.62rem; letter-spacing:.18em; text-transform:uppercase;
+            color:rgba(169,159,140,.55); line-height:2;}
+  .key{color:var(--brass); font-weight:400;}
+
+  @media (prefers-reduced-motion: reduce){
+    *{transition:none !important;}
+  }

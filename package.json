@@ -1,0 +1,16 @@
+{
+  "name": "lumiere",
+  "version": "2.0.0",
+  "private": true,
+  "type": "module",
+  "description": "LUMIÈRE — The Endless Gallery: an infinite procedurally generated art museum",
+  "scripts": {
+    "build": "node build.mjs",
+    "dev": "node build.mjs --watch",
+    "test": "playwright test"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.56.0",
+    "esbuild": "^0.25.0"
+  }
+}

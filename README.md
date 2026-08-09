@@ -4,15 +4,38 @@ A first-person walk through an endless, procedurally generated art gallery.
 Every painting is a unique generative artwork, painted into being the moment you
 approach it — and between the seeded works, you may hang your own.
 
-One self-contained `index.html`. Raw WebGL2 + Canvas 2D + WebAudio. Zero dependencies,
-zero network requests.
+Ships as one self-contained `index.html` — raw WebGL2 + Canvas 2D + WebAudio, no
+runtime dependencies and a single request. The source is modular and built with
+esbuild; the built file is committed, so the repo deploys with no CI step.
 
-**Live copy:** https://claude.ai/code/artifact/bf8a657b-3ff5-48c5-bd5c-ac890f733f85
+Cloud mode (accounts, private loans, shareable galleries) talks to Supabase. Clear
+`CLOUD_URL` / `CLOUD_KEY` in `src/main.js` for a fully local, offline gallery.
+
+**Live:** https://orgsakigake-lang.github.io/LUMIERE/
 
 ## Running it
 
-Open `index.html` in any recent Chrome, Edge, or Firefox — straight from `file://`
-works. Or serve it (`python3 -m http.server`) and browse to `localhost:8000`.
+```sh
+npm install
+npm run dev      # esbuild watch + a static server on localhost:8000
+npm run build    # write index.html
+npm test         # Playwright suite over the DBG surface
+```
+
+Needs a real origin — `http://localhost:8000`, not `file://`. Any recent Chrome,
+Edge, or Firefox.
+
+## Layout
+
+| path | what |
+|---|---|
+| `index.html` | the built artifact — committed, served by GitHub Pages |
+| `src/main.js` | the gallery |
+| `src/ui/styles.css`, `src/ui/body.html` | chrome, spliced into the template at build |
+| `src/index.template.html` | the page shell |
+| `build.mjs` | bundle + inline + emit |
+| `test/lumiere.spec.js` | determinism, frame budget, UI regressions |
+| `supabase-setup.sql` | schema and row-level-security policies |
 
 ## Controls
 
@@ -44,10 +67,17 @@ The gallery accepts *private loans* — your own images:
   change it inside). Images live in this browser's IndexedDB; placements
   survive reloads; nothing ever leaves your machine.
 - **Add works…** — upload images (downscaled to ~1280 px JPEG on import).
-- The grid shows the collection — click to select, **×** to remove.
+- The grid shows the collection — click to select, the cross to remove.
 - Walk to *any* frame in the infinite gallery and press **H** to hang the
   selected work there (cover-cropped, with a *private loan* placard).
   **U** takes it down and the seeded work returns.
+
+> **"Private" means private to your collection, not private on the network.**
+> In local mode nothing leaves the machine. In cloud mode it does: the `loans`
+> bucket is public-read and `uploads` has a `using (true)` select policy, both
+> so that shared galleries work. Anyone holding the (publishable) anon key can
+> therefore enumerate uploaded images. Do not put anything sensitive in a cloud
+> collection until that policy is tightened.
 
 ## Cloud mode — accounts, sync, shareable galleries
 

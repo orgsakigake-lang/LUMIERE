@@ -1,0 +1,113 @@
+<canvas id="gl" tabindex="-1"></canvas>
+<div id="aim"></div>
+
+<div id="hud">
+  <div class="hud-corner" id="hud-loc">Wing 0 · Hall 0</div>
+  <div class="hud-corner" id="hud-stat">1 room</div>
+  <div class="hud-corner" id="hud-hint"><b>W A S D</b> walk &nbsp;·&nbsp; <b>drag</b> look &nbsp;·&nbsp; <b>space</b> jump</div>
+  <div id="switches">
+    <button class="sw on" id="sw-lights" title="L">lights</button>
+    <button class="sw" id="sw-shutters" title="O">shutters</button>
+    <button class="sw" id="sw-curator" title="C">curator</button>
+  </div>
+</div>
+
+<div class="plate" id="curator" hidden>
+  <div class="panel">
+    <h2>The Curator’s Office</h2>
+    <div class="sub" id="cur-state">locked</div>
+    <hr class="rule">
+    <div id="cur-lock">
+      <div class="sub">This gallery accepts private loans. Enter the curator’s key —
+        it lives only in this browser.</div>
+      <div class="row">
+        <input type="password" id="cur-pass" placeholder="curator’s key" autocomplete="off">
+        <button class="btn" id="cur-enter">Enter</button>
+      </div>
+      <div class="cur-note">First visit? The key is <b class="key">curator</b> — change it once inside.</div>
+    </div>
+    <div id="cur-cloud-lock" hidden>
+      <div class="sub">This gallery keeps its collection in the cloud. Sign in with your
+        email — a six-digit code will be sent to it. No password exists to forget.</div>
+      <div class="row">
+        <input type="email" id="cur-email" placeholder="you@example.com" autocomplete="email">
+        <button class="btn" id="cur-send">Send code</button>
+      </div>
+      <div class="row" id="cur-code-row" hidden>
+        <input type="text" id="cur-code" placeholder="six-digit code" inputmode="numeric" autocomplete="one-time-code" maxlength="8">
+        <button class="btn" id="cur-verify">Enter</button>
+      </div>
+      <div id="cur-cloud-note" class="sub"></div>
+    </div>
+    <div id="cur-open" hidden>
+      <div class="row" id="cur-acct" hidden>
+        <span class="sub" id="cur-who"></span>
+        <button class="btn" id="cur-signout">Sign out</button>
+      </div>
+      <div class="row" id="cur-share" hidden>
+        <input type="text" id="cur-slug" placeholder="gallery-name" maxlength="32">
+        <button class="btn" id="cur-slug-save">Claim name</button>
+        <span class="sub" id="cur-share-link"></span>
+      </div>
+      <div class="row">
+        <label class="btn" for="cur-file">Add works…</label>
+        <input type="file" id="cur-file" accept="image/*" multiple hidden>
+        <button class="btn" id="cur-migrate" hidden>Send local works to the cloud</button>
+        <button class="btn" id="cur-close">Return to the gallery</button>
+        <button class="btn" id="cur-rekey">Change key</button>
+      </div>
+      <div id="cur-grid"></div>
+      <div class="cur-note">
+        Select a work above, walk to any frame, and press <b class="key">H</b> to hang it ·
+        <b class="key">U</b> takes it down · the cross removes it from the collection<br>
+        <span id="cur-store"></span>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="plate" id="intro">
+  <div class="card">
+    <div class="kicker">Open nightly · Admission free</div>
+    <h1>LUMI<span class="dot">È</span>RE</h1>
+    <div class="kicker" style="letter-spacing:.5em">The Endless Gallery</div>
+    <hr class="rule">
+    <p class="hook">Every artwork here is painted into being the moment you approach it —
+      seeded, singular, unrepeatable. <em>No one else will ever walk these rooms.</em></p>
+    <button id="enter" autofocus>Enter the gallery</button>
+    <div class="legend">
+      <b>W&thinsp;A&thinsp;S&thinsp;D</b> walk · <b>drag</b> look · <b>Space</b> jump, twice ·
+      <b>F</b> inspect · <b>E</b> acquire · <b>M</b> sound<br>
+      <b>L</b> lights · <b>O</b> shutters · <b>C</b> curator
+    </div>
+    <div class="fine">Wings without number · every visit hangs anew</div>
+    <div id="intro-note"></div>
+  </div>
+</div>
+
+<div id="lt">
+  <div class="t"></div>
+  <div class="m"></div>
+  <div class="k">E — acquire &nbsp;·&nbsp; F — step back</div>
+</div>
+
+<div class="plate" id="modal" hidden>
+  <div>
+    <div class="frame"><img alt="acquired artwork"></div>
+    <div class="cap">
+      <div class="t"></div>
+      <div class="m"></div>
+      <div class="s">If the download did not begin, right-click the work → “Save image as…” · click anywhere to return</div>
+    </div>
+  </div>
+</div>
+
+<div class="plate" id="nogl" hidden>
+  <div class="card">
+    <div class="kicker">Notice</div>
+    <h1 style="font-size:1.6rem; letter-spacing:.3em">The gallery is closed tonight</h1>
+    <hr class="rule">
+    <p class="hook">This browser could not open a window onto WebGL2, and the halls lie
+      beyond it. A recent Chrome, Edge, or Firefox will find the doors unlocked.</p>
+  </div>
+</div>
