@@ -79,11 +79,17 @@ The gallery accepts *private loans* — your own images:
 - **Local mode (default):** enter the curator's key (first visit: `curator` —
   change it inside). Images live in this browser's IndexedDB; placements
   survive reloads; nothing ever leaves your machine.
-- **Add works…** — upload images (downscaled to ~1280 px JPEG on import).
+- **Add works…** — upload images. Drawings are kept lossless at 2048 px, since
+  JPEG ringing gathers around exactly the hard strokes a pencil or pen makes;
+  photographs, which gain nothing from that and would cost tens of megabytes,
+  keep a JPEG at the same resolution.
 - The grid shows the collection — click to select, the cross to remove.
 - Walk to *any* frame in the infinite gallery and press **H** to hang the
-  selected work there (cover-cropped, with a *private loan* placard).
-  **U** takes it down and the seeded work returns.
+  selected work there. It is **mounted, not cropped**: the sheet keeps its own
+  proportions on a cream rag mount with a bevelled window, however the frame is
+  shaped, and it is lit by its own fixture — neutral and dim, the way a museum
+  lights works on paper — beside the warm tungsten on the paintings. A *private
+  loan* placard hangs with it. **U** takes it down and the seeded work returns.
 
 > **Galleries are private until you publish them.** In local mode nothing leaves
 > the machine. In cloud mode your collection is visible only to you until you

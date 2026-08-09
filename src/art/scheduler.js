@@ -20,6 +20,13 @@ let loans = null;
 export function setLoanProvider(p){ loans = p; }
 
 export const TEX_SIZES = { L: [512, 384], P: [384, 512], S: [448, 448], W: [512, 320] };
+/* A visitor's own drawing gets twice the linear resolution of a generated
+   painting — four times the pixels. It has to carry real pencil work, and
+   unlike the procedural pieces it is also sitting inside a mount, so only part
+   of the texture is the drawing itself. Loans allocate their own textures
+   rather than borrowing a pool slot, and are freed once the visitor is more
+   than a room away, so this does not multiply across the whole neighbourhood. */
+export const LOAN_SIZES = { L: [1024, 768], P: [768, 1024], S: [896, 896], W: [1024, 640] };
 function makePool(n, w, h){
   return { w, h, slots: Array.from({length: n}, () => ({ tex: null, used: false, A: null, r: null })) };
 }

@@ -32,7 +32,7 @@ import { player, M_P, M_V, M_MV, M_PV, vpW, vpH, setViewport,
          visited, setVisited, nearRooms, midRooms } from './render/state.js';
 import { setLoanProvider, releaseSlot, freeAllArtSlots, preemptArtJobs, artJobKey,
          syncArtJobs, pumpArt, updateHudStat, markSeen, paintBasis, makeRoomVAO,
-         dropRoomGL, TEX_SIZES, POOLS, PPOOL, scratch, sctx, pscratch, pctx,
+         dropRoomGL, TEX_SIZES, LOAN_SIZES, POOLS, PPOOL, scratch, sctx, pscratch, pctx,
          artState, PB, SHA } from './art/scheduler.js';
 
 import VS_ARCH from './render/shaders/arch.vert';
@@ -80,7 +80,7 @@ function initPrograms(){
   makeSurfaceTextures();
   progPaint = program(VS_PAINT, FS_PAINT);
   uPaint = {};
-  for (const nm of ['uMV','uP','uO','uU','uV','uN','uTex','uFog','uSigma','uFade','uEm','uAT','uNL','uLPos','uLDir','uLCol'])
+  for (const nm of ['uMV','uP','uO','uU','uV','uN','uTex','uFog','uSigma','uFade','uEm','uGlaze','uAT','uNL','uLPos','uLDir','uLCol'])
     uPaint[nm] = gl.getUniformLocation(progPaint, nm);
   quadVAO = gl.createVertexArray();
   gl.bindVertexArray(quadVAO);
@@ -93,7 +93,10 @@ function initPrograms(){
   gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, false);
   gl.pixelStorei(gl.UNPACK_COLORSPACE_CONVERSION_WEBGL, gl.NONE);
   const aniso = gl.getExtension('EXT_texture_filter_anisotropic');
-  if (aniso) window.__aniso = { ext: aniso, max: Math.min(4, gl.getParameter(aniso.MAX_TEXTURE_MAX_ANISOTROPY_EXT)) };
+  /* A wall of pictures is seen at a grazing angle more often than head-on, and
+     a pencil line at a grazing angle is precisely what this filter is for. The
+     cap was 4 where hardware offers 16. */
+  if (aniso) window.__aniso = { ext: aniso, max: Math.min(16, gl.getParameter(aniso.MAX_TEXTURE_MAX_ANISOTROPY_EXT)) };
 
   const pBright = program(VS_POST, FS_BRIGHT);
   const pBlur   = program(VS_POST, FS_BLUR);
@@ -643,9 +646,12 @@ async function runAcquire(A, bw, bh, year){
 
   const loanRec = A.overrideKey && curator.uploads.get(curator.placements.get(A.overrideKey));
   if (loanRec){
+    /* The same mount the sheet hangs in, at acquire resolution. This used to
+       cover-crop, which is the defect the mount exists to fix — it would have
+       been perverse to take a drawing down off the wall uncropped and then
+       hand the visitor a cropped copy of it. */
     const bmp = loanRec.bmp || (loanRec.bmp = await createImageBitmap(loanRec.blob));
-    const s = Math.max(bw/bmp.width, bh/bmp.height);
-    acqCtx.drawImage(bmp, (bw - bmp.width*s)/2, (bh - bmp.height*s)/2, bmp.width*s, bmp.height*s);
+    mountWork(acqCtx, bmp, bw, bh);
   } else {
     const rnd = mulberry32(A.seed);
     const gen = ALGOS[A.algo % ALGOS.length](acqCtx, bw, bh, rnd, jitterPal(A.pal, rnd));
@@ -758,17 +764,56 @@ function savePlacements(){
   if (!storageOK || cloud.sess || cloud.viewing) return;   // cloud owns its own truth
   try { localStorage.setItem('lumiere_placements', JSON.stringify([...curator.placements])); } catch(e){}
 }
+/* ————— what gets stored —————
+   The old path was original → 1280 px JPEG q0.88 → cover-crop → 512 px texture:
+   three lossy steps, the first of them JPEG, whose ringing artefacts cluster
+   exactly around hard dark strokes on white. That is the classic way to ruin a
+   pencil or ink drawing.
+
+   Line art now goes to PNG at 2048 px and stays lossless all the way to the
+   GPU. Photographs do not benefit from that and would cost tens of megabytes,
+   so they keep a JPEG — at a higher quality and twice the resolution. The test
+   is inkiness: a drawing is mostly bare paper and nearly colourless, and both
+   of those are cheap to measure on a downsample. PNG that comes out
+   unexpectedly huge falls back rather than failing the bucket's size limit. */
+const UPLOAD_LONG = 2048, PNG_CEILING = 10 * 1024 * 1024;
+function looksLikeLineArt(bmp){
+  const n = 96;
+  const c = document.createElement('canvas');
+  c.width = n; c.height = n;
+  const g = c.getContext('2d', { willReadFrequently: true });
+  g.drawImage(bmp, 0, 0, n, n);
+  const d = g.getImageData(0, 0, n, n).data;
+  let pale = 0, colourful = 0;
+  for (let i = 0; i < n*n; i++){
+    const r = d[i*4], gg = d[i*4+1], b = d[i*4+2];
+    const mx = Math.max(r, gg, b), mn = Math.min(r, gg, b);
+    if (mx > 228) pale++;
+    if (mx - mn > 34) colourful++;
+  }
+  return pale/(n*n) > 0.45 && colourful/(n*n) < 0.10;
+}
+async function encodeUpload(bmp){
+  const long = Math.max(bmp.width, bmp.height);
+  const sc = Math.min(1, UPLOAD_LONG/long);
+  const cw = Math.max(1, Math.round(bmp.width*sc)), ch = Math.max(1, Math.round(bmp.height*sc));
+  const cc = document.createElement('canvas'); cc.width = cw; cc.height = ch;
+  const g = cc.getContext('2d');
+  g.imageSmoothingQuality = 'high';
+  g.drawImage(bmp, 0, 0, cw, ch);
+  if (looksLikeLineArt(bmp)){
+    const png = await new Promise(r => cc.toBlob(r, 'image/png'));
+    if (png && png.size <= PNG_CEILING) return png;
+    trace(`[curator] png ${(png ? png.size/1048576 : 0).toFixed(1)}MB over ceiling — jpeg instead`);
+  }
+  return new Promise(r => cc.toBlob(r, 'image/jpeg', 0.94));
+}
 async function curatorAddFiles(files){
   for (const f of files){
     if (!f.type.startsWith('image/')) continue;
     try {
       const bmp = await createImageBitmap(f);
-      const long = Math.max(bmp.width, bmp.height);
-      const sc = Math.min(1, 1280/long);
-      const cw = Math.max(1, Math.round(bmp.width*sc)), ch = Math.max(1, Math.round(bmp.height*sc));
-      const cc = document.createElement('canvas'); cc.width = cw; cc.height = ch;
-      cc.getContext('2d').drawImage(bmp, 0, 0, cw, ch);
-      const blob = await new Promise(r => cc.toBlob(r, 'image/jpeg', 0.88));
+      const blob = await encodeUpload(bmp);
       bmp.close();
       if (!blob) continue;
       const name = f.name.replace(/\.[^.]+$/, '');
@@ -815,11 +860,61 @@ function curatorClearPlacement(k){
     o.A.title = null;                             // the seeded title returns
     if (o.A.ptex){ releaseSlot(o.A.ptex); o.A.ptex = null; }
     if (!o.A.mini){ o.A.ptexWanted = true; artState.placards.push(o.A); }
+    const idx = o.r.artworks.indexOf(o.A);
+    if (idx >= 0) setFixture(o.r, idx, false);    // the tungsten fixture returns with the painting
     curator.overrides.delete(k);
   }
   savePlacements();
   syncArtJobs();                                  // regenerate the seeded work if needed
 }
+/* ————— the window mount —————
+   A drawing used to be cover-cropped to whatever frame it was hung in, so a
+   portrait sheet in a landscape frame simply lost its top and bottom. A mount
+   is not a workaround for that, it is what a museum actually does: the sheet
+   sits at its true proportions and rag board fills the rest. Margins are a
+   minimum, not a fixed border — the sheet is drawn as large as it can be
+   inside them, so a matched aspect gets a slim mount and a mismatched one gets
+   a generous margin on two sides instead of losing its edges.
+
+   The bottom margin is wider than the top. That is standard framing practice,
+   not a mistake: an optically centred sheet reads as centred, a mathematically
+   centred one reads as sagging. */
+const MOUNT = { face: '#EDE7DA', bevel: '#FBF7EE', undercut: 'rgba(90,80,64,0.34)' };
+/* Swap the one fixture that lights work `i` — neutral and dim for paper, the
+   room's own tungsten for a painting — and rebuild the room's light list so the
+   change reaches the packer. The lights beside it are untouched. */
+function setFixture(r, i, paper){
+  const L = r.ownLights.find(l => l.forArt === i);
+  if (!L) return false;
+  const F = paper ? RIG.paper
+          : r.special === SPECIAL.VERMILION ? RIG.spotVermil : RIG.spot;
+  L.col = F.col; L.inner = F.inner; L.outer = F.outer; L.invR2 = 1/(F.range*F.range);
+  assembleLights(r, WIN.on);
+  return true;
+}
+function mountRect(sw, sh, tw, th){
+  const m  = Math.round(Math.min(tw, th) * 0.085);
+  const mb = Math.round(m * 1.18);
+  const availW = tw - 2*m, availH = th - m - mb;
+  const s = Math.min(availW/sw, availH/sh);                  // contain, never crop
+  const dw = Math.max(1, Math.round(sw*s)), dh = Math.max(1, Math.round(sh*s));
+  return { tw, th, m, mb, dw, dh,
+           dx: Math.round((tw - dw)/2), dy: Math.round(m + (availH - dh)/2) };
+}
+function mountWork(g, bmp, tw, th){
+  const { dx, dy, dw, dh } = mountRect(bmp.width, bmp.height, tw, th);
+  g.fillStyle = MOUNT.face; g.fillRect(0, 0, tw, th);
+  /* The bevel: rag board is cut at 45°, so the exposed core is a bright line on
+     the two edges facing the light and a soft shadow where it meets the sheet. */
+  const bw = Math.max(2, Math.round(Math.min(tw, th) * 0.008));
+  g.fillStyle = MOUNT.bevel;
+  g.fillRect(dx - bw, dy - bw, dw + 2*bw, dh + 2*bw);
+  g.fillStyle = MOUNT.undercut;
+  g.fillRect(dx - 1, dy - 1, dw + 2, 1);
+  g.fillRect(dx - 1, dy - 1, 1, dh + 2);
+  g.drawImage(bmp, dx, dy, dw, dh);
+}
+
 async function applyPlacement(r, A, i){
   const k = artJobKey(r, i);
   const id = curator.placements.get(k);
@@ -829,12 +924,10 @@ async function applyPlacement(r, A, i){
   try {
     if (!rec.blob && rec.url) rec.blob = await (await fetch(rec.url)).blob();
     const bmp = rec.bmp || (rec.bmp = await createImageBitmap(rec.blob));
-    const [tw, th] = TEX_SIZES[A.asp];
+    const [tw, th] = LOAN_SIZES[A.asp];
     const cc = document.createElement('canvas'); cc.width = tw; cc.height = th;
     const g = cc.getContext('2d');
-    const s = Math.max(tw/bmp.width, th/bmp.height);          // cover-crop
-    const dw = bmp.width*s, dh = bmp.height*s;
-    g.drawImage(bmp, (tw-dw)/2, (th-dh)/2, dw, dh);
+    mountWork(g, bmp, tw, th);
     const tex = gl.createTexture();
     gl.bindTexture(gl.TEXTURE_2D, tex);
     const levels = Math.floor(Math.log2(Math.max(tw, th))) + 1;
@@ -848,6 +941,7 @@ async function applyPlacement(r, A, i){
       gl.texParameterf(gl.TEXTURE_2D, window.__aniso.ext.TEXTURE_MAX_ANISOTROPY_EXT, window.__aniso.max);
     A.override = tex; A.overrideKey = k; A.overrideName = true;
     A.title = rec.name; A.fadeAt = performance.now();
+    setFixture(r, i, true);
     if (A.ptex){ releaseSlot(A.ptex); A.ptex = null; }
     if (!A.mini){ A.ptexWanted = true; artState.placards.push(A); }
     curator.overrides.set(k, { tex, r, A });
@@ -1328,6 +1422,7 @@ function frame(t){
         gl.uniform3f(uPaint.uV, 0, -A.h, 0);
         gl.uniform1f(uPaint.uFade, fade * 0.72);
         gl.uniform1f(uPaint.uEm, ambLum(r));
+        gl.uniform1f(uPaint.uGlaze, A.override ? 1 : 0);
         gl.bindTexture(gl.TEXTURE_2D, A.override ? A.override : A.tex.tex);
         gl.drawArrays(gl.TRIANGLES, 0, 6);
       }
@@ -1335,6 +1430,7 @@ function frame(t){
         gl.uniform1i(uPaint.uNL, 0);
         gl.uniform1f(uPaint.uFade, 0.85);
         gl.uniform1f(uPaint.uEm, 1.65);
+        gl.uniform1f(uPaint.uGlaze, 0);
         gl.bindTexture(gl.TEXTURE_2D, ensureSkyTex());
         const IN2r = HS - WT;
         for (const wn of r.windows){
@@ -1429,6 +1525,7 @@ function frame(t){
       /* contact shadows first — they ground the frames and furniture */
       gl.uniform1f(uPaint.uAT, 1);
       gl.uniform1f(uPaint.uEm, 0);
+      gl.uniform1f(uPaint.uGlaze, 0);
       gl.uniform1i(uPaint.uNL, 0);
       gl.bindTexture(gl.TEXTURE_2D, shadowTex);
       for (const A of r.artworks){
@@ -1478,6 +1575,7 @@ function frame(t){
         gl.uniform3f(uPaint.uV, PB.v[0], PB.v[1], PB.v[2]);
         gl.uniform1f(uPaint.uFade, fade);
         gl.uniform1f(uPaint.uEm, ambLum(r));
+        gl.uniform1f(uPaint.uGlaze, A.override ? 1 : 0);
         gl.bindTexture(gl.TEXTURE_2D, A.override ? A.override : A.tex.tex);
         gl.drawArrays(gl.TRIANGLES, 0, 6);
         if (A.ptex && A.pu !== undefined){
@@ -1488,6 +1586,7 @@ function frame(t){
           else      { gl.uniform3f(uPaint.uO, pu0, 1.235, PB.pwallC); gl.uniform3f(uPaint.uU, flip*0.26, 0, 0); }
           gl.uniform3f(uPaint.uV, 0, 0.13, 0);
           gl.uniform1f(uPaint.uEm, ambLum(r) * 0.85);
+          gl.uniform1f(uPaint.uGlaze, 0);
           gl.bindTexture(gl.TEXTURE_2D, A.ptex.tex);
           gl.drawArrays(gl.TRIANGLES, 0, 6);
         }
@@ -1496,6 +1595,7 @@ function frame(t){
         const px = r.pedestal.x, pz = r.pedestal.z;
         gl.uniform1f(uPaint.uFade, 1);
         gl.uniform1f(uPaint.uEm, ambLum(r) * 0.85);
+        gl.uniform1f(uPaint.uGlaze, 0);
         gl.bindTexture(gl.TEXTURE_2D, stolenTex);
         let nx0, nz0;
         if (Math.abs(px) > Math.abs(pz)){
@@ -1519,6 +1619,7 @@ function frame(t){
         gl.uniform1i(uPaint.uNL, 0);
         gl.uniform1f(uPaint.uFade, 1);
         gl.uniform1f(uPaint.uEm, 1.65);
+        gl.uniform1f(uPaint.uGlaze, 0);
         gl.bindTexture(gl.TEXTURE_2D, ensureSkyTex());
         const IN2 = HS - WT;
         for (const wn of r.windows){
@@ -1859,6 +1960,14 @@ if (DBG_FULL) Object.assign(window.DBG, {
     if (day)   for (let i=0;i<3;i++) DAY_FOG[i] = day[i];
     return { night: [...FOG], day: [...DAY_FOG] };
   },
+  /** Where a sheet of the given size lands inside its mount, for the frame
+   *  aspect `asp`. The point of the mount is that this never crops. */
+  mount(sw, sh, asp = 'L'){
+    const [tw, th] = LOAN_SIZES[asp] || LOAN_SIZES.L;
+    return mountRect(sw, sh, tw, th);
+  },
+  /** Whether an image would be stored lossless. Takes a canvas or a bitmap. */
+  uploadKind(src){ return looksLikeLineArt(src) ? 'png' : 'jpeg'; },
   /** Fog extinction per metre — how fast a surface stops being lit and starts
    *  being fog. Dominates every other lighting control. DBG.sigma(0.038). */
   sigma(night, day){ setSigma(night, day); return { night: FOG_SIGMA, day: DAY_SIGMA }; },

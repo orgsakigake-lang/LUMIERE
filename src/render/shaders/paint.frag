@@ -4,6 +4,7 @@ in vec2 vUV; in vec3 vPv;
 uniform sampler2D uTex;
 uniform vec3 uN;            // view-space surface normal
 uniform vec3 uFog; uniform float uSigma; uniform float uFade; uniform float uEm;
+uniform float uGlaze;       // 0 varnish on canvas, 1 glass over a mounted work
 uniform float uAT;          // 1 → texture alpha shapes the quad (contact shadows)
 uniform int uNL;
 uniform vec4 uLPos[10]; uniform vec4 uLDir[10]; uniform vec4 uLCol[10];
@@ -35,7 +36,17 @@ void main(){
     vec3 c = uLCol[i].rgb * reach;
     acc += alb * c * max(dot(n, L), 0.0);
     vec3 hv = normalize(L + vdir);
-    acc += c * pow(max(dot(n, hv), 0.0), 24.0) * 0.055;   // varnish sheen
+    /* Varnish on canvas is a broad soft sheen; glass over a mounted work is a
+       tighter, brighter one. */
+    acc += c * pow(max(dot(n, hv), 0.0), mix(24.0, 130.0, uGlaze)) * mix(0.055, 0.14, uGlaze);
+  }
+  /* What actually reads as glazing is not the highlight but the veil: at a
+     grazing angle the glass starts reflecting the room instead of showing the
+     sheet. uEm carries how lit the room is, so the veil follows the lamps.
+     Clamped, because the term runs away at the last few degrees. */
+  if (uGlaze > 0.0){
+    float fres = pow(1.0 - max(dot(n, vdir), 0.0), 5.0);
+    acc += vec3(uEm * uGlaze * min(fres, 0.45) * 0.9);
   }
   float f = 1.0 - exp(-uSigma * length(vPv));
   o = vec4(mix(acc, uFog, f), uFade * mix(1.0, t.a, uAT));

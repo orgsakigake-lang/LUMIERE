@@ -214,6 +214,13 @@ export const RIG = {
      canvas rather than washing the wall behind it. */
   spot:        { col: [11.9, 9.5,  6.6],  inner: 0.985, outer: 0.930, range: 6.0 },
   spotVermil:  { col: [13.7, 9.2,  5.7],  inner: 0.985, outer: 0.930, range: 6.0 },
+  /* Works on paper. The gallery fixture is heavy tungsten — 1 : 0.80 : 0.55,
+     which turns white rag cream and puts a colour cast through every grey in a
+     pencil drawing. Monochrome sits best near 3700 K, so this one is close to
+     neutral. It is also dimmer: paper hangs at roughly 50 lux against 150–200
+     for a painting, because light is what fades it. The contrast between the
+     two fixtures reads as curation rather than inconsistency. */
+  paper:       { col: [4.83, 4.35, 3.82], inner: 0.985, outer: 0.930, range: 6.0 },
   /* The room's fill, and the "1" in 3:1. A chandelier is a point source: it
      radiates everywhere, brightest below where nothing shades it. The old cone
      stopped at 69° from straight down, so a wall at eye height sat outside it
@@ -270,14 +277,18 @@ function genLights(r, rnd){
     return;
   }
   const S = r.special === SPECIAL.VERMILION ? RIG.spotVermil : RIG.spot;
-  for (const A of r.artworks){
+  /* `forArt` names which work each spot belongs to, so hanging a drawing can
+     swap that one fixture for the neutral paper light without disturbing the
+     paintings beside it. */
+  for (let i = 0; i < r.artworks.length; i++){
     if (r.ownLights.length >= 6) break;
+    const A = r.artworks[i];
     const sign = (A.wall==='e'||A.wall==='n') ? 1 : -1;
     const horiz = (A.wall==='e'||A.wall==='w');
     const back = sign * (IN - 1.55), y = H - 0.22, ty = (A.hangY || 1.5);
     const p = horiz ? [back, y, A.u] : [A.u, y, back];
     const t = horiz ? [sign*IN, ty, A.u] : [A.u, ty, sign*IN];
-    r.ownLights.push(spotAt(p, t, S.col, S.inner, S.outer, S.range));
+    r.ownLights.push(Object.assign(spotAt(p, t, S.col, S.inner, S.outer, S.range), { forArt: i }));
   }
   /* the chandelier always burns at the centre — and lights its own ceiling */
   const C = RIG.chandelier, CU = RIG.chandUp;

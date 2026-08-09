@@ -427,6 +427,69 @@ test.describe.serial('inside the gallery', () => {
     expect(darkH.mean).toBeGreaterThan(1);         // still navigable, not a black screen
   });
 
+  test('a loaned sheet is mounted, never cropped', async () => {
+    /* The defect this replaces: uploads were cover-cropped to the frame's
+       aspect, so a portrait drawing hung in a landscape frame silently lost
+       its top and bottom. A mount cannot crop — the sheet is contained, at its
+       own proportions, and rag board fills the rest. The worst case is the one
+       worth asserting, so each source aspect is checked against every frame. */
+    const cases = await page.evaluate(() => {
+      const out = [];
+      for (const [sw, sh] of [[1500, 2000], [2000, 1500], [1000, 1000], [2400, 900]])
+        for (const asp of ['L', 'P', 'S', 'W'])
+          out.push({ sw, sh, asp, r: window.DBG.mount(sw, sh, asp) });
+      return out;
+    });
+
+    for (const { sw, sh, asp, r } of cases){
+      // the sheet keeps its own proportions
+      expect(Math.abs((r.dw / r.dh) / (sw / sh) - 1)).toBeLessThan(0.02);
+      // and sits wholly inside the frame, with a margin on every side
+      expect(r.dx).toBeGreaterThanOrEqual(r.m - 1);
+      expect(r.dy).toBeGreaterThanOrEqual(r.m - 1);
+      expect(r.dx + r.dw).toBeLessThanOrEqual(r.tw - r.m + 1);
+      expect(r.dy + r.dh).toBeLessThanOrEqual(r.th - r.mb + 1);
+      // and it is still large: filling one axis to the margin
+      const fills = Math.max(r.dw / (r.tw - 2*r.m), r.dh / (r.th - r.m - r.mb));
+      expect(fills).toBeGreaterThan(0.98);
+    }
+
+    // the bottom margin is the wider one — optical, not mathematical, centring
+    const one = cases[0].r;
+    expect(one.mb).toBeGreaterThan(one.m);
+  });
+
+  test('line art is stored lossless, photographs are not', async () => {
+    /* original → 1280px JPEG q0.88 → cover-crop → 512px texture put three lossy
+       steps under a pencil drawing, and JPEG ringing clusters exactly around
+       hard strokes on white. Drawings now go to PNG; photographs would cost
+       tens of megabytes for nothing, so they still get a JPEG. */
+    const kinds = await page.evaluate(() => {
+      const mk = (paint) => {
+        const c = document.createElement('canvas'); c.width = 220; c.height = 300;
+        paint(c.getContext('2d'), c.width, c.height);
+        return c;
+      };
+      const drawing = mk((g, w, h) => {
+        g.fillStyle = '#FAF8F3'; g.fillRect(0, 0, w, h);
+        g.strokeStyle = 'rgba(30,28,26,0.8)'; g.lineWidth = 2;
+        for (let i = 0; i < 40; i++){
+          g.beginPath(); g.moveTo(10, 10 + i*7); g.lineTo(w - 10, 30 + i*6); g.stroke();
+        }
+      });
+      const photo = mk((g, w, h) => {
+        for (let y = 0; y < h; y += 4)
+          for (let x = 0; x < w; x += 4){
+            g.fillStyle = `rgb(${(x*7)%256},${(y*11)%256},${(x*y)%256})`;
+            g.fillRect(x, y, 4, 4);
+          }
+      });
+      return { drawing: window.DBG.uploadKind(drawing), photo: window.DBG.uploadKind(photo) };
+    });
+    expect(kinds.drawing).toBe('png');
+    expect(kinds.photo).toBe('jpeg');
+  });
+
   test('the image uses its tonal range instead of crushing into black', async () => {
     /* The colour pipeline had no sRGB encode and no sRGB decode, so everything
        was displayed at L^2.2 and the whole museum lived in about 70 of the 255
