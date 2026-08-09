@@ -257,30 +257,53 @@ function startJob(job){
   return true;
 }
 
+/* A museum label, not a debug print. It used to truncate a title mid-word
+   rather than wrap, name no maker at all, and give the medium line as
+   "algorithm & seed 2748491063" — which is the provenance, not the medium. */
+const MAKERS = ['The Lumière Press', 'Atelier Nocturne', 'The Vermilion Workshop',
+                'Maison Rive', 'The Salt Quarter Studio', 'Verger & Daughters'];
+const MEDIA  = ['ink and flow on rag', 'density study, iterated', 'glazed tile, relaid',
+                'fractured glass, releaded', 'cut paper and gouache', 'dithered graphite'];
+
 function renderPlacard(A){
   const g = pctx;
   g.fillStyle = '#E9E2D2'; g.fillRect(0, 0, 256, 128);
   g.fillStyle = '#D6CDB8'; g.fillRect(0, 0, 256, 3);
+  g.textBaseline = 'alphabetic';
+
+  /* Wrap to two lines, and only then give up and clip. Most titles fit one. */
   g.fillStyle = '#1F1C18';
-  g.font = 'italic 20px Georgia, serif'; g.textBaseline = 'alphabetic';
-  let title = A.title || 'Untitled';
-  if (g.measureText(title).width > 230){
-    while (g.measureText(title + '…').width > 230 && title.length > 4) title = title.slice(0, -1);
-    title += '…';
+  g.font = 'italic 19px Georgia, serif';
+  const words = String(A.title || 'Untitled').split(' ');
+  const lines = [];
+  let line = '';
+  for (const word of words){
+    const next = line ? line + ' ' + word : word;
+    if (g.measureText(next).width <= 228 || !line) line = next;
+    else { lines.push(line); line = word; if (lines.length === 2) break; }
   }
-  g.fillText(title, 14, 38);
-  g.font = '13px Georgia, serif'; g.fillStyle = '#5D574C';
+  if (lines.length < 2 && line) lines.push(line);
+  if (lines.length === 2 && g.measureText(lines[1]).width > 228){
+    while (g.measureText(lines[1] + '…').width > 228 && lines[1].length > 4)
+      lines[1] = lines[1].slice(0, -1);
+    lines[1] += '…';
+  }
+  const twoLine = lines.length > 1;
+  lines.forEach((l, i) => g.fillText(l, 14, 34 + i*22));
+
+  const y0 = twoLine ? 78 : 64;
   if (A.overrideName){
-    g.fillText('private loan', 14, 66);
+    g.font = '13px Georgia, serif'; g.fillStyle = '#5D574C';
+    g.fillText('from the curator’s own hand', 14, y0);
     g.font = '12px Georgia, serif'; g.fillStyle = '#837C6E';
-    g.fillText('the curator’s collection', 14, 90);
-    g.fillText('on generous terms', 14, 110);
+    g.fillText('private loan · not for sale', 14, y0 + 22);
   } else {
+    const i = A.algo % ALGOS.length;
     const year = 1870 + (h2(A.seed, 0x9999, WORLD_SEED) % 200);
-    g.fillText(`${ALGO_NAMES[A.algo % ALGOS.length]}, ${year}`, 14, 66);
+    g.font = '13px Georgia, serif'; g.fillStyle = '#5D574C';
+    g.fillText(`${MAKERS[h2(A.seed, 0x5AFE, WORLD_SEED) % MAKERS.length]}, ${year}`, 14, y0);
     g.font = '12px Georgia, serif'; g.fillStyle = '#837C6E';
-    g.fillText(`algorithm & seed ${A.seed}`, 14, 90);
-    g.fillText('edition 1 of 1', 14, 110);
+    g.fillText(`${MEDIA[i]} · edition 1 of 1`, 14, y0 + 22);
   }
 }
 

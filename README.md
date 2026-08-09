@@ -60,6 +60,8 @@ Edge, or Firefox.
 | `L` | the lamps — on/off (also a wall switch, bottom right) |
 | `O` | the shutters — open them and sunlight pours through the windows |
 | `T` | cycle the gallery theme |
+| `?` | show or hide the controls |
+| `Esc` | leave inspect |
 | `C` | the Curator's Office |
 | `M` | sound on/off |
 

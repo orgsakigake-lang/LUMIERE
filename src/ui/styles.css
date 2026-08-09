@@ -25,7 +25,7 @@
   /* center aim dot, only once inside */
   #aim{position:fixed; left:50%; top:50%; width:4px; height:4px; margin:-2px 0 0 -2px;
        border-radius:50%; background:var(--brass); opacity:0; pointer-events:none;
-       transition:opacity .8s ease;}
+       transition:opacity .35s ease, background-color .25s ease, box-shadow .25s ease;}
   body.entered #aim{opacity:.35;}
 
   /* ——— overlays share a plate ——— */
@@ -63,9 +63,26 @@
               color:rgba(169,159,140,.75); font-variant-numeric:tabular-nums;}
   #hud-loc{left:1.6rem; top:1.4rem;}
   #hud-stat{right:1.6rem; top:1.4rem; text-align:right;}
-  #hud-hint{left:50%; bottom:1.5rem; transform:translateX(-50%); white-space:nowrap;
-            transition:opacity 2s ease;}
-  #hud-hint b{color:rgba(201,169,106,.8); font-weight:400;}
+  /* A notice. Transient, and no longer sharing an element with the legend. */
+  #hud-toast{left:50%; bottom:1.5rem; transform:translateX(-50%); white-space:nowrap;
+             opacity:0; transition:opacity .45s ease;}
+  #hud-toast.show{opacity:1;}
+  #hud-toast b{color:rgba(201,169,106,.8); font-weight:400;}
+  /* The legend. Reference, recallable with ?, sitting above any notice. */
+  #hud-legend{position:fixed; left:50%; bottom:3.6rem; transform:translateX(-50%);
+              text-align:center; font-size:.66rem; letter-spacing:.2em;
+              text-transform:uppercase; color:rgba(169,159,140,.7); line-height:2.1;
+              opacity:0; transition:opacity .5s ease; pointer-events:none;
+              max-width:min(92vw, 52rem);}
+  #hud-legend.show{opacity:1;}
+  #hud-legend b{color:rgba(201,169,106,.85); font-weight:400;}
+  #hud-legend span{opacity:.35; margin:0 .55em;}
+  #hud-legend .dismiss{margin-top:.35rem; font-size:.6rem; color:rgba(169,159,140,.42);}
+  body:not(.entered) #hud-legend{opacity:0 !important;}
+
+  /* The reticle answers when there is something to look at. */
+  #aim.live{background:var(--bone); box-shadow:0 0 0 3px rgba(201,169,106,.22);}
+  body.entered #aim.live{opacity:.85;}
 
   /* ——— inspect lower-third ——— */
   #lt{position:fixed; left:50%; bottom:2.6rem; transform:translateX(-50%) translateY(12px);

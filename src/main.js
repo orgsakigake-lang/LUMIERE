@@ -15,7 +15,7 @@ import { PALETTES, jitterPal } from './art/palettes.js';
 import { ALGO_NAMES, ALGOS, makeTitle, finishArt, resetGrain } from './art/algos.js';
 import { mat4, perspective, mulM, mulT, viewMatrix, extractPlanes, boxVisible } from './render/mat4.js';
 import { storageOK, persist, savePersist } from './persist.js';
-import { flashHint } from './ui/hint.js';
+import { flashHint, toggleLegend } from './ui/hint.js';
 import { audio, initAudio, bell, footstep, toggleMute, setAudioActive } from './audio.js';
 import { SPECIAL, rooms, roomKey, getRoom, spotAt, specialAt, RIG } from './world/rooms.js';
 import { THEMES, THEME_ORDER, DEFAULT_THEME, theme, themeName, setThemeName,
@@ -360,6 +360,12 @@ addEventListener('keydown', (e)=>{
   if (e.code === 'KeyH'){ curatorHang(); return; }
   if (e.code === 'KeyU'){ curatorUnhang(); return; }
   if (e.code === 'KeyT'){ applyTheme(nextThemeName()); return; }
+  /* The legend had no way back: it faded after eleven seconds and the first
+     notice overwrote it for good. Both keys, because ? needs a shift. */
+  if (e.key === '?' || e.code === 'Slash'){ toggleLegend(); return; }
+  /* Escape left inspect stuck — the only way out was F or a walk key, neither
+     of which is what anyone reaches for. */
+  if (e.key === 'Escape' && inspect.on){ inspectOff(); return; }
   if (e.code === 'Space'){ doJump(); return; }
   if (inspect.on && ['KeyW','KeyA','KeyS','KeyD'].includes(e.code)) inspectOff();
   keys.add(e.code);
@@ -1490,6 +1496,7 @@ async function bootCloud(){
 /* ————— frame loop ————— */
 let lastT = 0, frameCount = 0, fpsAcc = 0, fpsAvg = 0;
 let stalled = false, badRuns = 0, goodRuns = 0;
+let lastFaced = null, aimEl = null;
 let probeRequest = null, rafId = 0, forceDt = null;
 const probeBuf = new Uint8Array(32*32*4);
 
@@ -1672,6 +1679,21 @@ function frame(t){
   }
 
   if (entered) step(dt);
+
+  /* The reticle answers when there is a work in front of you — the one piece
+     of feedback that tells you F and E will do something. Checked on a slow
+     tick and written only when the answer changes, because the frame loop is
+     not allowed to touch the DOM every frame and does not need to: this is a
+     state transition like any other. */
+  if (entered && (frameCount & 7) === 0){
+    const faced = inspect.on ? null : facedArtwork();
+    const now = faced ? faced.A : null;
+    if (now !== lastFaced){
+      lastFaced = now;
+      const dot = aimEl || (aimEl = document.getElementById('aim'));
+      if (dot) dot.classList.toggle('live', !!now);
+    }
+  }
 
   const usePost = post.on;
   if (usePost){
@@ -2449,10 +2471,7 @@ document.getElementById('enter').addEventListener('click', ()=>{
   setTimeout(()=>{ introEl.hidden = true; }, REDUCED ? 0 : 1100);
   canvas.focus();
   tryPointerLock();          // inside the gesture; drag-look if it declines
-  setTimeout(()=>{
-    const hint = document.getElementById('hud-hint');
-    if (hint) hint.style.opacity = '0';
-  }, 9000);
+  setTimeout(() => toggleLegend(false), 11000);   // ? brings it back
 });
 
 if (gl){
