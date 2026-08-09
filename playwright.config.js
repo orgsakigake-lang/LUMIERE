@@ -1,3 +1,4 @@
+import os from 'node:os';
 import { defineConfig, devices } from '@playwright/test';
 
 /* The determinism hashes are Canvas2D pixel hashes. They are stable across
@@ -6,8 +7,12 @@ import { defineConfig, devices } from '@playwright/test';
    Never hard-code a golden hash recorded elsewhere. */
 export default defineConfig({
   testDir: './test',
-  fullyParallel: false,
-  workers: 1,
+  /* Each worker runs its own software-rendered browser, so this is CPU-bound
+     rather than IO-bound — half the cores is about the sweet spot before the
+     workers start starving each other. The `inside the gallery` group is
+     describe.serial and stays pinned to a single worker regardless. */
+  fullyParallel: true,
+  workers: process.env.CI ? 2 : Math.max(2, Math.floor((os.cpus().length || 4) / 2)),
   reporter: [['list']],
   /* Headless CI runs on SwiftShader, where entering the gallery (25 room
      meshes + the first wing of artwork) costs ~12s at 720x405 and ~32s at

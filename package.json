@@ -9,7 +9,8 @@
     "build:readable": "node build.mjs",
     "dev": "node build.mjs --watch",
     "archive": "node build.mjs --archive",
-    "test": "node build.mjs --archive && playwright test"
+    "test": "node build.mjs --archive && playwright test",
+    "test:fast": "playwright test -g \"boot|cloud layer\""
   },
   "devDependencies": {
     "@playwright/test": "^1.56.0",

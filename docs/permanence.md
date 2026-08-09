@@ -81,7 +81,8 @@ If you need room, in order of preference:
 |---|---|---|---|
 | GitHub Pages | primary host | free, public repos | already in use |
 | ArDrive Turbo | permanent copy | **≤ 100 KiB free** | needs a wallet *(you)*; above the limit costs credits |
-| Pinata | IPFS pinning | free under 1 GB | free tier has been shrinking; not a guarantee |
+| **Storacha** (web3.storage) | IPFS pinning | **5 GiB, "free forever"** | preferred — UCAN spaces, Filecoin-backed |
+| Pinata | IPFS pinning | free under 1 GB | fallback; free tier has been shrinking |
 | Supabase | accounts, loans | free tier | **pauses after 7 idle days** — hence `keepalive.yml` |
 | Cloudflare Pages | alternative host | generous free tier | optional |
 
@@ -116,8 +117,15 @@ was built from. A permanent artifact you cannot identify later is not much use.
 
 ### Step 3 — IPFS, the mirror *(you)*
 
-1. Create a Pinata account and upload the same file.
+Use **Storacha** (the successor to web3.storage): 5 GiB free, described as free
+forever, and backed by Filecoin rather than a single company's goodwill. That is
+five thousand times what this file needs.
+
+1. Create an account at <https://storacha.network/> and upload the same file.
 2. Keep the CID. It is reachable through any gateway, e.g. `https://ipfs.io/ipfs/<CID>`.
+
+Pinata works too (1 GB free) if you already have an account, but its free tier
+has been shrinking where Storacha's has not.
 
 Optional: point an ENS name at the CID with a contenthash record so the address
 is memorable.

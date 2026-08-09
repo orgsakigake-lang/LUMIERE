@@ -10,8 +10,16 @@ what made the original 3843-line file hard to extend.
 npm run dev        # watch + server on :8000, unminified
 npm run build      # index.html, minified — what GitHub Pages serves
 npm run archive    # archive/index.html, no backend, under 100 KiB
-npm test           # builds the archive, then runs Playwright
+npm run test:fast  # boot + cloud layer only, ~55s — use this while working
+npm test           # everything, ~3.5 min — use this before committing
 ```
+
+**Use `test:fast` in the inner loop.** The full suite is slow for one reason:
+software rendering. Entering the gallery costs ~12s and each `artHash` runs a
+generator to completion. Parallel workers barely help — the in-gallery group is
+`describe.serial` and four software-rendered browsers starve each other on the
+same cores. `test:fast` catches the failure that actually happens during
+extraction, which is a `ReferenceError` at boot.
 
 `index.html` is committed, so the repo deploys with no CI and no tooling.
 
