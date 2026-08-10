@@ -92,10 +92,18 @@
   #lt .t{font-style:italic; font-size:1.35rem; color:var(--bone); text-wrap:balance;}
   #lt .m{margin-top:.45rem; font-size:.68rem; letter-spacing:.28em; text-transform:uppercase;
          color:var(--bone-dim); font-variant-numeric:tabular-nums;}
+  /* What the artist wrote. Set in the reading face rather than the letterspaced
+     small caps the rest of the placard uses — this is a sentence to be read,
+     not a label to be scanned, and it is the one line here somebody wrote by
+     hand. Clamped so a long note cannot push the label off the screen. */
+  #lt .d{margin-top:.5rem; font-size:.8rem; line-height:1.55; color:var(--bone-dim);
+         text-wrap:pretty; max-width:34rem; margin-inline:auto;
+         display:-webkit-box; -webkit-line-clamp:3; -webkit-box-orient:vertical;
+         overflow:hidden;}
   #lt .k{margin-top:.55rem; font-size:.66rem; letter-spacing:.24em; text-transform:uppercase;
          color:rgba(201,169,106,.75);}
 
-  /* ——— acquire modal ——— */
+  /* ——— the enlarged view ——— */
   #modal{z-index:20; cursor:pointer;}
   #modal .frame{background:#241a10; padding:clamp(10px, 1.8vw, 26px);
                 width:fit-content; margin:0 auto;
@@ -108,6 +116,12 @@
   #modal .cap{margin-top:1.3rem; text-align:center; max-width:min(80vw, 44rem); margin-inline:auto;}
   #modal .cap .t{font-style:italic; font-size:1.2rem; color:var(--bone);}
   #modal .cap .m{margin-top:.4rem; font-size:.66rem; letter-spacing:.26em; text-transform:uppercase; color:var(--bone-dim);}
+  /* Here the note is not clamped: this is the view somebody opened in order to
+     read it. Left-aligned, because centred prose past a line or two is a poster
+     rather than a wall text. */
+  #modal .cap .d{margin-top:.85rem; font-size:.86rem; line-height:1.6; color:var(--bone-dim);
+                 text-align:left; text-wrap:pretty; max-width:34rem; margin-inline:auto;
+                 white-space:pre-wrap;}
   #modal .cap .s{margin-top:.9rem; font-size:.64rem; letter-spacing:.2em; text-transform:uppercase; color:rgba(201,169,106,.7);}
 
   #intro-note{margin-top:1.6rem; font-size:.66rem; letter-spacing:.26em; text-transform:uppercase;
@@ -208,11 +222,22 @@
               border-radius:2px; background:rgba(201,169,106,.045);}
   .rv-head{font-size:.66rem; letter-spacing:.18em; text-transform:uppercase;
            color:var(--brass); margin-bottom:.75rem;}
-  .rv-list{max-height:15rem; overflow-y:auto; display:flex; flex-direction:column; gap:.4rem;}
-  .rv-row{display:grid; grid-template-columns:2.2rem 1fr 5rem auto; gap:.7rem;
-          align-items:center;}
-  .rv-row img{width:2.2rem; height:2.2rem; object-fit:cover; border-radius:1px;
+  .rv-list{max-height:22rem; overflow-y:auto; display:flex; flex-direction:column; gap:.4rem;}
+  /* The thumbnail grew because the row now asks the visitor to write about the
+     picture, and a 2.2rem square is not enough of it to write from. */
+  .rv-row{display:grid; grid-template-columns:4.4rem 1fr 5rem auto; gap:.7rem;
+          align-items:start; padding:.35rem 0;}
+  .rv-row img{width:4.4rem; height:4.4rem; object-fit:contain; border-radius:1px;
               background:#141210;}
+  .rv-fields{display:flex; flex-direction:column; gap:.35rem; min-width:0;}
+  .rv-title, .rv-desc{font:inherit; width:100%; background:rgba(0,0,0,.25);
+          border:1px solid rgba(169,159,140,.2); border-radius:1px; color:var(--bone);
+          padding:.34rem .5rem; transition:border-color .2s ease;}
+  .rv-title{font-size:.78rem;}
+  .rv-desc{font-size:.72rem; line-height:1.5; resize:vertical; min-height:2.6rem;
+           color:var(--bone-dim);}
+  .rv-title:focus, .rv-desc:focus{outline:none; border-color:rgba(201,169,106,.55);}
+  .rv-title::placeholder, .rv-desc::placeholder{color:rgba(169,159,140,.4);}
   .rv-nm{font-size:.72rem; color:var(--bone); overflow:hidden; text-overflow:ellipsis;
          white-space:nowrap;}
   .rv-or{font-size:.58rem; letter-spacing:.14em; text-transform:uppercase;

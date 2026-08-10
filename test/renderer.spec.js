@@ -31,12 +31,14 @@ test.describe('the renderer', () => {
        old caps looked fine, which is exactly why this went unnoticed. */
     const area = [];
     for (const q of [2, 1, 0]){
-      await page.emulateMedia({ reducedMotion: null });
       await page.addInitScript(() => {
         Object.defineProperty(window, 'devicePixelRatio', { get: () => 1.25, configurable: true });
       });
       await boot(page, `?q=${q}`);
-      await page.evaluate(() => window.DBG.frame(2, 16.7));
+      /* No forced frames: resize() runs at boot and the drawing buffer is sized
+         by then. Rendering two 1600×900 frames at 4× MSAA on a software
+         rasteriser, three times over, is what made this time out under the
+         concurrent suite while passing comfortably on its own. */
       const d = await page.evaluate(() => {
         const c = document.getElementById('gl');
         return { w: c.width, h: c.height, css: [c.clientWidth, c.clientHeight] };
@@ -46,6 +48,42 @@ test.describe('the renderer', () => {
     }
     expect(area[1], 'tier 1 renders no fewer pixels than tier 2').toBeLessThan(area[0]);
     expect(area[2], 'tier 0 renders no fewer pixels than tier 1').toBeLessThan(area[1]);
+  });
+
+  test('the quality dial does not park the machine in its own dead band', async ({ page }) => {
+    /* The failure, measured on the reporting machine: tier 1 ran at ~60 fps and
+       tier 2 at 46. The dial climbed on 60, and 46 was inside the dead band
+       above the drop threshold — so it settled at 46 fps and stayed there for
+       the session, having hunted *into* the tier the machine could not hold.
+
+       This drives that exact fps history through the real judging code: good
+       windows while the cheap tier is on, bad ones once it climbs. The dial
+       must end up below the top tier, and must stop re-trying it. */
+    /* Pinned, so the *real* frame loop does not also judge — under SwiftShader
+       it would drive the dial to the floor and the assertions below would pass
+       for entirely the wrong reason. DBG.perf drives judgeQuality directly, so
+       the logic under test still runs; only the ambient noise is silenced. */
+    await boot(page, '?q=2');
+    const r = await page.evaluate(() => {
+      const seen = [];
+      // 30 windows: report what the tier the dial is *currently* on would cost.
+      for (let i = 0; i < 30; i++){
+        const q = window.DBG.perf().q;
+        window.DBG.perf([q >= 2 ? 46 : 61]);      // tier 2 is 46fps, tier ≤1 is 61
+        seen.push(window.DBG.perf().q);
+      }
+      return { seen, end: window.DBG.perf() };
+    });
+    console.log(`    tier over 30 windows: ${r.seen.join('')}`);
+    console.log(`    ended at tier ${r.end.q}, probation ${JSON.stringify(r.end.block)}s`
+              + ` penalties ${JSON.stringify(r.end.penalty)}s`);
+
+    expect(r.end.q, 'the dial parked on a tier that only reached 46 fps').toBeLessThan(2);
+    expect(r.end.block[2], 'tier 2 must be on probation after failing').toBeGreaterThan(0);
+    expect(r.end.penalty[2], 'a repeat failure must cost more than the first')
+      .toBeGreaterThan(30);
+    // and it must not be oscillating: the last third is settled
+    expect(new Set(r.seen.slice(20)).size, 'the tier was still hunting at the end').toBe(1);
   });
 
   test('the painter pool leaves the renderer a core to run on', async ({ page }) => {

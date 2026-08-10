@@ -24,7 +24,7 @@ import { THEMES, THEME_ORDER, DEFAULT_THEME, theme, themeName, setThemeName,
          nextThemeName } from './world/themes.js';
 import { cloud, setFetch, cloudSaveSess, cloudSendCode, cloudVerify, cloudPublicURL,
          cloudPassword, cloudSignUp,
-         cloudUploadBlob, cloudDeleteUpload, cloudSetPlacement, cloudDelPlacement,
+         cloudUploadBlob, cloudDeleteUpload, cloudUpdateUpload, cloudSetPlacement, cloudDelPlacement,
          cloudClaimSlug, cloudSetPublished, cloudLoadMine, cloudLoadGallery, cloudBoot } from './cloud/client.js';
 import { SCHEMES, applyScheme, buildRoomMesh, assembleLights, MAX_LIGHTS } from './world/geometry.js';
 import { canvas, gl, compile, program } from './render/gl.js';
@@ -433,7 +433,8 @@ addEventListener('keydown', (e)=>{
   if (['Space','ArrowUp','ArrowDown','ArrowLeft','ArrowRight'].includes(e.code)) e.preventDefault();
   const modal = document.getElementById('modal');
   if (!modal.hidden){
-    if (e.code === 'KeyE' || e.code === 'KeyF' || e.code === 'Space' || e.key === 'Escape') modal.click();
+    if (e.code === 'KeyE' || e.code === 'KeyV' || e.code === 'KeyF'
+        || e.code === 'Space' || e.key === 'Escape') modal.click();
     return;
   }
   if (!document.getElementById('curator').hidden){
@@ -441,7 +442,10 @@ addEventListener('keydown', (e)=>{
     return;                              // panel is open — the gallery holds still
   }
   if (e.code === 'KeyF'){ inspect.on ? inspectOff() : inspectOn(); return; }
-  if (e.code === 'KeyE'){ acquire(); return; }
+  /* Both open the same enlarged view. V is what it is *for* — E predates it and
+     is in every screenshot and both legends, so it keeps working. Neither
+     writes a file: the plate carries its own Save button. */
+  if (e.code === 'KeyE' || e.code === 'KeyV'){ viewWork(); return; }
   if (e.code === 'KeyM'){ toggleMute(); return; }
   if (e.code === 'KeyL'){ setLights(!lightsOn); return; }
   if (e.code === 'KeyO'){ setShutters(!WIN.on); return; }
@@ -682,6 +686,43 @@ function facedArtwork(){
     }
   return best;
 }
+/** The loan hanging in this frame, if the frame holds one. */
+function loanOf(A){
+  return A && A.overrideKey
+    ? curator.uploads.get(curator.placements.get(A.overrideKey)) || null
+    : null;
+}
+
+/** Everything a placard would say about a work, in one place, so the label on
+ *  the wall and the enlarged view cannot describe the same thing differently.
+ *
+ *  A seeded work is described by what made it — the algorithm, the palette and
+ *  the seed *are* the artwork, and that pair is reproducible, which is the only
+ *  interesting claim it has. A loan is described by whoever hung it: their
+ *  title, their words, and no invented provenance. Making up a year and a
+ *  medium for somebody's own drawing would be a small lie printed under it. */
+function describeWork(A){
+  const loan = loanOf(A);
+  if (loan){
+    return { title: loan.name || 'Untitled', note: (loan.note || '').trim(),
+             medium: 'private loan · the curator’s collection', loan };
+  }
+  const year = 1870 + (h2(A.seed, 0x9999, WORLD_SEED) % 200);
+  A.title = A.title || makeTitle(mulberry32(h2(A.seed, 0x717, WORLD_SEED)));
+  return { title: A.title, note: '', year, loan: null,
+           medium: `${ALGO_NAMES[A.algo % ALGOS.length]}, ${year} · `
+                 + `${PALETTES[A.pal % PALETTES.length].name} · seed ${A.seed} · 1/1` };
+}
+
+/** Write a description into a `.t` / `.m` / `.d` block. The description hides
+ *  itself when there is nothing to say, rather than leaving an empty gap. */
+function fillCaption(root, d){
+  root.querySelector('.t').textContent = d.title;
+  root.querySelector('.m').textContent = d.medium;
+  const note = root.querySelector('.d');
+  if (note){ note.textContent = d.note; note.hidden = !d.note; }
+}
+
 function inspectOn(target){
   target = target || facedArtwork();
   if (!target){ flashHint('stand before a work to inspect it'); return; }
@@ -692,13 +733,8 @@ function inspectOn(target){
   const yaw = Math.atan2(-c.nx, c.nz);       // face the wall
   inspect.on = true; inspect.A = A; inspect.r = r;
   inspect.to = { x: px2, z: pz2, y, yaw, pitch: Math.atan2(c.y - y, d) };
-  const lt = document.getElementById('lt');
-  const year = 1870 + (h2(A.seed, 0x9999, WORLD_SEED) % 200);
-  A.title = A.title || makeTitle(mulberry32(h2(A.seed, 0x717, WORLD_SEED)));
-  lt.querySelector('.t').textContent = A.title;
-  lt.querySelector('.m').textContent =
-    `${ALGO_NAMES[A.algo % ALGOS.length]}, ${year} · ${PALETTES[A.pal % PALETTES.length].name} · seed ${A.seed} · 1/1`;
-  lt.classList.add('show');
+  fillCaption(document.getElementById('lt'), describeWork(A));
+  document.getElementById('lt').classList.add('show');
   markSeen();
 }
 function inspectOff(){
@@ -718,15 +754,20 @@ const BIG_SIZES = { L: [1024, 768], P: [768, 1024], S: [1024, 1024], W: [1024, 6
 const acqCanvas = document.createElement('canvas');
 const acqCtx = acqCanvas.getContext('2d', { alpha: false, willReadFrequently: true });
 let modalURL = null;
-function acquire(){
+/* Standing in front of a work and wanting to *see* it is the ordinary case; a
+   frame two metres up a wall, lit for a room, is not how anyone reads a
+   drawing. This renders the work at four times the pooled resolution — the
+   loan from its own file, a seeded work by re-running its generator — and puts
+   the title and whatever the artist wrote beside it. Saving stays a separate,
+   deliberate button, because it writes to somebody's disk. */
+function viewWork(){
   const target = (inspect.on && inspect.A) ? { A: inspect.A } : facedArtwork();
-  if (!target){ flashHint('stand before a work to acquire it'); return; }
+  if (!target){ flashHint('stand before a work to see it closer'); return; }
   const A = target.A;
   const modal = document.getElementById('modal');
-  const year = 1870 + (h2(A.seed, 0x9999, WORLD_SEED) % 200);
-  A.title = A.title || makeTitle(mulberry32(h2(A.seed, 0x717, WORLD_SEED)));
-  modal.querySelector('.cap .t').textContent = A.title;
-  modal.querySelector('.cap .m').textContent = 'the gallery is committing it to memory…';
+  const d = describeWork(A);
+  fillCaption(modal.querySelector('.cap'), d);
+  modal.querySelector('.cap .m').textContent = 'bringing it closer…';
   modal.querySelector('img').removeAttribute('src');
   modal.hidden = false;
   /* Reserve the plate at the work's true proportions before anything is drawn.
@@ -738,7 +779,7 @@ function acquire(){
   shot.removeAttribute('src');
   shot.style.aspectRatio = `${bw} / ${bh}`;
   modal.hidden = false;
-  runAcquire(A, bw, bh, year);
+  runAcquire(A, bw, bh, d);
 }
 
 /* Yield to the browser, but never stall on rAF alone: it is paused entirely in
@@ -758,13 +799,13 @@ function nextTick(){
    `while (!gen.next().done){}` at four times the pooled pixel count, which
    froze the tab for one to two seconds — the render loop stopped, the audio
    kept droning, and even the status line could not animate. */
-async function runAcquire(A, bw, bh, year){
+async function runAcquire(A, bw, bh, desc){
   const modal = document.getElementById('modal');
   const cap = modal.querySelector('.cap .m');
   preemptArtJobs();
   acqCanvas.width = bw; acqCanvas.height = bh;
 
-  const loanRec = A.overrideKey && curator.uploads.get(curator.placements.get(A.overrideKey));
+  const loanRec = desc.loan;
   if (loanRec){
     /* The same mount the sheet hangs in, at acquire resolution. This used to
        cover-crop, which is the defect the mount exists to fix — it would have
@@ -788,7 +829,7 @@ async function runAcquire(A, bw, bh, year){
          most expensive of the six, takes twenty seconds to resolve. */
       while (performance.now() - t0 < 24){ if (gen.next().done){ done = true; break; } }
       if (done) break;
-      cap.textContent = 'the gallery is committing it to memory' + '.'.repeat(1 + (slices++ >> 1) % 3);
+      cap.textContent = 'bringing it closer' + '.'.repeat(1 + (slices++ >> 1) % 3);
       if (modal.hidden) return;                       // dismissed mid-render
       await nextTick();
     }
@@ -800,13 +841,15 @@ async function runAcquire(A, bw, bh, year){
     if (modalURL) URL.revokeObjectURL(modalURL);
     modalURL = URL.createObjectURL(blob);
     modal.querySelector('img').src = modalURL;
-    cap.textContent = loanRec
-      ? 'private loan · the curator’s collection'
-      : `${ALGO_NAMES[A.algo % ALGOS.length]}, ${year} · acquired, 1 of 1`;
+    /* Re-stated rather than left as the progress line, and re-read from the
+       record: a title edited in the Curator's Office while this was rendering
+       should be the one under the picture. */
+    fillCaption(modal.querySelector('.cap'), describeWork(A));
     const save = document.getElementById('modal-save');
     save.hidden = false;
     save.dataset.name =
-      `lumiere_${(A.title||'untitled').toLowerCase().replace(/[^a-z0-9]+/g,'-')}_${A.seed}.png`;
+      `lumiere_${(desc.title||'untitled').toLowerCase().replace(/[^a-z0-9]+/g,'-')}`
+      + `_${loanRec ? loanRec.id : A.seed}.png`;
     persist.acquired++; savePersist();
   }, 'image/png');
 }
@@ -1013,10 +1056,11 @@ function curatorReview(recs){
   if (!box) return;
   if (!recs.length){ box.hidden = true; box.textContent = ''; return; }
   box.textContent = ''; box.hidden = false;
+  const dirty = new Set();
 
   const head = document.createElement('div');
   head.className = 'rv-head';
-  head.textContent = `Added ${recs.length} work${recs.length === 1 ? '' : 's'} — how should ${recs.length === 1 ? 'it' : 'they'} meet the frame?`;
+  head.textContent = `Added ${recs.length} work${recs.length === 1 ? '' : 's'} — how ${recs.length === 1 ? 'it hangs' : 'they hang'}, and what ${recs.length === 1 ? 'it says' : 'they say'}`;
   const list = document.createElement('div');
   list.className = 'rv-list';
 
@@ -1025,8 +1069,30 @@ function curatorReview(recs){
     const row = document.createElement('div');
     row.className = 'rv-row';
     const im = document.createElement('img'); im.src = rec.url; im.alt = '';
-    const nm = document.createElement('div'); nm.className = 'rv-nm';
-    nm.textContent = rec.name;
+
+    /* The title starts as the filename because that is the only thing known
+       about the work, not because it is a good title. It is an editable field
+       rather than a caption for exactly that reason — "IMG_4471" is what a
+       camera called it, and it is what the placard will say otherwise. */
+    const fields = document.createElement('div'); fields.className = 'rv-fields';
+    const tIn = document.createElement('input');
+    tIn.type = 'text'; tIn.className = 'rv-title'; tIn.maxLength = 120;
+    tIn.value = rec.name || ''; tIn.placeholder = 'Title';
+    tIn.setAttribute('aria-label', 'Title');
+    const dIn = document.createElement('textarea');
+    dIn.className = 'rv-desc'; dIn.rows = 2; dIn.maxLength = 600;
+    dIn.value = rec.note || '';
+    dIn.placeholder = 'A note beside it — medium, year, what it is (optional)';
+    dIn.setAttribute('aria-label', 'Description');
+    /* Typed into, not submitted: there is no save button on a row, so the
+       value has to be taken as it changes or a visitor who types a title and
+       walks away loses it. */
+    tIn.addEventListener('input', () => { rec.name = tIn.value; dirty.add(rec); });
+    dIn.addEventListener('input', () => { rec.note = dIn.value; dirty.add(rec); });
+    /* WASD must not walk the gallery while somebody is naming a drawing. */
+    for (const el of [tIn, dIn]) el.addEventListener('keydown', (e) => e.stopPropagation());
+    fields.append(tIn, dIn);
+
     const or = document.createElement('div'); or.className = 'rv-or';
     or.textContent = rec.orientation;
     const seg = document.createElement('div'); seg.className = 'rv-seg';
@@ -1038,7 +1104,7 @@ function curatorReview(recs){
     };
     const bMount = mk('mount', 'Mounted'), bBleed = mk('bleed', 'Full bleed');
     seg.append(bMount, bBleed);
-    row.append(im, nm, or, seg);
+    row.append(im, fields, or, seg);
     list.append(row);
     rows.push({ rec, bMount, bBleed });
   }
@@ -1062,6 +1128,7 @@ function curatorReview(recs){
   done.type = 'button'; done.className = 'btn'; done.textContent = 'Done';
   done.addEventListener('click', () => {
     saveFills();
+    for (const rec of dirty) saveWorkText(rec);
     refreshHung(new Set(recs.map(r => r.id)));
     box.hidden = true; box.textContent = '';
     curatorGrid();
@@ -1086,19 +1153,23 @@ async function curatorAddFiles(files){
       const refused = quotaRefusal(blob);
       if (refused){ flashHint(refused); break; }
       const name = f.name.replace(/\.[^.]+$/, '');
+      /* Uploaded with the filename as its title and nothing said about it. The
+         review sheet is where both get answered; this only has to make sure
+         there is a row to answer about, since an upload that failed because
+         the visitor had not written a description yet would be absurd. */
       if (cloud.on && cloud.sess){
-        const { id, path } = await cloudUploadBlob(name, blob);
-        const rec = { id, name, blob, path, cloudRec: true, url: URL.createObjectURL(blob) };
+        const { id, path } = await cloudUploadBlob(name, blob, '');
+        const rec = { id, name, note: '', blob, path, cloudRec: true, url: URL.createObjectURL(blob) };
         curator.uploads.set(id, rec);
         noteShape(rec, shape); added.push(rec);
       } else {
         const id = 'u' + Date.now().toString(36) + Math.floor(Math.random()*1e6).toString(36);
-        const rec = { id, name, blob, url: URL.createObjectURL(blob) };
+        const rec = { id, name, note: '', blob, url: URL.createObjectURL(blob) };
         curator.uploads.set(id, rec);
         noteShape(rec, shape); added.push(rec);
         if (curator.db){
           try { curator.db.transaction('images', 'readwrite').objectStore('images')
-                  .put({ id, name: rec.name, blob }); } catch(e){}
+                  .put({ id, name: rec.name, note: '', blob }); } catch(e){}
         }
       }
     } catch(e){ console.warn('[curator] could not add image', f.name, e); flashHint('that image could not be added'); }
@@ -1106,6 +1177,28 @@ async function curatorAddFiles(files){
   curatorGrid();
   curatorReview(added);
 }
+/** Persist a work's title and description wherever that work lives.
+ *  Local collections write straight to IndexedDB; cloud collections go through
+ *  the outbox, keyed by id, so editing a title twenty times sends once and a
+ *  dropped connection does not lose the words. */
+function saveWorkText(rec){
+  if (rec.cloudRec && cloud.sess){
+    enqueue('updateUpload', rec.id, [rec.id, { name: rec.name, note: rec.note || '' }]);
+  } else if (curator.db){
+    try { curator.db.transaction('images', 'readwrite').objectStore('images')
+            .put({ id: rec.id, name: rec.name, note: rec.note || '', blob: rec.blob }); } catch(e){}
+  }
+  /* A work already on a wall keeps its placard in sync with the sheet. The old
+     plaque texture has to go back to the pool first, or the frame keeps
+     rendering the filename it was hung under. */
+  for (const A of artState.placards) if (A.overrideKey
+      && curator.placements.get(A.overrideKey) === rec.id){
+    A.title = rec.name;
+    if (A.ptex){ releaseSlot(A.ptex); A.ptex = null; }
+    if (!A.mini) A.ptexWanted = true;
+  }
+}
+
 /** Record what an upload's own proportions imply, and pre-fill its answer. */
 function noteShape(rec, shape){
   rec.orientation = orientationOf(shape.w, shape.h);
@@ -1569,7 +1662,7 @@ document.getElementById('curator').addEventListener('keydown', (e) => {
     for (const [oldId, rec] of [...curator.uploads]){
       if (rec.cloudRec || !rec.blob) continue;
       try {
-        const { id, path } = await cloudUploadBlob(rec.name, rec.blob);
+        const { id, path } = await cloudUploadBlob(rec.name, rec.blob, rec.note || '');
         curator.uploads.delete(oldId);
         curator.uploads.set(id, { id, name: rec.name, blob: rec.blob, path,
                                   cloudRec: true, url: rec.url });
@@ -1636,6 +1729,7 @@ const OUTBOX_SEND = {
   setPublished: ([on])    => cloudSetPublished(on),
   claimSlug:    ([slug])  => cloudClaimSlug(slug),
   deleteUpload: ([rec])   => cloudDeleteUpload(rec),
+  updateUpload: ([id, patch]) => cloudUpdateUpload(id, patch),
 };
 async function outboxFlush(){
   if (outbox.sending || !outbox.items.length) return;
@@ -1757,6 +1851,11 @@ async function bootCloud(){
 /* ————— frame loop ————— */
 let lastT = 0, frameCount = 0, fpsAcc = 0, fpsAvg = 0;
 let stalled = false, badRuns = 0, goodRuns = 0;
+/* Per-tier probation: when a tier may next be tried again, and how long the
+   next disappointment will cost it. Indexed by tier, so tier 2 failing says
+   nothing about tier 1. */
+const tierBlock   = [0, 0, 0];
+const tierPenalty = [30_000, 30_000, 30_000];
 let lastFaced = null, aimEl = null;
 let shadowsOn = true;
 let probeRequest = null, rafId = 0, forceDt = null;
@@ -1879,12 +1978,87 @@ function computeVisibility(){
     if (e.vis && e !== start && !boxVisible(e.ox, H/2, e.oz, HS, H/2, HS)) e.vis = false;
   }
 }
+/* The floor reflections are a second pass over the whole visible world — every
+   painting, every pane of glass, every candle flame, drawn again upside down —
+   so they are the one effect here whose cost is a fixed share of the scene
+   rather than a detail. `null` follows the quality dial; DBG.reflections(bool)
+   pins them, which is how that share gets measured rather than guessed at. */
+let reflectPin = null;
+function reflecting(){ return reflectPin === null ? PERF.q >= 1 : reflectPin; }
+
+/* Every wall fragment walks the room's light list, and that loop is a third of
+   the frame: measured on an Intel UHD at 1536×718, ten lights cost 15.3 ms and
+   none cost 10.1 — about half a millisecond each.
+
+   Cutting it everywhere is the wrong trade. Each picture light throws a halo on
+   the plaster around its painting, and those halos are most of what makes the
+   room read as a gallery rather than a corridor. But that argument only holds
+   for the room you are standing in. A room two doorways away arrives as a
+   sliver through an aperture a metre and a half wide — nobody is reading the
+   falloff on its far wall, and four of the five rooms drawn in a typical frame
+   are exactly that.
+
+   So the budget follows the distance. Rooms are 14 m, so 10 m keeps the room
+   you occupy and the one you are stepping into whole; past 26 m a room is at
+   best a bright rectangle at the end of an enfilade. packLights orders fill
+   lights first, so what a clamp drops is always the least important light in
+   the room, never the one shaping it. */
+function lightBudget(ox, oz){
+  const dx = ox - player.x, dz = oz - player.z;
+  const d2 = dx*dx + dz*dz;
+  return d2 < 100 ? MAX_LIGHTS : d2 < 676 ? 6 : 4;
+}
+let lightCap = MAX_LIGHTS;
+
 /** Frustum test against the room mirrored below the floor, for the reflection
  *  pass. Cheap, and the only visibility that pass can honestly use. */
 function computeMirrorVisibility(){
   for (let i = 0; i < nearRooms.length; i++){
     const e = nearRooms[i];
     e.visR = boxVisible(e.ox, -H/2, e.oz, HS, H/2, HS);
+  }
+}
+
+/** One half-second window's verdict on the quality tier.
+ *
+ *  The thresholds leave a dead band, and the dead band was a trap. On the
+ *  machine this was reported from, tier 1 runs at about 60 fps and tier 2 at
+ *  46. Sixty is over the old climb threshold, so after three seconds the dial
+ *  went up — and 46 is not under the old 42 fps drop threshold, so it *stayed
+ *  there*, at 46 fps, for the rest of the session. It hunted upward into a tier
+ *  the machine could not hold and then had no way to read that as failure. A
+ *  ratchet with a dead band needs a memory, or the band becomes the place it
+ *  gets stuck.
+ *
+ *  So: drop below 50 rather than 42, because sitting at 46 is the outcome being
+ *  avoided, not an acceptable resting place. Climb only above 58, which needs
+ *  genuine headroom rather than the top of the band. And a tier abandoned for
+ *  being too slow goes on probation — half a minute at first, doubling every
+ *  time it disappoints again, to a quarter of an hour. A machine that was
+ *  briefly busy gets its quality back; a machine that simply cannot render
+ *  tier 2 stops being asked about it every five seconds.
+ *
+ *  Separate from the frame loop so a test can drive a fps history through the
+ *  real logic: this failure only appears over tens of seconds, on hardware
+ *  slower than the machine the suite runs on.
+ */
+let perfClock = 0;
+function judgeQuality(fpsAvg, t){
+  if (fpsAvg < 50){ badRuns++; goodRuns = 0; }
+  else if (fpsAvg > 58){ goodRuns++; badRuns = 0; }
+  else { badRuns = 0; goodRuns = 0; }
+  const settled = t - PERF.lastChange > 5000;
+  const want = PERF.q + 1;
+  if (badRuns >= 2 && PERF.q > 0 && settled){
+    const left = PERF.q;
+    tierBlock[left] = t + tierPenalty[left];
+    tierPenalty[left] = Math.min(tierPenalty[left] * 2, 900_000);
+    PERF.q--; PERF.lastChange = t; badRuns = 0;
+    trace(`[perf] ${fpsAvg.toFixed(0)}fps — easing quality to tier ${PERF.q}`
+        + ` (tier ${left} on probation for ${Math.round((tierBlock[left]-t)/1000)}s)`);
+  } else if (goodRuns >= 6 && want <= 2 && settled && t >= tierBlock[want]){
+    PERF.q = want; PERF.lastChange = t; goodRuns = 0;
+    trace(`[perf] ${fpsAvg.toFixed(0)}fps — restoring quality to tier ${PERF.q}`);
   }
 }
 
@@ -1922,22 +2096,8 @@ function frame(t){
     fpsAvg = frameCount / fpsAcc; frameCount = 0; fpsAcc = 0;
     const judge = entered && forceDt === null && !PERF.pinned && !stalled;
     stalled = false;
-    if (judge){
-      /* Hysteresis in both directions, and a run of agreeing windows before
-         either move: each change reallocates the post buffers, so a mechanism
-         meant to prevent hitches must not be a source of them. */
-      if (fpsAvg < 42){ badRuns++; goodRuns = 0; }
-      else if (fpsAvg > 56){ goodRuns++; badRuns = 0; }
-      else { badRuns = 0; goodRuns = 0; }
-      const settled = t - PERF.lastChange > 5000;
-      if (badRuns >= 2 && PERF.q > 0 && settled){
-        PERF.q--; PERF.lastChange = t; badRuns = 0;
-        trace(`[perf] ${fpsAvg.toFixed(0)}fps — easing quality to tier ${PERF.q}`);
-      } else if (goodRuns >= 6 && PERF.q < 2 && settled){
-        PERF.q++; PERF.lastChange = t; goodRuns = 0;
-        trace(`[perf] ${fpsAvg.toFixed(0)}fps — restoring quality to tier ${PERF.q}`);
-      }
-    } else { badRuns = 0; goodRuns = 0; }
+    if (judge) judgeQuality(fpsAvg, t);
+    else { badRuns = 0; goodRuns = 0; }
   }
 
   if (entered) step(dt);
@@ -2026,7 +2186,7 @@ function frame(t){
      nearRooms and midRooms are the same objects, so one pass settles both. */
   packSerial++;
   computeVisibility();
-  if (PERF.q >= 1) computeMirrorVisibility();
+  if (reflecting()) computeMirrorVisibility();
 
   gl.useProgram(progArch);
   gl.uniformMatrix4fv(uArch.p, false, M_P);
@@ -2045,7 +2205,7 @@ function frame(t){
       (AMB_BASE[0]+m[0])*as, (AMB_BASE[1]+m[1])*as, (AMB_BASE[2]+m[2])*as);
     gl.uniform3f(uArch.fog,
       fogCur[0]+m[0]*.5, fogCur[1]+m[1]*.5, fogCur[2]+m[2]*.5);
-    const nl = packLights(r, ox, oz);
+    const nl = Math.min(packLights(r, ox, oz), lightCap, lightBudget(ox, oz));
     gl.uniform1i(uArch.nl, nl);
     /* Which packed light the baked map belongs to. packLights drops lights the
        switch turned off, so the index has to be found rather than assumed. */
@@ -2079,7 +2239,7 @@ function frame(t){
      obvious once seen. The mirrored room box is the honest test.
      The floor then covers them at slight transparency: a polished sheen. */
   const nowMs = performance.now();
-  if (PERF.q >= 1){
+  if (reflecting()){
     gl.enable(gl.BLEND);
     gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
     gl.depthMask(false);
@@ -2175,7 +2335,7 @@ function frame(t){
   gl.useProgram(progArch);
   gl.enable(gl.BLEND);
   gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
-  gl.uniform1f(uArch.alpha, PERF.q >= 1 ? 0.87 : 1.0);
+  gl.uniform1f(uArch.alpha, reflecting() ? 0.87 : 1.0);
   for (let ri = 0; ri < nearRooms.length; ri++){
       const { r, ox, oz, vis } = nearRooms[ri];
       if (!r.vao) continue;
@@ -2509,6 +2669,33 @@ window.DBG = {
   cloudState(){ return { on: cloud.on, signedIn: !!cloud.sess, viewing: cloud.viewing, slug: cloud.slug }; },
   /** Pretend to be signed in, so the outbox has somewhere to send. */
   cloudSessForTest(on){ cloud.sess = on ? { access_token: 'test', user: { id: 'test' } } : null; return !!cloud.sess; },
+  /** Put a work into the collection without a file picker, then read back what
+   *  the gallery would say about it. `where` is a frame key, so the caption can
+   *  be checked on the wall rather than only in the office. */
+  loanForTest(id, name, note, where){
+    curator.uploads.set(id, { id, name, note, blob: null, url: '' });
+    if (where) curator.placements.set(where, id);
+    return { uploads: curator.uploads.size, placed: !!where };
+  },
+  /** The single writer both captions go through, exposed so a test can prove
+   *  the wall label and the enlarged view render a description identically. */
+  fillCaptionForTest(root, d){ fillCaption(root, d); return true; },
+  /** What a placard and the enlarged view would print for a frame. One call,
+   *  because the whole point of describeWork is that they cannot disagree. */
+  caption(gx, gz, i){
+    const r = getRoom(gx, gz);
+    const A = r && r.artworks && r.artworks[i];
+    if (!A) return null;
+    const key = artJobKey(r, i);
+    /* A frame only carries overrideKey once the loan has actually been hung,
+       which needs GL. For a caption test the placement is the fact that
+       matters, so stand in for it when one exists. */
+    const had = A.overrideKey;
+    if (!had && curator.placements.has(key)) A.overrideKey = key;
+    const d = describeWork(A);
+    A.overrideKey = had;
+    return { title: d.title, note: d.note, medium: d.medium, loan: !!d.loan };
+  },
 };
 
 /* The rest of the debug surface exists for the dev harness and the test
@@ -2740,6 +2927,22 @@ if (DBG_FULL) Object.assign(window.DBG, {
   music(name){ if (name !== undefined) setMusic(name); return { now: musicName(), all: PIECES.map((p) => p.name) }; },
   /** Turn the baked shadow maps off, to see what they are actually doing. */
   shadows(on){ if (on !== undefined) shadowsOn = !!on; return shadowsOn; },
+  /** Pin the floor reflections on or off; null hands them back to the quality
+   *  dial. Pass B redraws the whole visible world mirrored, so this is the
+   *  only way to price it against the rest of the frame. */
+  reflections(on){ reflectPin = on === undefined || on === null ? null : !!on; return reflecting(); },
+  /** Clamp how many lights a wall fragment walks. The room keeps the ones that
+   *  shape it — packLights orders fill first — so this prices the loop. */
+  maxLights(n){ if (n !== undefined) lightCap = Math.max(0, Math.min(MAX_LIGHTS, n|0)); return lightCap; },
+  /** The quality dial's state, including which tiers are on probation. Drives
+   *  a fps history through the real judging code so the trap that parked a
+   *  machine at 46 fps can be reproduced without owning that machine. */
+  perf(fpsHistory){
+    if (Array.isArray(fpsHistory)) for (const f of fpsHistory) judgeQuality(f, perfClock += 600);
+    return { q: PERF.q, pinned: PERF.pinned, dprCap: dprCap(),
+             block: tierBlock.map((b) => Math.max(0, Math.round((b - perfClock)/1000))),
+             penalty: tierPenalty.map((p) => p/1000) };
+  },
   /** Triangles in a built room — the phase E budget, checkable. */
   roomTris(gx, gz){ const r = rooms.get(roomKey(gx, gz)); return r && r.nIdx ? r.nIdx/3 : 0; },
   /** How many rooms each strategy keeps, and a way to force one of them.

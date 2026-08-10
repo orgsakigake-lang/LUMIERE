@@ -6,7 +6,7 @@
   <div class="hud-corner" id="hud-stat">1 room</div>
   <div class="hud-corner" id="hud-toast"></div>
   <div id="hud-legend" class="show">
-    <b>W A S D</b> walk<span>·</span><b>drag</b> look<span>·</span><b>Space</b> jump<span>·</span><b>F</b> inspect<span>·</span><b>E</b> acquire<br>
+    <b>W A S D</b> walk<span>·</span><b>drag</b> look<span>·</span><b>Space</b> jump<span>·</span><b>F</b> inspect<span>·</span><b>V</b> view larger<span>·</span><b>E</b> save<br>
     <b>L</b> lights<span>·</span><b>O</b> shutters<span>·</span><b>T</b> theme<span>·</span><b>C</b> curator<span>·</span><b>M</b> sound<span>·</span><b>N</b> music<span>·</span><b>H</b>/<b>U</b> hang, take down
     <div class="dismiss"><b>?</b> hides and recalls this</div>
   </div>
@@ -92,7 +92,7 @@
     <button id="enter" autofocus>Enter the gallery</button>
     <div class="legend">
       <b>W&thinsp;A&thinsp;S&thinsp;D</b> walk · <b>drag</b> look · <b>Space</b> jump, twice ·
-      <b>F</b> inspect · <b>E</b> acquire · <b>M</b> sound<br>
+      <b>F</b> inspect · <b>V</b> view larger · <b>M</b> sound<br>
       <b>L</b> lights · <b>O</b> shutters · <b>N</b> music · <b>C</b> curator
     </div>
     <div class="fine">Wings without number · every visit hangs anew</div>
@@ -103,15 +103,17 @@
 <div id="lt">
   <div class="t"></div>
   <div class="m"></div>
-  <div class="k">E — acquire &nbsp;·&nbsp; F — step back</div>
+  <div class="d" hidden></div>
+  <div class="k">V — view larger &nbsp;·&nbsp; E — save &nbsp;·&nbsp; F — step back</div>
 </div>
 
 <div class="plate" id="modal" hidden>
   <div>
-    <div class="frame"><img alt="acquired artwork"></div>
+    <div class="frame"><img alt="the work, enlarged"></div>
     <div class="cap">
       <div class="t"></div>
       <div class="m"></div>
+      <div class="d" hidden></div>
       <div class="s">
         <button class="btn" id="modal-save" type="button" hidden>Save this work</button>
       </div>

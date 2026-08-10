@@ -127,6 +127,67 @@ test.describe.serial('inside the gallery — light and loans', () => {
     expect(r.ms).toBeLessThan(15000);
   });
 
+  test('a loan is described by its owner, a seeded work by what made it', async () => {
+    /* Two different kinds of thing hang in the same frames. A generated work is
+       honestly described by its algorithm, palette and seed — that pair *is* the
+       artwork and it is reproducible. A visitor's drawing is described by the
+       visitor: their title, their words, and no invented year or medium, since
+       printing a fabricated provenance under somebody's own drawing would be a
+       small lie on the wall. */
+    const r = await page.evaluate(() => {
+      const seeded = window.DBG.caption(0, 0, 0);
+      window.DBG.loanForTest('u-cap', 'Study of a Hand',
+        'Graphite on cartridge paper, 2026.\nDrawn from life over three sittings.',
+        '0,0:0');
+      const loan = window.DBG.caption(0, 0, 0);
+      return { seeded, loan };
+    });
+    console.log(`    seeded: ${r.seeded.title} — ${r.seeded.medium}`);
+    console.log(`    loan:   ${r.loan.title} — ${r.loan.note.split('\n')[0]}`);
+
+    expect(r.seeded.loan).toBe(false);
+    expect(r.seeded.note, 'a seeded work must not invent a description').toBe('');
+    expect(r.seeded.medium).toMatch(/seed \d+/);
+    expect(r.seeded.title.length).toBeGreaterThan(0);
+
+    expect(r.loan.loan).toBe(true);
+    expect(r.loan.title).toBe('Study of a Hand');
+    expect(r.loan.note).toContain('Graphite on cartridge paper');
+    expect(r.loan.note, 'the visitor’s line breaks are theirs to keep').toContain('\n');
+    expect(r.loan.medium, 'a loan gets no fabricated year or medium').not.toMatch(/\d{4}/);
+  });
+
+  test('the wall label and the enlarged view cannot disagree', async () => {
+    /* Two places print the same work. They were two copies of the same string
+       building, which is how a placard and a caption drift apart. Both now go
+       through describeWork and fillCaption, and this asserts it — including
+       that an empty description leaves no gap rather than an empty line. */
+    const r = await page.evaluate(() => {
+      const read = (sel) => {
+        const n = document.querySelector(sel);
+        return { t: n.querySelector('.t').textContent,
+                 m: n.querySelector('.m').textContent,
+                 d: n.querySelector('.d').textContent,
+                 dHidden: n.querySelector('.d').hidden };
+      };
+      window.DBG.loanForTest('u-par', 'Two Chairs', 'Ink, 2025.', '0,0:0');
+      const cap = window.DBG.caption(0, 0, 0);
+      // drive the real writer into both blocks
+      const lt = document.getElementById('lt'), md = document.querySelector('#modal .cap');
+      window.DBG.fillCaptionForTest(lt, cap);
+      window.DBG.fillCaptionForTest(md, cap);
+      const withNote = { lt: read('#lt'), modal: read('#modal .cap') };
+      window.DBG.fillCaptionForTest(lt, { ...cap, note: '' });
+      return { withNote, empty: read('#lt') };
+    });
+
+    expect(r.withNote.lt).toEqual(r.withNote.modal);
+    expect(r.withNote.lt.d).toBe('Ink, 2025.');
+    expect(r.withNote.lt.dHidden).toBe(false);
+    expect(r.empty.d).toBe('');
+    expect(r.empty.dHidden, 'an empty description must not leave a gap').toBe(true);
+  });
+
   test('a loaned sheet is mounted, never cropped', async () => {
     /* The defect this replaces: uploads were cover-cropped to the frame's
        aspect, so a portrait drawing hung in a landscape frame silently lost

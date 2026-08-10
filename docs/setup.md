@@ -52,10 +52,18 @@ network — you are finished. Skip to *Hanging your drawings well* at the bottom
 ## Step 2 — A Supabase project (cloud mode)
 
 1. Create a project at <https://supabase.com>. The free tier is 500 MB of
-   database and 1 GB of image storage — at roughly 200 KB a drawing that is
-   about five thousand works.
+   database and 1 GB of image storage — about 800 lossless drawings, or five
+   thousand photographs. (See the arithmetic under Step 5; drawings are kept
+   lossless on purpose and are much larger than 200 KB.)
 2. **SQL Editor → New query →** paste the whole of `supabase-setup.sql` **→
    Run.** It is idempotent; running it twice is safe.
+
+   > **Already have a gallery? Re-run it.** The file gains columns as the
+   > gallery does — most recently `uploads.note`, which holds the description
+   > shown beside a work. Every addition uses `add column if not exists`, so
+   > re-running costs nothing and changes no data. Until you do, titles and
+   > descriptions still work locally and the client simply omits the field
+   > rather than failing the upload.
 3. **Authentication → Sign In / Up:** confirm the Email provider is enabled (it
    is by default), and turn **"Confirm email" off** if you want to create your
    account without waiting on a mail.
@@ -158,11 +166,41 @@ result.
 
 - **GitHub Pages** — push to a public repo, then Settings → Pages → deploy from
   branch. The included `.github/workflows/keepalive.yml` pings Supabase twice a
-  week so a free project never pauses for inactivity; add `SUPABASE_URL` and
-  `SUPABASE_ANON_KEY` as repository secrets to arm it.
+  week so a free project never pauses for inactivity. It needs no secrets — it
+  reads the project URL and key straight out of `src/config.js`, which is where
+  they already live and the only place to keep correct.
 
-Free-tier arithmetic: about 5,000 works in 1 GB, and 5 GB/month of egress serves
-roughly 25,000 image views.
+### Free-tier arithmetic, honestly
+
+This used to say "5 GB/month of egress serves roughly 25,000 image views",
+which assumed a 200 KB photograph. **Line art is not stored that way.** A
+drawing is kept lossless at 2048 px precisely so pencil strokes survive, and
+that is closer to **1.2 MB** — so the real figure is nearer **4,000 image
+views a month**, six times fewer.
+
+| | free tier | what it means here |
+|---|---|---|
+| storage | 1 GB | ~800 lossless drawings, or ~5,000 photographs |
+| egress | 5 GB/month | ~4,000 drawing views, or ~25,000 photograph views |
+
+A visitor walking a 40-work collection pulls roughly 50 MB, so **5 GB is about
+100 full visits a month** — fine for showing friends, thin for anything that
+gets shared widely.
+
+Two things make that go much further, and the first is already done:
+
+- **Uploads are stored `max-age=31536000, immutable`.** Object paths are UUIDs
+  that are never rewritten, so this is simply true, and it means a returning
+  visitor re-downloads nothing. Supabase's default of one hour would have
+  charged you for every visit. *(Applies to works uploaded from this version
+  onward; older objects keep the cache header they were stored with.)*
+- **Put a CDN in front of it** if a gallery ever gets popular — Cloudflare in
+  front of the storage domain makes repeat egress somebody else's problem, and
+  the free plan covers it.
+
+If you outgrow this, the honest fix is not a bigger free tier: it is serving
+the images from the same static host as the page, which has no egress limit on
+Cloudflare Pages.
 
 For keeping a copy alive permanently and independently of any of this, see
 [permanence.md](permanence.md).

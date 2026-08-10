@@ -129,20 +129,54 @@ export function cloudPublicURL(path){
   return cloud.url + '/storage/v1/object/public/loans/' + path;
 }
 
-export async function cloudUploadBlob(name, blob){
+/* `note` is newer than some galleries. A project whose owner has not re-run
+   supabase-setup.sql has no such column, and PostgREST rejects the whole write
+   rather than ignoring the field — which would turn "your description did not
+   save" into "your image did not upload". So a rejected write is retried
+   without it: the drawing lands either way, and the words follow once the
+   migration is applied. */
+async function writeUpload(path, body, method = 'POST'){
+  const send = (b) => cfetch(path, {
+    method,
+    headers: { 'Content-Type': 'application/json', Prefer: 'return=minimal' },
+    body: JSON.stringify(b),
+  });
+  let rs = await send(body);
+  if (!rs.ok && 'note' in body){
+    const { note, ...rest } = body;
+    if (Object.keys(rest).length) rs = await send(rest);
+  }
+  return rs;
+}
+
+export async function cloudUploadBlob(name, blob, note = ''){
   const id = crypto.randomUUID();
   const path = cloud.sess.uid + '/' + id + '.jpg';
-  let rs = await cfetch('/storage/v1/object/loans/' + path, {
-    method: 'POST', headers: { 'Content-Type': 'image/jpeg' }, body: blob,
-  });
-  if (!rs.ok) throw new Error('image upload failed');
-  rs = await cfetch('/rest/v1/uploads', {
+  /* A year, and immutable, because these objects genuinely are: the path is a
+     UUID minted here and nothing ever writes to it again — a change is a new
+     row with a new path. Supabase defaults to an hour, which for a gallery
+     somebody shares is the difference between a visitor paying the egress once
+     and paying it every time they come back. The free tier is 5 GB a month and
+     a collection of lossless drawings is tens of megabytes a visit, so this is
+     most of the arithmetic. */
+  const rs0 = await cfetch('/storage/v1/object/loans/' + path, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json', Prefer: 'return=minimal' },
-    body: JSON.stringify({ id, owner: cloud.sess.uid, name, path }),
+    headers: { 'Content-Type': 'image/jpeg',
+               'cache-control': 'max-age=31536000, immutable' },
+    body: blob,
   });
+  if (!rs0.ok) throw new Error('image upload failed');
+  const rs = await writeUpload('/rest/v1/uploads',
+    { id, owner: cloud.sess.uid, name, path, note });
   if (!rs.ok) throw new Error('could not record the upload');
   return { id, path };
+}
+
+/** Retitle a work, or rewrite what it says. Idempotent and keyed by id, so the
+ *  outbox can collapse twenty edits of the same row into the last one. */
+export async function cloudUpdateUpload(id, patch){
+  const rs = await writeUpload('/rest/v1/uploads?id=eq.' + id, patch, 'PATCH');
+  return { ok: rs.ok };
 }
 
 /* Deletes report what happened rather than swallowing it. A half-failed
@@ -202,7 +236,12 @@ export async function cloudClaimSlug(slug){
    collection and then call flashHint, updateHudStat and syncArtJobs — the
    network layer driving the HUD and kicking the render scheduler. */
 
+/* `select=*` rather than a column list, for the same reason `profiles` uses it:
+   `note` is absent from any project whose owner has not re-run the schema, and
+   naming a column PostgREST does not have fails the whole request — which would
+   empty a visitor's collection rather than merely omit their descriptions. */
 const asUpload = (row) => ({ id: row.id, name: row.name, path: row.path,
+                             note: row.note || '',
                              url: cloudPublicURL(row.path), cloudRec: true });
 const rowsOf = async (rs) => (rs.ok ? rs.json() : []);
 
@@ -210,7 +249,7 @@ const rowsOf = async (rs) => (rs.ok ? rs.json() : []);
 export async function cloudLoadMine(){
   if (!cloud.sess) return null;
   const [ur, pr, sr] = await Promise.all([
-    cfetch('/rest/v1/uploads?owner=eq.' + cloud.sess.uid + '&select=id,name,path&order=created_at'),
+    cfetch('/rest/v1/uploads?owner=eq.' + cloud.sess.uid + '&select=*&order=created_at'),
     cfetch('/rest/v1/placements?owner=eq.' + cloud.sess.uid + '&select=k,upload_id'),
     cfetch('/rest/v1/profiles?id=eq.' + cloud.sess.uid + '&select=*'),
   ]);
@@ -232,7 +271,7 @@ export async function cloudLoadGallery(slug){
   if (!rows[0]) return null;
   const owner = rows[0].id;
   const [ur, pr] = await Promise.all([
-    cfetch('/rest/v1/uploads?owner=eq.' + owner + '&select=id,name,path'),
+    cfetch('/rest/v1/uploads?owner=eq.' + owner + '&select=*'),
     cfetch('/rest/v1/placements?owner=eq.' + owner + '&select=k,upload_id'),
   ]);
   cloud.viewing = { slug, owner };

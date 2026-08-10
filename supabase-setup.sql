@@ -50,6 +50,16 @@ alter table public.placements enable row level security;
 alter table public.profiles
   add column if not exists published boolean not null default false;
 
+-- ————— what a work is called, and what it says —————
+-- A drawing arrives named after whatever the file was called, which is rarely
+-- what the artist would have written on the wall. `name` is the title on the
+-- placard; `note` is the paragraph beside it. Added separately from the table
+-- definition so a gallery created before this simply gains the column when
+-- its owner re-runs this file — and the client reads `select=*` and treats a
+-- missing `note` as empty, so nothing breaks in the meantime.
+alter table public.uploads
+  add column if not exists note text not null default '';
+
 -- Owners can always see themselves. Everyone else sees only published
 -- profiles, so an unpublished slug simply does not resolve.
 drop policy if exists "profiles read"   on public.profiles;

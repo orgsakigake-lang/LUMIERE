@@ -33,6 +33,7 @@ export const cloudSetPublished = unreachable;
 /* Writes report failure rather than throwing: the curator calls these
    fire-and-forget, and an archive copy should stay quiet, not nag. */
 export async function cloudDeleteUpload(){ return { ok: false }; }
+export async function cloudUpdateUpload(){ return { ok: false }; }
 export async function cloudSetPlacement(){ return { ok: false }; }
 export async function cloudDelPlacement(){ return { ok: false }; }
 

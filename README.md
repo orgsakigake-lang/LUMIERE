@@ -55,8 +55,8 @@ Edge, or Firefox.
 | `W A S D` | walk (`Shift` — stroll faster) |
 | drag / pointer-lock mouse | look — works while walking |
 | `Space` | jump · press again quickly mid-air for the double jump |
-| `F` or right-click | inspect the work you face (glides the camera up to it) |
-| `E` | acquire — re-renders the work at 1024² and offers it as a PNG |
+| `F` or right-click | inspect the work you face (glides the camera up to it, and prints its title and description) |
+| `V` or `E` | view larger — re-renders the work at 1024² beside its title and description, with an opt-in PNG |
 | `L` | the lamps — on/off (also a wall switch, bottom right) |
 | `O` | the shutters — open them and sunlight pours through the windows |
 | `T` | cycle the gallery theme |
@@ -123,6 +123,12 @@ The gallery accepts *private loans* — your own images:
   frame when the nearest frame shape is close enough that filling costs it
   almost nothing. Change any row, or set the whole batch at once. The choice is
   remembered and applies wherever the work hangs.
+- **The same sheet asks what each work is called and what it says.** The title
+  starts as the filename, because that is the only thing known about the work —
+  not because `IMG_4471` is a good title, and it is what the placard will print
+  otherwise. The description is optional and free text; it appears under the
+  work on the wall and in full in the enlarged view. Both are editable later,
+  and a title changed in the office redraws the placard already hanging.
 - The grid shows the collection — click to select, the cross to remove.
 - Walk to *any* frame in the infinite gallery and press **H** to hang the
   selected work there. It is **mounted, not cropped**: the sheet keeps its own
