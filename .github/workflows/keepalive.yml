@@ -1,8 +1,17 @@
-# Supabase free projects pause after 7 idle days. This pings yours twice a
-# week so the gallery never sleeps. It no-ops until you add two repository
-# secrets (Settings → Secrets and variables → Actions):
-#   SUPABASE_URL      e.g. https://abcdefgh.supabase.co
-#   SUPABASE_ANON_KEY the anon public key
+# Supabase free projects pause after 7 idle days. This pings yours twice a week
+# so the gallery never sleeps.
+#
+# It used to read the project URL and key from repository secrets, and that was
+# wrong twice over. It meant the workflow broke silently the moment the project
+# changed — which is exactly what happened: the secrets went on naming a project
+# that had been deleted, and the only sign was a failed-run email. And there was
+# nothing to protect in the first place. Both values are *published*: they are
+# compiled into index.html and served to every visitor, because the publishable
+# key only says which project to talk to and the row-level-security policies
+# decide what may be done once connected.
+#
+# So it reads them from the source it is already sitting next to. One place to
+# change a project, and it is the place you would change anyway.
 name: keep-supabase-awake
 on:
   schedule:
@@ -12,14 +21,23 @@ jobs:
   ping:
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/checkout@v4
       - name: ping the gallery's database
-        env:
-          URL: ${{ secrets.SUPABASE_URL }}
-          KEY: ${{ secrets.SUPABASE_ANON_KEY }}
         run: |
+          URL=$(grep -oP "CLOUD_URL = '\K[^']+" src/config.js || true)
+          KEY=$(grep -oP "CLOUD_KEY = '\K[^']+" src/config.js || true)
           if [ -z "$URL" ] || [ -z "$KEY" ]; then
-            echo "secrets not set yet — nothing to ping"; exit 0
+            echo "no cloud project configured — nothing to keep awake"; exit 0
           fi
-          curl -sf "$URL/rest/v1/profiles?select=id&limit=1" \
-            -H "apikey: $KEY" -H "Authorization: Bearer $KEY" > /dev/null \
-            && echo "the gallery is awake"
+          echo "pinging ${URL}"
+          CODE=$(curl -s -o /dev/null -w '%{http_code}' \
+            "$URL/rest/v1/profiles?select=id&limit=1" -H "apikey: $KEY")
+          echo "HTTP $CODE"
+          # 200 is awake. 401/403 means the key is stale — worth failing on,
+          # because a ping that cannot authenticate is not keeping anything
+          # awake and should not sit there looking green.
+          case "$CODE" in
+            200) echo "the gallery is awake" ;;
+            401|403) echo "::error::the key in src/config.js was rejected — is it the current project?"; exit 1 ;;
+            *) echo "::error::unexpected response $CODE from $URL"; exit 1 ;;
+          esac
