@@ -171,9 +171,18 @@ function initWorkers(){
       || !OffscreenCanvas.prototype.transferToImageBitmap) return workerPool;
   try {
     const url = URL.createObjectURL(new Blob([WORKER_SRC], { type: 'text/javascript' }));
-    /* Two is enough to keep ahead of a walking visitor and leaves the machine
-       to the renderer, which is the thing we were trying to protect. */
-    const n = Math.max(1, Math.min(2, (navigator.hardwareConcurrency || 4) - 2));
+    /* Two painters and a reserve of two cores was written on a sixteen-core
+       machine, where it is indistinguishable from correct. On a four-core
+       laptop it hands *half the machine* to art generation and leaves two
+       cores for the frame loop, the compositor and the GPU driver together —
+       and a work costs 359 ms there against 68 ms here, so those two cores
+       stay pegged for the whole walk rather than for a moment.
+
+       Reserve three. Four cores get one painter, which still empties a
+       neighbourhood far faster than the main thread ever did; anything
+       larger gets two, as before. The renderer is the thing being protected,
+       and it needs a core to be protected *with*. */
+    const n = Math.max(1, Math.min(2, (navigator.hardwareConcurrency || 4) - 3));
     for (let i = 0; i < n; i++){
       const w = new Worker(url);
       w.onmessage = onPainted;

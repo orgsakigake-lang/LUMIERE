@@ -18,6 +18,58 @@ test.describe('the renderer', () => {
     if (info.caps.maxSamples >= 2) expect(info.samples).toBeGreaterThanOrEqual(2);
   });
 
+  test('every step down the quality dial actually removes pixels', async ({ page }) => {
+    /* The defect this exists for: the caps were 1.5 / 1.25 / 1.0, which
+       assumed every display asks for at least 1.5. On a 1.25 laptop panel the
+       cap never bound at tier 1, so dropping a tier changed *no pixels* — the
+       machine asked for a cheaper frame and got the same one with half the
+       MSAA. Cost here is linear in pixel count (measured: 20.9 ms × 0.64 =
+       13.4 predicted, 13.5 observed), so a tier that holds the pixel count
+       flat is a tier that does nothing.
+
+       Emulating a 1.25 device pixel ratio is the whole point — at DPR 2 the
+       old caps looked fine, which is exactly why this went unnoticed. */
+    const area = [];
+    for (const q of [2, 1, 0]){
+      await page.emulateMedia({ reducedMotion: null });
+      await page.addInitScript(() => {
+        Object.defineProperty(window, 'devicePixelRatio', { get: () => 1.25, configurable: true });
+      });
+      await boot(page, `?q=${q}`);
+      await page.evaluate(() => window.DBG.frame(2, 16.7));
+      const d = await page.evaluate(() => {
+        const c = document.getElementById('gl');
+        return { w: c.width, h: c.height, css: [c.clientWidth, c.clientHeight] };
+      });
+      console.log(`    q=${q}: ${d.w}×${d.h} (css ${d.css.join('×')})`);
+      area.push(d.w * d.h);
+    }
+    expect(area[1], 'tier 1 renders no fewer pixels than tier 2').toBeLessThan(area[0]);
+    expect(area[2], 'tier 0 renders no fewer pixels than tier 1').toBeLessThan(area[1]);
+  });
+
+  test('the painter pool leaves the renderer a core to run on', async ({ page }) => {
+    /* Two painters with a two-core reserve was written on a sixteen-core
+       machine. On the four-core laptop this was reported from, it handed half
+       the machine to art generation — and a work costs 359 ms there against
+       68 ms here, so those cores stayed pegged for the entire walk. */
+    for (const [cores, want] of [[4, 1], [8, 2], [2, 1], [16, 2]]){
+      await page.addInitScript((n) => {
+        Object.defineProperty(navigator, 'hardwareConcurrency', { get: () => n, configurable: true });
+      }, cores);
+      await boot(page);
+      await enter(page);
+      await page.evaluate(() => window.DBG.frame(4, 16.7));
+      const n = await page.evaluate(() => window.DBG.stats().painters);
+      console.log(`    ${cores} cores → ${n} painter(s)`);
+      if (n !== null){
+        expect(n, `${cores} cores`).toBe(want);
+        expect(n, 'the pool must never take the whole machine')
+          .toBeLessThanOrEqual(Math.max(1, cores - 3));
+      }
+    }
+  });
+
   test('MSAA actually changes the image', async ({ page }) => {
     await boot(page, '');
     const caps = await page.evaluate(() => window.DBG.postInfo().caps);
