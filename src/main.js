@@ -2707,6 +2707,12 @@ if (DBG_FULL) Object.assign(window.DBG, {
   wingRoute(n = 12){ return wingRoute(n).map(({gx, gz}) => [gx, gz]); },
   /** Lay the collection out along one walkable route. Returns what it hung. */
   gather(){ return gatherIntoWing(); },
+  /** Whether the distant murmur is running, and how loud it sits. */
+  murmur(level){
+    if (level !== undefined && audio.murmurBus) audio.murmurBus.gain.value = level;
+    return { talkers: audio.talkers ? audio.talkers.length : 0,
+             level: audio.murmurBus ? +audio.murmurBus.gain.value.toFixed(3) : null };
+  },
   /** How many oscillators the current programme is running. */
   audioVoices(){ return audio.voices.length; },
   /** The music programme: DBG.music('Glass'), or nothing to read it. */

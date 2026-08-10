@@ -75,6 +75,19 @@ test.describe.serial('inside the gallery — light and loans', () => {
       expect(o.voices, `${o.name} started no voices`).toBeGreaterThan(0);
   });
 
+  test('other visitors are heard, and stay far away', async () => {
+    /* Distant speech is not voices — plaster and air take the consonants
+       first, so what survives is the rhythm with the meaning filtered out.
+       This checks the talkers exist and, more usefully, that the murmur sits
+       far under the footsteps: ambience that competes with what you are doing
+       is not ambience. */
+    const m = await page.evaluate(() => window.DBG.murmur());
+    console.log(`    ${m.talkers} talkers at ${m.level}`);
+    expect(m.talkers).toBeGreaterThan(1);
+    expect(m.level).toBeGreaterThan(0);
+    expect(m.level).toBeLessThan(0.06);      // a footstep peaks near 0.22
+  });
+
   test('a loaned sheet is mounted, never cropped', async () => {
     /* The defect this replaces: uploads were cover-cropped to the frame's
        aspect, so a portrait drawing hung in a landscape frame silently lost

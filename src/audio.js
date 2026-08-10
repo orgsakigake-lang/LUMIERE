@@ -17,6 +17,7 @@ import { mulberry32 } from './world/seed.js';
 import { flashHint } from './ui/hint.js';
 
 export const audio = { ctx: null, master: null, music: null, verb: null, echo: null,
+                murmurBus: null, talkers: null,
                 muted: false, ok: false, active: false,
                 stride: 0, arnd: mulberry32(0xA0D10), nextNote: 0,
                 stepBuf: null, scuffBuf: null, piece: 1, voices: [] };
@@ -147,9 +148,44 @@ export function initAudio(){
     }
     audio.scuffBuf = sb;
 
+    /* ————— other visitors —————
+       Two halls away, through a doorway and a wall. You do not hear words at
+       that distance — plaster and air take the consonants first, and what
+       arrives is the *rhythm* of speech with the meaning filtered out. So this
+       is not an attempt at voices: it is noise shaped by two formant bands,
+       opened and closed at a syllable rate, and then rolled off hard enough
+       that only the vowel energy survives the journey. Nothing sampled, so no
+       one is recorded and nothing is licensed.
+
+       Kept far below the footsteps on purpose. It should be the thing you
+       notice you have been hearing, rather than the thing you hear. */
+    const murmur = ctx.createGain(); murmur.gain.value = 0.030;
+    const mLP = ctx.createBiquadFilter(); mLP.type = 'lowpass';
+    mLP.frequency.value = 620; mLP.Q.value = 0.5;      // a wall's worth of loss
+    murmur.connect(mLP); mLP.connect(master);
+    const mSend = ctx.createGain(); mSend.gain.value = 0.8;
+    mLP.connect(mSend); mSend.connect(hall);           // and it arrives with the room on it
+    audio.murmurBus = murmur;
+
+    const src2 = ctx.createBufferSource(); src2.buffer = buf; src2.loop = true; src2.start();
+    audio.talkers = [];
+    for (let v = 0; v < 3; v++){
+      /* Each talker is one noise source through a pair of resonances. Different
+         fundamentals so the group does not sound like one person. */
+      const f1 = ctx.createBiquadFilter(); f1.type = 'bandpass';
+      f1.frequency.value = 380 + v*95; f1.Q.value = 5.5;
+      const f2 = ctx.createBiquadFilter(); f2.type = 'bandpass';
+      f2.frequency.value = 1050 + v*260; f2.Q.value = 4.0;
+      const vg = ctx.createGain(); vg.gain.value = 0;
+      src2.connect(f1); src2.connect(f2);
+      f1.connect(vg); f2.connect(vg); vg.connect(murmur);
+      audio.talkers.push({ g: vg, next: ctx.currentTime + 2 + v*7 });
+    }
+
     audio.ok = true;
     startPiece(audio.piece);
     setInterval(noteScheduler, 120);        // lookahead scheduler
+    setInterval(murmurScheduler, 250);
   } catch(e){ /* a silent museum is still a museum */ }
 }
 
@@ -179,6 +215,31 @@ function startPiece(i){
   const lg = ctx.createGain(); lg.gain.value = P.padCut * 0.33;
   lfo.connect(lg); lg.connect(f.frequency); lfo.start(); audio.voices.push(lfo);
   audio.nextNote = ctx.currentTime + 1.5;
+}
+
+/* Speech is phrases, not a texture: a few seconds of syllables, then a gap
+   while somebody else answers. Scheduling it that way is most of why this
+   reads as people rather than as a filter sweep. */
+function murmurScheduler(){
+  if (!audio.ok || audio.muted || !audio.talkers) return;
+  const ctx = audio.ctx, r = audio.arnd;
+  for (const t of audio.talkers){
+    while (t.next < ctx.currentTime + 0.5){
+      const start = Math.max(t.next, ctx.currentTime + 0.05);
+      const syllables = 3 + Math.floor(r()*7);
+      let at = start;
+      for (let i = 0; i < syllables; i++){
+        const len = 0.11 + r()*0.13;             // ~4 syllables a second
+        const peak = 0.5 + r()*0.5;
+        t.g.gain.setTargetAtTime(peak, at, 0.045);
+        t.g.gain.setTargetAtTime(0.06, at + len*0.62, 0.055);
+        at += len + r()*0.05;
+      }
+      t.g.gain.setTargetAtTime(0, at, 0.14);
+      /* Then a long wait. A gallery is mostly quiet. */
+      t.next = at + 6 + r()*22;
+    }
+  }
 }
 
 function noteScheduler(){
