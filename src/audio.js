@@ -16,7 +16,7 @@
 import { mulberry32 } from './world/seed.js';
 import { flashHint } from './ui/hint.js';
 
-export const audio = { ctx: null, master: null, music: null, verb: null,
+export const audio = { ctx: null, master: null, music: null, verb: null, echo: null,
                 muted: false, ok: false, active: false,
                 stride: 0, arnd: mulberry32(0xA0D10), nextNote: 0,
                 stepBuf: null, scuffBuf: null, piece: 1, voices: [] };
@@ -81,6 +81,32 @@ export function initAudio(){
     const hallG = ctx.createGain(); hallG.gain.value = 0.42;
     hall.connect(hallG); hallG.connect(master);
     audio.verb = hall;
+
+    /* ————— the room answering —————
+       A convolution tail alone reads as "somewhere reverberant". What makes a
+       hall sound like *stone*, and like a particular size, is the first
+       distinct reflection arriving before the tail does. This room is 14 m
+       across, so a wall sits 6.76 m away: 13.5 m there and back at 343 m/s is
+       39 ms. The second bounce is the far wall — near enough to twice that.
+
+       Both are rolled off, because a real reflection loses its top end to the
+       plaster on the way, and a bright echo sounds like a canyon rather than
+       a gallery. The feedback is deliberately small: this should read as a
+       room, not as an effect, and it has to survive an hour of walking. */
+    const echo = ctx.createGain();
+    const d1 = ctx.createDelay(0.5); d1.delayTime.value = 0.039;
+    const d2 = ctx.createDelay(0.5); d2.delayTime.value = 0.081;
+    const eLP = ctx.createBiquadFilter(); eLP.type = 'lowpass'; eLP.frequency.value = 2600;
+    const g1 = ctx.createGain(); g1.gain.value = 0.42;
+    const g2 = ctx.createGain(); g2.gain.value = 0.26;
+    const fb = ctx.createGain(); fb.gain.value = 0.22;
+    echo.connect(d1); echo.connect(d2);
+    d1.connect(g1); d2.connect(g2);
+    g1.connect(eLP); g2.connect(eLP);
+    eLP.connect(master);
+    eLP.connect(fb); fb.connect(d2);            // one more bounce, then gone
+    eLP.connect(hall);                          // and the tail behind it
+    audio.echo = echo;
 
     /* The music bus, so a programme can be swapped without touching the rest. */
     const music = ctx.createGain(); music.gain.value = 1;
@@ -212,6 +238,11 @@ export function footstep(speed){
   lp.frequency.value = 210 + r()*70; lp.Q.value = 0.6;
   const bg = ctx.createGain(); bg.gain.value = vol;
   body.connect(lp); lp.connect(bg); bg.connect(audio.master);
+  /* The weight of the step is what the room actually returns to you. */
+  const be = ctx.createGain(); be.gain.value = 0.5;
+  bg.connect(be); be.connect(audio.echo);
+  const bv = ctx.createGain(); bv.gain.value = 0.18;
+  bg.connect(bv); bv.connect(audio.verb);
   body.start();
 
   /* The sole brushing the board — quiet, brief, and the part your ear
@@ -222,7 +253,9 @@ export function footstep(speed){
   hp.frequency.value = 2300 + r()*1400; hp.Q.value = 0.8;
   const sg = ctx.createGain(); sg.gain.value = vol * 0.11;
   scuff.connect(hp); hp.connect(sg); sg.connect(audio.master);
-  /* A hall this size answers a footstep. Very quietly. */
+  /* The brush of the sole comes back too, brighter and thinner. */
+  const se = ctx.createGain(); se.gain.value = 0.42;
+  sg.connect(se); se.connect(audio.echo);
   const sv = ctx.createGain(); sv.gain.value = 0.22;
   sg.connect(sv); sv.connect(audio.verb);
   scuff.start(ctx.currentTime + 0.006 + r()*0.004);
