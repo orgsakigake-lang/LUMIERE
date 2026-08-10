@@ -142,6 +142,47 @@ test.describe('the cloud layer', () => {
     expect(r.advice.unknown).toBe('some other failure');
   });
 
+  test('a tunnel does not sign you out; a spent token does, loudly', async ({ page }) => {
+    /* Two failures that used to be one. Any refresh failure dropped the
+       session, so a moment offline signed a visitor out and took the queued
+       writes' only route home with it — and it did so silently, leaving the
+       office saying "signed in · loans open everywhere" while every write went
+       out anonymously, matched no rows under RLS, and came back 200.
+
+       A network error and a refused token are not the same event. */
+    await boot(page);
+    const r = await page.evaluate(async () => {
+      const out = { lost: 0 };
+      window.DBG.onAuthLostForTest(() => out.lost++);
+
+      // 1. the network is down mid-refresh — the session must survive
+      window.DBG.cloudSessForTest(true, { expired: true });
+      window.DBG.cloudFetch(() => Promise.reject(new Error('offline')));
+      await window.DBG.cloudUpdateUpload('u1', { note: 'x' }).catch(() => {});
+      out.afterOffline = window.DBG.cloudState().signedIn;
+      out.lostAfterOffline = out.lost;
+
+      // 2. the refresh is refused — the token is spent, and that is real
+      window.DBG.cloudSessForTest(true, { expired: true });
+      window.DBG.cloudFetch((url) => url.includes('/auth/v1/token')
+        ? Promise.resolve({ ok: false, status: 400, json: () => Promise.resolve({}) })
+        : Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve([]) }));
+      await window.DBG.cloudUpdateUpload('u1', { note: 'x' }).catch(() => {});
+      out.afterRefusal = window.DBG.cloudState().signedIn;
+      out.lostAfterRefusal = out.lost;
+
+      window.DBG.cloudFetch(null); window.DBG.onAuthLostForTest(null);
+      window.DBG.cloudSessForTest(false);
+      return out;
+    });
+    console.log(`    offline → signedIn=${r.afterOffline} · refused → signedIn=${r.afterRefusal}`);
+
+    expect(r.afterOffline, 'a network blip signed the visitor out').toBe(true);
+    expect(r.lostAfterOffline, 'a network blip announced a sign-out').toBe(0);
+    expect(r.afterRefusal, 'a refused refresh left a dead session in place').toBe(false);
+    expect(r.lostAfterRefusal, 'the sign-out happened silently').toBe(1);
+  });
+
   test('a failed write is kept and sent when the cloud comes back', async ({ page }) => {
     await boot(page);
     /* Writes used to be fire-and-forget: the local change had already happened,

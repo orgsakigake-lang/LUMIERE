@@ -93,10 +93,21 @@ network — you are finished. Skip to *Hanging your drawings well* at the bottom
    > means. **An account you already created starts working the moment you flip
    > the toggle — you do not need to make it again.**
    >
-   > If you would rather keep confirmation on, that is a real choice: configure
-   > your own SMTP under **Project Settings → Authentication → SMTP Settings**
-   > (Resend, Postmark and Mailgun all have free tiers). The built-in sender is
-   > the thing that cannot be relied on, not confirmation itself.
+   > **Do you need SMTP?** Almost certainly not, and it is worth being clear
+   > about why. SMTP exists so a service can mail *its users* — confirmations,
+   > password resets, magic links. This gallery has exactly one person who ever
+   > signs in: you. Visitors to a published gallery never authenticate at all;
+   > they read it as guests. So configuring a mail provider buys nothing except
+   > the ability to send yourself an email you did not want.
+   >
+   > Set it up only if you actually want confirmation on — several curators, or
+   > a gallery open to sign-ups. Then: **Project Settings → Authentication →
+   > SMTP Settings**, switch on *Enable Custom SMTP*, and fill in the host,
+   > port 587, username and password from a provider. Resend, Postmark, Brevo
+   > and Mailgun all have free tiers; the sender address must be one that
+   > provider has verified, or the mail is silently dropped and you are back
+   > where you started. Then raise **Rate Limits → Emails per hour**, which
+   > stays low even with your own SMTP.
 
    Sign-in is email and password. There is also a six-digit-code button, and it
    is best thought of as a fallback: besides the rate limit, Supabase's default

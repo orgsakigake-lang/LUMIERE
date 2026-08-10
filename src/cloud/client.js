@@ -40,20 +40,43 @@ export function cloudSaveSess(d){
   try { localStorage.setItem('lumiere_sess', JSON.stringify(cloud.sess)); } catch(e){}
 }
 
+/* Told when a session is genuinely gone, so the office can stop claiming to be
+   signed in. Without this the sign-out is silent: the panel still says "signed
+   in · loans open everywhere", every write goes out with the anonymous key,
+   row-level security matches nothing, and PostgREST answers 200 — the same
+   zero-rows trap, arrived at from the other direction. */
+let onAuthLost = null;
+export function setAuthLost(fn){ onAuthLost = fn || null; }
+
 async function cloudRefresh(){
   if (!cloud.sess) return false;
+  let rs;
   try {
-    const rs = await _fetch(cloud.url + '/auth/v1/token?grant_type=refresh_token', {
+    rs = await _fetch(cloud.url + '/auth/v1/token?grant_type=refresh_token', {
       method: 'POST',
       headers: { apikey: cloud.key, 'Content-Type': 'application/json' },
       body: JSON.stringify({ refresh_token: cloud.sess.refresh_token }),
     });
-    if (!rs.ok) throw 0;
-    const d = await rs.json();
-    d.user = d.user || { id: cloud.sess.uid, email: cloud.sess.email };
-    cloudSaveSess(d);
-    return true;
-  } catch(e){ cloudSaveSess(null); return false; }
+  } catch(e){
+    /* The *network* failed, not the token. Dropping the session here — which is
+       what this used to do — signed a visitor out for walking into a tunnel,
+       and took the queued writes' only route home with it. Keep it; the next
+       attempt can try again. */
+    return false;
+  }
+  if (rs.ok){
+    try {
+      const d = await rs.json();
+      d.user = d.user || { id: cloud.sess.uid, email: cloud.sess.email };
+      cloudSaveSess(d);
+      return true;
+    } catch(e){ return false; }
+  }
+  /* A refused refresh is the real thing: the token is spent or revoked, and no
+     amount of retrying will help. Say so out loud. */
+  cloudSaveSess(null);
+  if (onAuthLost){ try { onAuthLost(); } catch(e){} }
+  return false;
 }
 
 /* The single outbound choke point: auth headers, expiry refresh, 401 retry. */

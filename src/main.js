@@ -23,7 +23,7 @@ import { SPECIAL, rooms, roomKey, getRoom, spotAt, specialAt, RIG } from './worl
 import { THEMES, THEME_ORDER, DEFAULT_THEME, theme, themeName, setThemeName,
          nextThemeName } from './world/themes.js';
 import { cloud, setFetch, cloudSaveSess, cloudSendCode, cloudVerify, cloudPublicURL,
-         cloudPassword, cloudSignUp, cloudAuthSettings,
+         cloudPassword, cloudSignUp, cloudAuthSettings, setAuthLost,
          cloudUploadBlob, cloudDeleteUpload, cloudUpdateUpload, cloudSetPlacement, cloudDelPlacement,
          cloudClaimSlug, cloudSetPublished, cloudLoadMine, cloudLoadGallery, cloudBoot } from './cloud/client.js';
 import { SCHEMES, applyScheme, buildRoomMesh, assembleLights, MAX_LIGHTS } from './world/geometry.js';
@@ -1630,13 +1630,32 @@ document.getElementById('curator').addEventListener('keydown', (e) => {
   const pwIn = document.getElementById('cur-pw');
   emailIn.addEventListener('keydown', (e) => { if (e.key === 'Enter') pwIn.focus(); e.stopPropagation(); });
   pwIn.addEventListener('keydown', (e) => { if (e.key === 'Enter') document.getElementById('cur-signin').click(); e.stopPropagation(); });
+  /* Signing in should be a thing you do once per browser, so the one field that
+     is not in a password manager is remembered. Never the password. */
+  const LAST_EMAIL = 'lumiere_email';
+  try { emailIn.value = localStorage.getItem(LAST_EMAIL) || ''; } catch(e){}
+  if (emailIn.value) pwIn.setAttribute('autofocus', '');
+
   /** Shared tail of every way in. */
   async function afterSignIn(){
     cloudNote.textContent = '';
+    try { localStorage.setItem(LAST_EMAIL, emailIn.value.trim()); } catch(e){}
     await loadMyCollection();
     curatorRefresh();
     flashHint('welcome, curator — your loans follow you now');
   }
+
+  /* A session that has genuinely expired must not leave the office claiming to
+     be open. Anything already queued stays queued — the outbox holds until
+     there is a session again — so this is an interruption, not a loss. */
+  setAuthLost(() => {
+    curatorRefresh();
+    cloudNote.textContent =
+      'Your sign-in expired, so the gallery signed you out. Nothing is lost — anything '
+      + 'not yet sent is still held here and goes up the moment you sign back in.';
+    flashHint('your sign-in expired — the Curator’s Office needs it again');
+    outboxUI();
+  });
   const creds = () => {
     const email = emailIn.value.trim(), pw = pwIn.value;
     if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)){ cloudNote.textContent = 'that does not read like an email address'; return null; }
@@ -2753,7 +2772,18 @@ window.DBG = {
   },
   cloudState(){ return { on: cloud.on, signedIn: !!cloud.sess, viewing: cloud.viewing, slug: cloud.slug }; },
   /** Pretend to be signed in, so the outbox has somewhere to send. */
-  cloudSessForTest(on){ cloud.sess = on ? { access_token: 'test', user: { id: 'test' } } : null; return !!cloud.sess; },
+  /** Pretend to be signed in. `opts.expired` backdates the expiry so the very
+   *  next request goes through the refresh path, which is where the interesting
+   *  behaviour lives. */
+  cloudSessForTest(on, opts = {}){
+    cloud.sess = on ? { access_token: 'test', refresh_token: 'test-refresh',
+                        uid: 'test', email: 'test@example.com',
+                        expires_at: opts.expired ? Date.now() - 1000 : Date.now() + 3600_000,
+                        user: { id: 'test' } } : null;
+    return !!cloud.sess;
+  },
+  /** Swap the handler called when a session is genuinely gone. */
+  onAuthLostForTest(fn){ setAuthLost(fn); return !!fn; },
   /** Put a work into the collection without a file picker, then read back what
    *  the gallery would say about it. `where` is a frame key, so the caption can
    *  be checked on the wall rather than only in the office. */

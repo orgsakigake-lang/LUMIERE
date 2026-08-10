@@ -35,6 +35,7 @@ export const cloudSetPublished = unreachable;
 export async function cloudDeleteUpload(){ return { ok: false }; }
 export async function cloudUpdateUpload(){ return { ok: false }; }
 export async function cloudAuthSettings(){ return null; }
+export function setAuthLost(){}
 export async function cloudSetPlacement(){ return { ok: false }; }
 export async function cloudDelPlacement(){ return { ok: false }; }
 
