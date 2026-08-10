@@ -79,6 +79,17 @@ try_insert(){
     >/dev/null 2>&1 && echo t || echo f
 }
 
+# rows_changed "<statement>" <uid|anon> → how many rows the write actually
+# touched. RLS does not error on a blocked UPDATE or DELETE; it silently
+# matches nothing, which is why "it returned 204" proves precisely nothing and
+# the count is the only honest measure.
+rows_changed(){
+  local who="$2" pre=""
+  if [ "$who" = anon ]; then pre="set role anon;"
+  else pre="set role authenticated; set request.jwt.claim.sub='$who';"; fi
+  psql_q -c "$pre with c as ($1 returning 1) select count(*) from c;" 2>/dev/null || echo ERR
+}
+
 check(){ # name expected actual
   if [ "$2" = "$3" ]; then printf '  ✓ %s\n' "$1"
   else printf '  ✗ %s — expected %s, got %s\n' "$1" "$2" "$3"; fail=1; fi
@@ -108,6 +119,26 @@ echo "write guards"
 check "path outside own folder is rejected"      f "$(try_insert "public.uploads (owner,name,path) values ('11111111-1111-1111-1111-111111111111','evil','22222222-2222-2222-2222-222222222222/steal.jpg')" 11111111-1111-1111-1111-111111111111)"
 check "placement key shape is enforced"          f "$(try_insert "public.placements (owner,k,upload_id) values ('11111111-1111-1111-1111-111111111111','not-a-key','aaaaaaaa-0000-0000-0000-000000000001')" 11111111-1111-1111-1111-111111111111)"
 check "a well-formed placement is accepted"      t "$(try_insert "public.placements (owner,k,upload_id) values ('11111111-1111-1111-1111-111111111111','3,-4:2','aaaaaaaa-0000-0000-0000-000000000001')" 11111111-1111-1111-1111-111111111111)"
+
+echo
+echo "a visitor cannot change anything"
+# The realistic threat is not an anonymous reader — signup is open, so anyone
+# can hold a valid session. VISITOR is a signed-in stranger: not the owner of
+# anything here, which is exactly what a guest walking a published gallery is.
+VISITOR=99999999-9999-9999-9999-999999999999
+OWNER=11111111-1111-1111-1111-111111111111
+check "anon cannot rehang a work"        0 "$(rows_changed "update public.placements set k='0,0:0'" anon)"
+check "visitor cannot rehang a work"     0 "$(rows_changed "update public.placements set k='0,0:0'" $VISITOR)"
+check "anon cannot unhang a work"        0 "$(rows_changed "delete from public.placements" anon)"
+check "visitor cannot unhang a work"     0 "$(rows_changed "delete from public.placements" $VISITOR)"
+check "visitor cannot rename a work"     0 "$(rows_changed "update public.uploads set name='defaced'" $VISITOR)"
+check "visitor cannot delete a work"     0 "$(rows_changed "delete from public.uploads" $VISITOR)"
+check "visitor cannot publish a gallery" 0 "$(rows_changed "update public.profiles set published=true" $VISITOR)"
+check "visitor cannot steal a slug"      0 "$(rows_changed "update public.profiles set slug='taken'" $VISITOR)"
+check "visitor cannot hang in your wing" f "$(try_insert "public.placements (owner,k,upload_id) values ('$OWNER','5,5:1','aaaaaaaa-0000-0000-0000-000000000001')" $VISITOR)"
+check "visitor cannot remove your file"  0 "$(rows_changed "delete from storage.objects where bucket_id='loans'" $VISITOR)"
+check "visitor cannot overwrite a file"  0 "$(rows_changed "update storage.objects set name='x.jpg' where bucket_id='loans'" $VISITOR)"
+check "the owner still can rehang"       1 "$(rows_changed "update public.placements set k='3,-4:2' where owner='$OWNER'" $OWNER)"
 
 echo
 echo "bucket limits"
