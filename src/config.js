@@ -64,5 +64,5 @@ export const trace = DEV ? console.log.bind(console) : () => {};
    supabase-setup.sql once in that project. Leave both empty for
    fully-local mode (nothing else changes). The anon key is safe to
    publish; security lives in the row-level-security policies. */
-export const CLOUD_URL = 'https://ntkvsaiuwijcbyphwfnb.supabase.co';
-export const CLOUD_KEY = 'sb_publishable_FrAh2j2iX19fP0m2nnzJrg_fnhJdQCq';
+export const CLOUD_URL = 'https://forflzkfuiacglhwehmd.supabase.co';
+export const CLOUD_KEY = 'sb_publishable_FHgh198QYe6iPX5NbLM1ZA_RfC6bCIR';
