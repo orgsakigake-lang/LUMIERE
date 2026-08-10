@@ -474,6 +474,12 @@ let shadowProg = null, shadowFBO = null, uLightMat = null;
 export function setShadowProgram(prog){
   shadowProg = prog;
   uLightMat = prog ? gl.getUniformLocation(prog, 'uLightMat') : null;
+  /* initPrograms is also what runs after a lost context, and every GL object
+     made before it is dead. shadowFBO is module-level and survived as a stale
+     handle: bakeShadow kept it, bound an incomplete framebuffer, and the
+     museum came back as a black screen with GL_INVALID_FRAMEBUFFER_OPERATION
+     on every draw. Tying its lifetime to the program's makes that automatic. */
+  shadowFBO = null;
 }
 /** Light view-projection for a room, in room-local space — which is what
  *  arch.vert already hands the fragment shader as vLp, so nothing has to know

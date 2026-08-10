@@ -819,6 +819,20 @@ function savePlacements(){
    of those are cheap to measure on a downsample. PNG that comes out
    unexpectedly huge falls back rather than failing the bucket's size limit. */
 const UPLOAD_LONG = 2048, PNG_CEILING = 10 * 1024 * 1024;
+/* ————— the limits, on this side of the network —————
+   supabase-setup.sql enforces all three, and a policy violation comes back as
+   a bare 403 with nothing a visitor could act on. Checking here first means
+   the gallery can say which limit was reached and what to do about it; the
+   SQL stays the authority, because a client check is a courtesy and not a
+   guarantee. Keep these in step with the policies. */
+const MAX_UPLOADS = 500, MAX_PLACEMENTS = 2000, MAX_BYTES = 12 * 1024 * 1024;
+function quotaRefusal(blob){
+  if (blob && blob.size > MAX_BYTES)
+    return `that file is ${(blob.size/1048576).toFixed(1)} MB — the gallery accepts up to 12`;
+  if (curator.uploads.size >= MAX_UPLOADS)
+    return `the collection holds ${MAX_UPLOADS} works, which is the limit — remove one to add one`;
+  return null;
+}
 function looksLikeLineArt(bmp){
   const n = 96;
   const c = document.createElement('canvas');
@@ -984,6 +998,8 @@ async function curatorAddFiles(files){
       const blob = await encodeUpload(bmp, lineArt);
       bmp.close();
       if (!blob) continue;
+      const refused = quotaRefusal(blob);
+      if (refused){ flashHint(refused); break; }
       const name = f.name.replace(/\.[^.]+$/, '');
       if (cloud.on && cloud.sess){
         const { id, path } = await cloudUploadBlob(name, blob);
@@ -1211,6 +1227,10 @@ function curatorCanEdit(){
   return true;
 }
 function curatorHang(){
+  if (curator.placements.size >= MAX_PLACEMENTS){
+    flashHint(`${MAX_PLACEMENTS} works are already hung — take one down first`);
+    return;
+  }
   if (!curatorCanEdit()) return;
   if (!curator.sel){ flashHint('choose a work in the curator’s office first'); return; }
   const t = (inspect.on && inspect.A) ? { A: inspect.A, r: inspect.r } : facedArtwork();
@@ -2507,7 +2527,14 @@ canvas.addEventListener('webglcontextrestored', ()=>{
   artState.jobs.clear(); artState.queue.length = 0;
   artState.active = null; artState.uploadReady = null; artState.placards.length = 0;
   for (const [, r] of rooms){ r.vao = r.vbo = r.ibo = null; r.nIdx = 0;
-                              r.flameVAO = r.flameVBO = null; r.nFlames = 0; }
+                              r.flameVAO = r.flameVBO = null; r.nFlames = 0;
+                              /* The baked shadow map died with the context too.
+                                 Leaving the stale handle meant bakeShadow saw a
+                                 non-null texture, skipped recreating it, and
+                                 every room then sampled a dead map — which
+                                 reads as fully occluded, so the whole museum
+                                 came back at 14% of its light. */
+                              r.shadowTex = null; r.shadowIdx = -1; r.packFillIdx = -1; }
   for (const [, o] of curator.overrides) o.A.override = null;   // stale handles die with the context
   curator.overrides.clear();
   post.ready = false;

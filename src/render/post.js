@@ -208,5 +208,11 @@ export function runPost(quadVAO){
     the importing module, so it hands the compiled programs back through here. */
 export function setPostPrograms(bright, blur, comp){
   progBright = bright; progBlur = blur; progComp = comp;
+  /* Also the moment after a lost context, and an extension object does not
+     survive one — it has to be requested again on the restored context. The
+     memoised CAPS said hdr was still available, allocPost built an RGBA16F
+     attachment the new context could not render to, and the museum came back
+     as a black screen with "Attachment is not renderable" on every draw. */
+  CAPS = null;
 }
 

@@ -1,0 +1,67 @@
+# LUMIÈRE — the checks that were missing
+#
+# index.html is committed, because that is what lets GitHub Pages serve the
+# museum with no build step. The cost of that decision is that the artifact
+# and its source can drift apart silently: a change to src/ that nobody
+# rebuilt deploys the *old* page, and looks exactly like the change not
+# working. Nothing checked for that until now — and it has already happened
+# once, when a watch build wrote an unminified 173 KB file over a 103 KB one.
+name: ci
+
+on:
+  push:
+    branches: [main, next-level]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build-matches-source:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: '22', cache: npm }
+      - run: npm ci
+      # Rebuild from src/ and require the result to be byte-identical to what
+      # was committed. Cheap, and it is the whole guarantee behind shipping a
+      # built file.
+      - name: index.html matches src/
+        run: |
+          cp index.html /tmp/committed.html
+          npm run build
+          if ! cmp -s /tmp/committed.html index.html; then
+            echo "::error::index.html is stale — run 'npm run build' and commit the result"
+            echo "committed: $(stat -c%s /tmp/committed.html) bytes"
+            echo "rebuilt:   $(stat -c%s index.html) bytes"
+            diff <(fold -w120 /tmp/committed.html) <(fold -w120 index.html) | head -20 || true
+            exit 1
+          fi
+          echo "index.html is current ($(stat -c%s index.html) bytes)"
+
+  tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: '22', cache: npm }
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+      # The suite renders on SwiftShader, which is slow but real: it has caught
+      # every module-extraction mistake so far, usually on the boot test.
+      - run: npm test
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: playwright-report
+          path: test-results/
+          retention-days: 7
+
+  schema:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # supabase-setup.sql once failed to parse and applied nothing at all,
+      # silently, leaving a gallery that was world-readable while its owner
+      # believed otherwise. Reading the file is not evidence; executing it is.
+      - name: row-level security actually applies
+        run: npm run verify:sql
