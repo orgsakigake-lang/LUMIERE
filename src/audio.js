@@ -1,14 +1,67 @@
 /* ═══════════════════════════════════════════════════════════════════
-   Everything synthesized, nothing sampled: distant bells on a seeded
-   scheduler and a filtered-noise footstep revoiced per step.
-   Call setActive(true) once the visitor is inside — the tab-focus
-   handler needs to know whether resuming the context is wanted.
+   Everything synthesized, nothing sampled.
+
+   That is not only a size decision. Music you generate has no licence
+   attached to it, cannot be struck from a gallery someone else is
+   walking, adds not one byte to a page that ships as a single file, and —
+   because it is written by the same seeded generator that paints the
+   art — never loops. A visitor who stays an hour hears an hour of music
+   that has not happened before.
+
+   Four programmes, plus silence, chosen with `N`. They differ in mode,
+   register, pace and voice rather than in melody: what makes a room feel
+   calm is mostly how slowly things change and how much space is left
+   between them.
    ═══════════════════════════════════════════════════════════════════ */
 import { mulberry32 } from './world/seed.js';
 import { flashHint } from './ui/hint.js';
 
-export const audio = { ctx: null, master: null, muted: false, ok: false, active: false,
-                stride: 0, arnd: mulberry32(0xA0D10), nextBell: 0, stepBuf: null };
+export const audio = { ctx: null, master: null, music: null, verb: null,
+                muted: false, ok: false, active: false,
+                stride: 0, arnd: mulberry32(0xA0D10), nextNote: 0,
+                stepBuf: null, scuffBuf: null, piece: 1, voices: [] };
+
+/* ————— the programmes —————
+   Semitone offsets from the root. Everything is a mode with no minor
+   second in it — the interval that makes a chord feel unresolved is the
+   one to leave out of music meant to be ignored. */
+const MAJOR_PENT = [0, 2, 4, 7, 9, 12, 14, 16, 19, 21, 24];
+const MINOR_PENT = [0, 3, 5, 7, 10, 12, 15, 17, 19, 22, 24];
+const LYDIAN     = [0, 2, 4, 7, 9, 11, 12, 14, 16, 19, 21];
+
+export const PIECES = [
+  { name: 'silence',  quiet: true },
+  { name: 'Nocturne', root: 220,   scale: MAJOR_PENT, gap: [3.4, 8.0],
+    voice: 'bell',  padHz: 55,  padGain: 0.040, padCut: 360, gain: 0.10 },
+  { name: 'Glass',    root: 174.6, scale: LYDIAN,     gap: [5.5, 11.0],
+    voice: 'bowed', padHz: 43.7, padGain: 0.052, padCut: 300, gain: 0.075 },
+  { name: 'Rainfall', root: 349.2, scale: MINOR_PENT, gap: [1.1, 3.2],
+    voice: 'pluck', padHz: 65.4, padGain: 0.030, padCut: 420, gain: 0.055 },
+  { name: 'Vespers',  root: 130.8, scale: MINOR_PENT, gap: [7.0, 14.0],
+    voice: 'reed',  padHz: 32.7, padGain: 0.060, padCut: 240, gain: 0.085 },
+];
+
+/** A hall, made out of noise. Four seconds of exponentially decaying
+ *  stereo noise is a crude convolution reverb and an entirely convincing
+ *  large stone room, which is the one thing every voice here needs to
+ *  stop sounding like an oscillator. */
+function makeHall(ctx){
+  const len = (ctx.sampleRate * 3.2) | 0;
+  const buf = ctx.createBuffer(2, len, ctx.sampleRate);
+  const r = mulberry32(0x5EA7);
+  for (let c = 0; c < 2; c++){
+    const d = buf.getChannelData(c);
+    for (let i = 0; i < len; i++){
+      const t = i / len;
+      /* A little pre-delay of near-silence, then a tail that falls away. */
+      const env = t < 0.012 ? t / 0.012 : Math.pow(1 - t, 2.6);
+      d[i] = (r()*2 - 1) * env * 0.45;
+    }
+  }
+  const cv = ctx.createConvolver(); cv.buffer = buf;
+  return cv;
+}
+
 export function initAudio(){
   if (audio.ctx){ audio.ctx.resume().catch(()=>{}); return; }
   try {
@@ -21,74 +74,179 @@ export function initAudio(){
     const master = ctx.createGain(); master.gain.value = 0.9;
     master.connect(comp); comp.connect(ctx.destination);
     audio.master = master;
-    /* pad: two detuned saws through a slow-breathing lowpass */
-    const padF = ctx.createBiquadFilter(); padF.type = 'lowpass'; padF.frequency.value = 360; padF.Q.value = 0.7;
-    const padG = ctx.createGain(); padG.gain.value = 0.040;
-    padF.connect(padG); padG.connect(master);
-    for (const det of [-6, 5]){
-      const o = ctx.createOscillator(); o.type = 'sawtooth';
-      o.frequency.value = 55; o.detune.value = det;
-      o.connect(padF); o.start();
-    }
-    const lfo = ctx.createOscillator(); lfo.frequency.value = 0.055;
-    const lfoG = ctx.createGain(); lfoG.gain.value = 120;
-    lfo.connect(lfoG); lfoG.connect(padF.frequency); lfo.start();
+
+    /* Everything with a pitch goes through the hall; the room tone and the
+       footsteps mostly do not, or the floor turns to soup. */
+    const hall = makeHall(ctx);
+    const hallG = ctx.createGain(); hallG.gain.value = 0.42;
+    hall.connect(hallG); hallG.connect(master);
+    audio.verb = hall;
+
+    /* The music bus, so a programme can be swapped without touching the rest. */
+    const music = ctx.createGain(); music.gain.value = 1;
+    music.connect(master);
+    audio.music = music;
+
     /* room tone: looped brown noise, well below attention */
+    const nr = mulberry32(0xB00);
     const len = (ctx.sampleRate * 2) | 0;
     const buf = ctx.createBuffer(1, len, ctx.sampleRate);
     const dch = buf.getChannelData(0);
-    let lv = 0; const nr = mulberry32(0xB00);
+    let lv = 0;
     for (let i = 0; i < len; i++){ lv = (lv + (nr()*2 - 1)*0.02) * 0.997; dch[i] = lv * 3.5; }
     const src = ctx.createBufferSource(); src.buffer = buf; src.loop = true;
     const nf = ctx.createBiquadFilter(); nf.type = 'lowpass'; nf.frequency.value = 220;
     const ng = ctx.createGain(); ng.gain.value = 0.05;
     src.connect(nf); nf.connect(ng); ng.connect(master); src.start();
-    /* one footstep grain, revoiced per step */
-    const sl = (ctx.sampleRate * 0.075) | 0;
+
+    /* ————— footsteps —————
+       One noise burst through a bandpass read as a knock on a door. A shoe
+       on a waxed board is two sounds a few milliseconds apart: the weight
+       landing, low and short, and the sole brushing the wood, quiet and
+       bright. Splitting them is most of the difference. */
+    const bl = (ctx.sampleRate * 0.10) | 0;
+    const bb = ctx.createBuffer(1, bl, ctx.sampleRate);
+    const bd = bb.getChannelData(0);
+    for (let i = 0; i < bl; i++){
+      const t = i / bl;
+      bd[i] = (nr()*2 - 1) * Math.pow(1 - t, 5.5);      // fast, soft thud
+    }
+    audio.stepBuf = bb;
+    const sl = (ctx.sampleRate * 0.055) | 0;
     const sb = ctx.createBuffer(1, sl, ctx.sampleRate);
     const sd = sb.getChannelData(0);
-    for (let i = 0; i < sl; i++) sd[i] = (nr()*2 - 1) * Math.pow(1 - i/sl, 2.3);
-    audio.stepBuf = sb;
+    for (let i = 0; i < sl; i++){
+      const t = i / sl;
+      sd[i] = (nr()*2 - 1) * Math.pow(1 - t, 2.0) * Math.min(1, t*14);
+    }
+    audio.scuffBuf = sb;
+
     audio.ok = true;
-    audio.nextBell = ctx.currentTime + 2.5;
-    setInterval(bellScheduler, 100);        // lookahead scheduler, ≥200 ms ahead
+    startPiece(audio.piece);
+    setInterval(noteScheduler, 120);        // lookahead scheduler
   } catch(e){ /* a silent museum is still a museum */ }
 }
-const BELL_FREQS = [220, 261.63, 293.66, 329.63, 392.00, 440, 523.25, 587.33];
-function bellScheduler(){
-  if (!audio.ok) return;
+
+/* ————— the pad —————
+   Two detuned saws under a slowly breathing lowpass: the bed everything
+   else sits on. Rebuilt per programme, because its pitch is the root. */
+function startPiece(i){
   const ctx = audio.ctx;
-  while (audio.nextBell < ctx.currentTime + 0.25){
-    const t = Math.max(audio.nextBell, ctx.currentTime + 0.02);
-    if (!audio.muted) bell(t, BELL_FREQS[Math.floor(audio.arnd()*BELL_FREQS.length)]);
-    audio.nextBell += 4 + audio.arnd()*5;
+  if (!ctx) return;
+  for (const v of audio.voices){ try { v.stop ? v.stop() : v.disconnect(); } catch(e){} }
+  audio.voices.length = 0;
+  audio.piece = i;
+  const P = PIECES[i];
+  if (!P || P.quiet) return;
+
+  const f = ctx.createBiquadFilter(); f.type = 'lowpass';
+  f.frequency.value = P.padCut; f.Q.value = 0.7;
+  const g = ctx.createGain(); g.gain.value = 0;
+  g.gain.setTargetAtTime(P.padGain, ctx.currentTime, 1.6);   // fade in, never a click
+  f.connect(g); g.connect(audio.music);
+  for (const det of [-6, 5]){
+    const o = ctx.createOscillator(); o.type = 'sawtooth';
+    o.frequency.value = P.padHz; o.detune.value = det;
+    o.connect(f); o.start(); audio.voices.push(o);
+  }
+  const lfo = ctx.createOscillator(); lfo.frequency.value = 0.055;
+  const lg = ctx.createGain(); lg.gain.value = P.padCut * 0.33;
+  lfo.connect(lg); lg.connect(f.frequency); lfo.start(); audio.voices.push(lfo);
+  audio.nextNote = ctx.currentTime + 1.5;
+}
+
+function noteScheduler(){
+  if (!audio.ok) return;
+  const P = PIECES[audio.piece];
+  if (!P || P.quiet) return;
+  const ctx = audio.ctx;
+  while (audio.nextNote < ctx.currentTime + 0.3){
+    const t = Math.max(audio.nextNote, ctx.currentTime + 0.02);
+    if (!audio.muted){
+      const step = P.scale[Math.floor(audio.arnd() * P.scale.length)];
+      note(P, t, P.root * Math.pow(2, step / 12));
+    }
+    audio.nextNote += P.gap[0] + audio.arnd() * (P.gap[1] - P.gap[0]);
   }
 }
-export function bell(t, f){
+
+/** One note in the current programme's voice. */
+function note(P, t, f){
   const ctx = audio.ctx;
   const g = ctx.createGain();
+  g.connect(audio.music);
+  const send = ctx.createGain(); send.gain.value = 0.55;
+  g.connect(send); send.connect(audio.verb);
+
+  let dur = 4.4, type = 'sine', harm = 2.005, harmG = 0.35, attack = 0.008;
+  if (P.voice === 'bowed'){ dur = 7.5; type = 'triangle'; harm = 3.01; harmG = 0.16; attack = 1.5; }
+  if (P.voice === 'pluck'){ dur = 2.2; type = 'triangle'; harm = 2.01; harmG = 0.22; attack = 0.004; }
+  if (P.voice === 'reed'){  dur = 9.0; type = 'sine';     harm = 1.503; harmG = 0.28; attack = 2.2; }
+
   g.gain.setValueAtTime(0, t);
-  g.gain.linearRampToValueAtTime(0.10, t + 0.008);
-  g.gain.exponentialRampToValueAtTime(0.0004, t + 4.2);
-  g.connect(audio.master);
-  const o = ctx.createOscillator(); o.type = 'sine'; o.frequency.value = f;
-  o.connect(g); o.start(t); o.stop(t + 4.4);
-  const g2 = ctx.createGain(); g2.gain.value = 0.35;
-  const o2 = ctx.createOscillator(); o2.type = 'sine'; o2.frequency.value = f * 2.005;
-  o2.connect(g2); g2.connect(g); o2.start(t); o2.stop(t + 4.4);
+  g.gain.linearRampToValueAtTime(P.gain, t + attack);
+  g.gain.exponentialRampToValueAtTime(0.0004, t + dur);
+
+  const o = ctx.createOscillator(); o.type = type; o.frequency.value = f;
+  o.connect(g); o.start(t); o.stop(t + dur + 0.2);
+  const g2 = ctx.createGain(); g2.gain.value = harmG;
+  const o2 = ctx.createOscillator(); o2.type = 'sine'; o2.frequency.value = f * harm;
+  o2.connect(g2); g2.connect(g); o2.start(t); o2.stop(t + dur + 0.2);
 }
+
+/** Kept for the bell the gallery rings on its own account. */
+export function bell(t, f){ note(PIECES[1], t, f); }
+
 export function footstep(speed){
   if (!audio.ok || audio.muted) return;
   const ctx = audio.ctx;
-  const src = ctx.createBufferSource();
-  src.buffer = audio.stepBuf;
-  src.playbackRate.value = 0.8 + audio.arnd()*0.45;
-  const bp = ctx.createBiquadFilter(); bp.type = 'bandpass';
-  bp.frequency.value = 150 + audio.arnd()*90; bp.Q.value = 0.9;
-  const g = ctx.createGain(); g.gain.value = Math.min(0.35, 0.13 + speed*0.045);
-  src.connect(bp); bp.connect(g); g.connect(audio.master);
-  src.start();
+  const r = audio.arnd;
+  /* Heel and toe are not the same weight, so alternate sides slightly. */
+  audio.stride = (audio.stride + 1) & 1;
+  const lean = audio.stride ? 1 : 0.88;
+  const vol = Math.min(0.22, 0.075 + speed * 0.026) * lean;
+
+  const body = ctx.createBufferSource(); body.buffer = audio.stepBuf;
+  body.playbackRate.value = 0.86 + r()*0.28;
+  const lp = ctx.createBiquadFilter(); lp.type = 'lowpass';
+  lp.frequency.value = 210 + r()*70; lp.Q.value = 0.6;
+  const bg = ctx.createGain(); bg.gain.value = vol;
+  body.connect(lp); lp.connect(bg); bg.connect(audio.master);
+  body.start();
+
+  /* The sole brushing the board — quiet, brief, and the part your ear
+     actually reads as "wood". */
+  const scuff = ctx.createBufferSource(); scuff.buffer = audio.scuffBuf;
+  scuff.playbackRate.value = 0.9 + r()*0.5;
+  const hp = ctx.createBiquadFilter(); hp.type = 'bandpass';
+  hp.frequency.value = 2300 + r()*1400; hp.Q.value = 0.8;
+  const sg = ctx.createGain(); sg.gain.value = vol * 0.11;
+  scuff.connect(hp); hp.connect(sg); sg.connect(audio.master);
+  /* A hall this size answers a footstep. Very quietly. */
+  const sv = ctx.createGain(); sv.gain.value = 0.22;
+  sg.connect(sv); sv.connect(audio.verb);
+  scuff.start(ctx.currentTime + 0.006 + r()*0.004);
 }
+
+/** Step to the next programme. Returns its name. */
+export function cycleMusic(){
+  if (!audio.ok){ flashHint('this browser keeps the museum silent'); return null; }
+  startPiece((audio.piece + 1) % PIECES.length);
+  const P = PIECES[audio.piece];
+  flashHint(P.quiet ? 'the hall is quiet' : `now playing — <b>${P.name}</b>`);
+  return P.name;
+}
+export function musicName(){ return PIECES[audio.piece]?.name ?? 'silence'; }
+/** Choose a programme by name or index, for boot and for tests. */
+export function setMusic(which){
+  const i = typeof which === 'number'
+    ? which
+    : PIECES.findIndex((p) => p.name.toLowerCase() === String(which).toLowerCase());
+  if (i < 0) return musicName();
+  if (audio.ok) startPiece(i); else audio.piece = i;
+  return musicName();
+}
+
 document.addEventListener('visibilitychange', () => {
   if (!audio.ctx) return;
   if (document.hidden) audio.ctx.suspend().catch(()=>{});
@@ -100,7 +258,6 @@ export function toggleMute(){
   audio.master.gain.value = audio.muted ? 0 : 0.9;
   flashHint(audio.muted ? 'sound off' : 'sound on');
 }
-
 
 /** The visitor has entered (or left); gates audio resume on tab focus. */
 export function setAudioActive(v){ audio.active = !!v; }

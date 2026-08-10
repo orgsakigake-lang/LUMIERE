@@ -64,6 +64,7 @@ Edge, or Firefox.
 | `Esc` | leave inspect |
 | `C` | the Curator's Office |
 | `M` | sound on/off |
+| `N` | the music — four programmes and silence |
 
 ## Themes
 

@@ -17,7 +17,8 @@ import { ALGO_NAMES, ALGOS, makeTitle, finishArt, resetGrain,
 import { mat4, perspective, mulM, mulT, viewMatrix, extractPlanes, boxVisible } from './render/mat4.js';
 import { storageOK, persist, savePersist } from './persist.js';
 import { flashHint, toggleLegend } from './ui/hint.js';
-import { audio, initAudio, bell, footstep, toggleMute, setAudioActive } from './audio.js';
+import { audio, initAudio, bell, footstep, toggleMute, setAudioActive,
+         cycleMusic, musicName, setMusic, PIECES } from './audio.js';
 import { SPECIAL, rooms, roomKey, getRoom, spotAt, specialAt, RIG } from './world/rooms.js';
 import { THEMES, THEME_ORDER, DEFAULT_THEME, theme, themeName, setThemeName,
          nextThemeName } from './world/themes.js';
@@ -448,6 +449,7 @@ addEventListener('keydown', (e)=>{
   if (e.code === 'KeyH'){ curatorHang(); return; }
   if (e.code === 'KeyU'){ curatorUnhang(); return; }
   if (e.code === 'KeyT'){ applyTheme(nextThemeName()); return; }
+  if (e.code === 'KeyN'){ const n = cycleMusic(); if (n) { persist.music = n; savePersist(); } return; }
   /* The legend had no way back: it faded after eleven seconds and the first
      notice overwrote it for good. Both keys, because ? needs a shift. */
   if (e.key === '?' || e.code === 'Slash'){ toggleLegend(); return; }
@@ -2705,6 +2707,10 @@ if (DBG_FULL) Object.assign(window.DBG, {
   wingRoute(n = 12){ return wingRoute(n).map(({gx, gz}) => [gx, gz]); },
   /** Lay the collection out along one walkable route. Returns what it hung. */
   gather(){ return gatherIntoWing(); },
+  /** How many oscillators the current programme is running. */
+  audioVoices(){ return audio.voices.length; },
+  /** The music programme: DBG.music('Glass'), or nothing to read it. */
+  music(name){ if (name !== undefined) setMusic(name); return { now: musicName(), all: PIECES.map((p) => p.name) }; },
   /** Turn the baked shadow maps off, to see what they are actually doing. */
   shadows(on){ if (on !== undefined) shadowsOn = !!on; return shadowsOn; },
   /** Triangles in a built room — the phase E budget, checkable. */
@@ -2806,6 +2812,7 @@ if (gl){
   swUI();
   /* Before the first room is built: the theme decides the schemes the meshes
      are cut from and the rig genLights reads. */
+  if (persist.music) setMusic(persist.music);
   setThemeName(persist.theme || DEFAULT_THEME);
   applyThemeConstants();
   themeUI();

@@ -47,6 +47,34 @@ test.describe.serial('inside the gallery — light and loans', () => {
     expect(darkH.mean).toBeGreaterThan(1);         // still navigable, not a black screen
   });
 
+  test('the music is generated, and every programme plays', async () => {
+    /* Nothing is sampled, which is the point: generated music carries no
+       licence, cannot be taken down, adds no bytes to a single-file page, and
+       never loops. This checks each programme actually starts a graph rather
+       than silently doing nothing — the failure mode for synthesis is silence,
+       which looks identical to working. */
+    const r = await page.evaluate(async () => {
+      const out = [];
+      const all = window.DBG.music().all;
+      for (const name of all){
+        window.DBG.music(name);
+        await new Promise((res) => setTimeout(res, 60));
+        out.push({ name, now: window.DBG.music().now,
+                   voices: window.DBG.audioVoices() });
+      }
+      window.DBG.music('Nocturne');
+      return { all, out };
+    });
+    console.log('    ' + r.out.map((o) => `${o.name}:${o.voices}`).join(' · '));
+
+    expect(r.all.length).toBeGreaterThanOrEqual(4);
+    expect(r.all[0]).toBe('silence');
+    for (const o of r.out) expect(o.now).toBe(o.name);        // the switch took
+    expect(r.out[0].voices).toBe(0);                          // silence is silent
+    for (const o of r.out.slice(1))
+      expect(o.voices, `${o.name} started no voices`).toBeGreaterThan(0);
+  });
+
   test('a loaned sheet is mounted, never cropped', async () => {
     /* The defect this replaces: uploads were cover-cropped to the frame's
        aspect, so a portrait drawing hung in a landscape frame silently lost
