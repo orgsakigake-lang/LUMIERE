@@ -113,6 +113,28 @@ export async function cloudSignUp(email, password){
   return 'confirm';                 // a confirmation mail was sent instead
 }
 
+/** What this project will actually do when somebody tries to sign up. Readable
+ *  with the publishable key, and worth reading *before* the visitor finds out
+ *  the slow way.
+ *
+ *  `mailer_autoconfirm: false` means every new account waits on a confirmation
+ *  email — and Supabase's built-in sender is rate-limited to a couple an hour
+ *  and explicitly not for production, so on a fresh project that mail very
+ *  often simply never arrives. The account exists, the password is right, and
+ *  every sign-in fails with "Email not confirmed" forever. Nothing in the
+ *  gallery can fix that; it is one toggle in their dashboard. But the gallery
+ *  can at least say so instead of showing a spinner and a lie. */
+export async function cloudAuthSettings(){
+  try {
+    const rs = await cfetch('/auth/v1/settings');
+    if (!rs.ok) return null;
+    const d = await rs.json();
+    return { autoconfirm: !!d.mailer_autoconfirm,
+             signupDisabled: !!d.disable_signup,
+             emailEnabled: !!(d.external && d.external.email) };
+  } catch(e){ return null; }
+}
+
 export async function cloudVerify(email, token){
   const rs = await cfetch('/auth/v1/verify', {
     method: 'POST', headers: { 'Content-Type': 'application/json' },

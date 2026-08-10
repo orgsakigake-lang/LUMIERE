@@ -23,7 +23,7 @@ import { SPECIAL, rooms, roomKey, getRoom, spotAt, specialAt, RIG } from './worl
 import { THEMES, THEME_ORDER, DEFAULT_THEME, theme, themeName, setThemeName,
          nextThemeName } from './world/themes.js';
 import { cloud, setFetch, cloudSaveSess, cloudSendCode, cloudVerify, cloudPublicURL,
-         cloudPassword, cloudSignUp,
+         cloudPassword, cloudSignUp, cloudAuthSettings,
          cloudUploadBlob, cloudDeleteUpload, cloudUpdateUpload, cloudSetPlacement, cloudDelPlacement,
          cloudClaimSlug, cloudSetPublished, cloudLoadMine, cloudLoadGallery, cloudBoot } from './cloud/client.js';
 import { SCHEMES, applyScheme, buildRoomMesh, assembleLights, MAX_LIGHTS } from './world/geometry.js';
@@ -1459,11 +1459,67 @@ function curatorGrid(){
     curator.mode === 'idb' ? 'collection kept in this browser · placements remembered'
                            : 'this embedding cannot keep files — loans last for this visit only';
 }
+/* ————— saying what actually went wrong —————
+   Supabase's auth errors are written for whoever wired the project up, not for
+   whoever is standing in front of it, and the commonest one here — "Email not
+   confirmed" — is indistinguishable from "the gallery is broken" if you do not
+   already know that a mailer is involved. Each of these names the thing the
+   reader can go and do. Anything unrecognised passes through untouched, since
+   a wrong guess is worse than the original text. */
+function authAdvice(msg){
+  const m = String(msg || '').toLowerCase();
+  if (m.includes('not confirmed'))
+    return 'This account exists, but the project is holding it until an email is '
+         + 'confirmed — and Supabase’s built-in sender is rate-limited to about two an '
+         + 'hour and often delivers nothing, so that mail may never arrive. Turn off '
+         + '“Confirm email” under Authentication → Sign In / Providers → Email in your '
+         + 'Supabase dashboard, then press Sign in here. Nothing needs re-creating.';
+  if (m.includes('invalid login') || m.includes('invalid credentials'))
+    return 'That email and password did not match. If you have not made an account here '
+         + 'yet, use “Create account” instead.';
+  if (m.includes('already registered') || m.includes('already been registered')
+      || m.includes('user already'))
+    return 'That account already exists — use “Sign in”.';
+  if (m.includes('rate limit') || m.includes('too many') || m.includes('over_email_send'))
+    return 'Supabase is rate-limiting its own mailer — about two an hour on a free '
+         + 'project. Waiting will not help much; turning off “Confirm email” in the '
+         + 'dashboard removes the need for mail entirely.';
+  if (m.includes('signups not allowed') || m.includes('signup is disabled'))
+    return 'This project has sign-ups switched off. Turn them on under Authentication → '
+         + 'Sign In / Providers → Email.';
+  return msg;
+}
+
+/* Read the project's auth settings the first time the sign-in panel is shown,
+   so the visitor is told what will happen *before* they wait on an email that
+   is not coming. Module scope on purpose — curatorRefresh is what knows the
+   panel just opened, and it lives out here. Cheap, asked once, and silent when
+   the answer is the good one. */
+let authChecked = false;
+async function warnAboutConfirmation(){
+  if (authChecked || !cloud.on || cloud.sess) return;
+  authChecked = true;
+  const s = await cloudAuthSettings();
+  if (!s || s.autoconfirm) return;                 // nothing to warn about
+  const note = document.getElementById('cur-cloud-note');
+  if (!note || note.textContent) return;           // never talk over a live message
+  note.innerHTML =
+    'Heads up — this project has <b>Confirm email</b> switched on, so a new account '
+    + 'waits on a confirmation mail, and Supabase’s built-in sender is rate-limited to '
+    + 'about two an hour and often does not deliver at all. If nothing arrives, turn '
+    + 'that toggle off under <b>Authentication → Sign In / Providers → Email</b> and '
+    + 'press Sign in — an account you already made will start working, with no mail '
+    + 'involved.';
+}
+
 function curatorRefresh(){
   const guest = !!cloud.viewing;
   const open = !guest && (cloud.on ? !!cloud.sess : curator.unlocked);
   document.getElementById('cur-lock').hidden = open || guest || cloud.on ? true : false;
-  document.getElementById('cur-cloud-lock').hidden = !(cloud.on && !open && !guest);
+  const showCloudLock = cloud.on && !open && !guest;
+  document.getElementById('cur-cloud-lock').hidden = !showCloudLock;
+  /* Ask the project what it will do before the visitor finds out by waiting. */
+  if (showCloudLock) warnAboutConfirmation();
   document.getElementById('cur-open').hidden = !open;
   document.getElementById('cur-state').textContent =
     guest ? 'guest of ' + cloud.viewing.slug
@@ -1591,16 +1647,27 @@ document.getElementById('curator').addEventListener('keydown', (e) => {
     const c = creds(); if (!c) return;
     cloudNote.textContent = 'signing in…';
     try { await cloudPassword(c.email, c.pw); await afterSignIn(); }
-    catch(e){ cloudNote.textContent = String(e.message || e); }
+    catch(e){ cloudNote.textContent = authAdvice(e.message || e); }
   });
   document.getElementById('cur-signup').addEventListener('click', async () => {
     const c = creds(); if (!c) return;
     cloudNote.textContent = 'creating the account…';
     try {
       const r = await cloudSignUp(c.email, c.pw);
-      if (r === 'signed-in') await afterSignIn();
-      else cloudNote.textContent = 'confirm the account from the email, then sign in here';
-    } catch(e){ cloudNote.textContent = String(e.message || e); }
+      if (r === 'signed-in'){ await afterSignIn(); return; }
+      /* The account was made and a confirmation mail was *attempted*. Saying
+         "check your email" and stopping is the dead end that prompted all of
+         this — on a fresh project that mail commonly never lands, and the
+         reader is left with an account they cannot use and no idea why. */
+      cloudNote.innerHTML =
+        'The account is made. This project has <b>Confirm email</b> on, so it has sent '
+        + 'a confirmation mail — but Supabase’s built-in sender is rate-limited to about '
+        + 'two an hour and often does not deliver at all.<br><br>'
+        + 'If it does not arrive: open your Supabase dashboard → <b>Authentication → '
+        + 'Sign In / Providers → Email</b>, turn <b>“Confirm email”</b> off, and press '
+        + '<b>Sign in</b> here. The account you just made will work immediately. You do '
+        + 'not need to create it again.';
+    } catch(e){ cloudNote.textContent = authAdvice(e.message || e); }
   });
   codeIn.addEventListener('keydown', (e) => { if (e.key === 'Enter') document.getElementById('cur-verify').click(); e.stopPropagation(); });
   document.getElementById('cur-send').addEventListener('click', async () => {
@@ -1610,9 +1677,19 @@ document.getElementById('curator').addEventListener('keydown', (e) => {
     try {
       await cloudSendCode(email);
       document.getElementById('cur-code-row').hidden = false;
-      cloudNote.textContent = 'a six-digit code is on its way to ' + email;
+      /* Not "a six-digit code is on its way", which was a promise this could
+         not keep twice over: the default Supabase template sends a confirmation
+         *link* rather than a code, and the sender is rate-limited besides. Say
+         what was asked for and what to do when it does not turn up. */
+      cloudNote.innerHTML =
+        'Asked Supabase to mail ' + email + '.<br><br>'
+        + 'Two things commonly go wrong, neither of them here: the built-in sender is '
+        + 'rate-limited to about two an hour, and the default template sends a '
+        + '<em>link</em> rather than the six-digit code this box wants — a link that '
+        + 'points at localhost and will not open. Password sign-in above needs no mail '
+        + 'at all, and is the way in that always works.';
       codeIn.focus();
-    } catch(e){ cloudNote.textContent = String(e.message || e); }
+    } catch(e){ cloudNote.textContent = authAdvice(e.message || e); }
   });
   document.getElementById('cur-verify').addEventListener('click', async () => {
     cloudNote.textContent = 'checking…';
@@ -1622,7 +1699,7 @@ document.getElementById('curator').addEventListener('keydown', (e) => {
       await loadMyCollection();
       curatorRefresh();
       flashHint('welcome, curator — your loans follow you now');
-    } catch(e){ cloudNote.textContent = String(e.message || e); }
+    } catch(e){ cloudNote.textContent = authAdvice(e.message || e); }
   });
   document.getElementById('cur-signout').addEventListener('click', () => {
     cloudSaveSess(null);
@@ -2983,6 +3060,15 @@ if (DBG_FULL) Object.assign(window.DBG, {
   cloudFetch(fn){ setFetch(fn); return { stubbed: !!fn }; },
   cloudLoadGallery(slug){ return cloudLoadGallery(slug); },
   cloudUpdateUpload(id, patch){ return cloudUpdateUpload(id, patch); },
+  /** The advice shown for a raw Supabase auth error. */
+  authAdviceForTest(msg){ return authAdvice(msg); },
+  /** Run the pre-flight settings check and return whatever it wrote. */
+  async authWarnForTest(reset){
+    if (reset) authChecked = false;
+    authChecked = false;
+    await warnAboutConfirmation();
+    return document.getElementById('cur-cloud-note').textContent;
+  },
 });
 
 /* The browser telling us the network is back is a better trigger than any

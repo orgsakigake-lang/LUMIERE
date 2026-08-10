@@ -161,6 +161,15 @@
               color:var(--bone); margin:0 0 .4rem;}
   #curator .sub{font-size:.66rem; letter-spacing:.22em; text-transform:uppercase;
                 color:var(--bone-dim); line-height:2;}
+  /* The sign-in note stopped being a three-word status ("signing in…") and
+     became the place the reader is told which toggle in another product is
+     holding up their account. Letterspaced small caps is unreadable at that
+     length, so this one drops back to a reading face. */
+  #cur-cloud-note:not(:empty){font-size:.78rem; letter-spacing:normal;
+                text-transform:none; line-height:1.6; margin-top:.8rem;
+                max-width:44rem; text-wrap:pretty;
+                border-left:2px solid rgba(201,169,106,.45); padding-left:.8rem;}
+  #cur-cloud-note b{color:var(--brass); font-weight:400;}
   #curator .rule{margin:1.2rem 0;}
   /* every input, not just password/text — the sign-in field is type=email and
      was rendering as a stock white browser box in the middle of the panel. */

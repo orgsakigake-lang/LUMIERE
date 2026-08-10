@@ -70,15 +70,39 @@ network — you are finished. Skip to *Hanging your drawings well* at the bottom
    > The edit looked saved and was discarded. `npm run verify:sql` now asserts
    > that an owner can write a description and that nobody else can, and the
    > client counts the rows it changed rather than trusting the status.
-3. **Authentication → Sign In / Up:** confirm the Email provider is enabled (it
-   is by default), and turn **"Confirm email" off** if you want to create your
-   account without waiting on a mail.
+3. **Authentication → Sign In / Providers → Email:** confirm the Email provider
+   is enabled (it is by default), and **turn "Confirm email" OFF**.
 
-   Sign-in is email and password. There is also a six-digit-code option, but it
-   depends on Supabase delivering mail: the built-in sender is rate-limited to a
-   couple of messages an hour and is explicitly not for production, and its
-   default template sends a confirmation *link* rather than the code — so a new
-   project cannot complete that flow until someone edits the template to include
+   > ### Do this one. It is the step that goes wrong.
+   >
+   > Leave it on and every new account waits for a confirmation email before it
+   > can sign in — and on a free project that mail frequently never arrives.
+   > Supabase's built-in sender is rate-limited to roughly **two messages an
+   > hour** and is explicitly not for production. The result is an account that
+   > exists, with a password that is correct, that fails every sign-in forever
+   > with `Email not confirmed`. Nothing in the gallery can repair that; it is
+   > one toggle in the dashboard.
+   >
+   > **This has already happened twice on the same project.** It is easy to
+   > turn off, easy to forget you turned it off on a *different* project, and
+   > invisible until you try to sign in.
+   >
+   > The Curator's Office now reads your project's own auth settings when the
+   > sign-in panel opens and says so up front, rather than showing "check your
+   > email" and leaving you there. If you see that warning, this is the step it
+   > means. **An account you already created starts working the moment you flip
+   > the toggle — you do not need to make it again.**
+   >
+   > If you would rather keep confirmation on, that is a real choice: configure
+   > your own SMTP under **Project Settings → Authentication → SMTP Settings**
+   > (Resend, Postmark and Mailgun all have free tiers). The built-in sender is
+   > the thing that cannot be relied on, not confirmation itself.
+
+   Sign-in is email and password. There is also a six-digit-code button, and it
+   is best thought of as a fallback: besides the rate limit, Supabase's default
+   template mails a confirmation **link** rather than the code that box wants —
+   a link pointing at `localhost:3000`, which will not open — so a fresh project
+   cannot complete that flow at all until someone edits the template to include
    `{{ .Token }}`. For a gallery with one curator, a password is fewer moving
    parts between you and your own drawings. Row-level security does not care
    which you used.

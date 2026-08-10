@@ -34,6 +34,7 @@ export const cloudSetPublished = unreachable;
    fire-and-forget, and an archive copy should stay quiet, not nag. */
 export async function cloudDeleteUpload(){ return { ok: false }; }
 export async function cloudUpdateUpload(){ return { ok: false }; }
+export async function cloudAuthSettings(){ return null; }
 export async function cloudSetPlacement(){ return { ok: false }; }
 export async function cloudDelPlacement(){ return { ok: false }; }
 

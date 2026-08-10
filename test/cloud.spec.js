@@ -90,6 +90,58 @@ test.describe('the cloud layer', () => {
       .toContain('return=representation');
   });
 
+  test('a project that will not send mail says so before you wait for it', async ({ page }) => {
+    /* The report was "not getting any email confirmations", and the cause was
+       not in this codebase at all: the project had Confirm email on, and
+       Supabase's built-in sender is rate-limited to about two an hour and
+       frequently delivers nothing. The account exists, the password is right,
+       and every sign-in fails with "Email not confirmed" forever.
+
+       Nothing here can fix that — it is one toggle in another product. What
+       was fixable is that the gallery said "check your email" and stopped,
+       which is indistinguishable from being broken. It now reads the project's
+       own settings and names the toggle. */
+    await boot(page);
+    const r = await page.evaluate(async () => {
+      const reply = (body) => Promise.resolve({
+        ok: true, status: 200, json: () => Promise.resolve(body) });
+      const note = document.getElementById('cur-cloud-note');
+      const out = {};
+
+      window.DBG.cloudFetch((url) => url.includes('/auth/v1/settings')
+        ? reply({ mailer_autoconfirm: false, disable_signup: false, external: { email: true } })
+        : reply([]));
+      note.textContent = '';
+      out.warned = await window.DBG.authWarnForTest();
+
+      // and a project that needs no mail must stay quiet
+      note.textContent = '';
+      window.DBG.cloudFetch(() => reply({ mailer_autoconfirm: true, external: { email: true } }));
+      out.quiet = await window.DBG.authWarnForTest(true);
+
+      out.advice = {
+        unconfirmed: window.DBG.authAdviceForTest('Email not confirmed'),
+        wrongPw:     window.DBG.authAdviceForTest('Invalid login credentials'),
+        exists:      window.DBG.authAdviceForTest('User already registered'),
+        limited:     window.DBG.authAdviceForTest('email rate limit exceeded'),
+        unknown:     window.DBG.authAdviceForTest('some other failure'),
+      };
+      window.DBG.cloudFetch(null);
+      return out;
+    });
+    console.log(`    warned: ${r.warned.slice(0, 60)}…`);
+
+    expect(r.warned, 'a confirm-email project must be flagged').toContain('Confirm email');
+    expect(r.warned).toContain('Providers');
+    expect(r.quiet, 'an auto-confirming project needs no warning').toBe('');
+    expect(r.advice.unconfirmed).toContain('Confirm email');
+    expect(r.advice.wrongPw).toContain('Create account');
+    expect(r.advice.exists).toContain('Sign in');
+    expect(r.advice.limited).toContain('rate-limit');
+    // anything unrecognised is passed through rather than swallowed
+    expect(r.advice.unknown).toBe('some other failure');
+  });
+
   test('a failed write is kept and sent when the cloud comes back', async ({ page }) => {
     await boot(page);
     /* Writes used to be fire-and-forget: the local change had already happened,
