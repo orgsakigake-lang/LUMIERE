@@ -170,6 +170,15 @@
                 max-width:44rem; text-wrap:pretty;
                 border-left:2px solid rgba(201,169,106,.45); padding-left:.8rem;}
   #cur-cloud-note b{color:var(--brass); font-weight:400;}
+  /* The provider button carries more weight than the two beside it, because it
+     is one click against a form. Google's mark is a letter here rather than
+     their logo: the logo is theirs, and a gallery is not the place to be
+     shipping somebody else's trademark inside a single self-contained file. */
+  .btn.oauth{display:inline-flex; align-items:center; gap:.55rem;
+             border-color:rgba(201,169,106,.5);}
+  .btn.oauth .g{font-family:Georgia,'Times New Roman',serif; font-size:1.05rem;
+                line-height:1; color:var(--brass); font-weight:700;}
+  .oauth-or{align-self:center; opacity:.5; letter-spacing:.2em;}
   #curator .rule{margin:1.2rem 0;}
   /* every input, not just password/text — the sign-in field is type=email and
      was rendering as a stock white browser box in the middle of the panel. */

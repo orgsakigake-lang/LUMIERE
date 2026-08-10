@@ -36,6 +36,9 @@ export async function cloudDeleteUpload(){ return { ok: false }; }
 export async function cloudUpdateUpload(){ return { ok: false }; }
 export async function cloudAuthSettings(){ return null; }
 export function setAuthLost(){}
+export function cloudOAuthURL(){ return ''; }
+export const cloudOAuth = unreachable;
+export function takeHashSession(){ return false; }
 export async function cloudSetPlacement(){ return { ok: false }; }
 export async function cloudDelPlacement(){ return { ok: false }; }
 

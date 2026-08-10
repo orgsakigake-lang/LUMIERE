@@ -142,6 +142,50 @@ test.describe('the cloud layer', () => {
     expect(r.advice.unknown).toBe('some other failure');
   });
 
+  test('a provider redirect is read from the fragment and then erased', async ({ page }) => {
+    /* Supabase hands the session back in the URL *fragment* on purpose — a
+       fragment is never sent to a server, so the token cannot land in an access
+       log, ours or GitHub's. It does land in the address bar, where it would
+       survive a copied link, a screenshot or a shoulder, so it has to be read
+       once and taken straight back out.
+
+       `uid` comes from the JWT's `sub`, and getting that wrong is quiet rather
+       than loud: every row-level-security policy compares against it, so a
+       wrong id reads as "your collection is empty" instead of an error. */
+    const tok = (sub) => {
+      const b64 = (o) => Buffer.from(JSON.stringify(o)).toString('base64')
+        .replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+      return `${b64({ alg: 'HS256' })}.${b64({ sub, email: 'a@b.c' })}.sig`;
+    };
+    /* Stubbed before the page evaluates, because the session is consumed during
+       boot. Left real, the fake token would 401, the refresh would be refused,
+       and the session would be correctly discarded — the right behaviour, and
+       the wrong thing to be measuring here. */
+    await page.addInitScript(() => {
+      window.fetch = (url) => Promise.resolve({
+        ok: true, status: 200,
+        json: () => Promise.resolve(String(url).includes('/auth/v1/settings') ? {} : []),
+      });
+    });
+    await page.goto('/?q=0#access_token=' + tok('user-from-google')
+                    + '&refresh_token=r-tok&expires_in=3600&token_type=bearer');
+    await page.waitForFunction(() => typeof window.DBG?.stats === 'function', null, { timeout: 60_000 });
+
+    const r = await page.evaluate(() => ({
+      signedIn: window.DBG.cloudState().signedIn,
+      uid: window.DBG.cloudUidForTest(),
+      hash: location.hash,
+      href: location.href,
+    }));
+    console.log(`    signedIn=${r.signedIn} uid=${r.uid} hash="${r.hash}"`);
+
+    expect(r.signedIn, 'the redirect did not produce a session').toBe(true);
+    expect(r.uid, 'uid must come from the token’s sub, or every read is empty')
+      .toBe('user-from-google');
+    expect(r.hash, 'the access token was left in the address bar').toBe('');
+    expect(r.href).not.toContain('access_token');
+  });
+
   test('a tunnel does not sign you out; a spent token does, loudly', async ({ page }) => {
     /* Two failures that used to be one. Any refresh failure dropped the
        session, so a moment offline signed a visitor out and took the queued

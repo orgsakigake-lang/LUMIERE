@@ -23,7 +23,7 @@ import { SPECIAL, rooms, roomKey, getRoom, spotAt, specialAt, RIG } from './worl
 import { THEMES, THEME_ORDER, DEFAULT_THEME, theme, themeName, setThemeName,
          nextThemeName } from './world/themes.js';
 import { cloud, setFetch, cloudSaveSess, cloudSendCode, cloudVerify, cloudPublicURL,
-         cloudPassword, cloudSignUp, cloudAuthSettings, setAuthLost,
+         cloudPassword, cloudSignUp, cloudAuthSettings, setAuthLost, cloudOAuth,
          cloudUploadBlob, cloudDeleteUpload, cloudUpdateUpload, cloudSetPlacement, cloudDelPlacement,
          cloudClaimSlug, cloudSetPublished, cloudLoadMine, cloudLoadGallery, cloudBoot } from './cloud/client.js';
 import { SCHEMES, applyScheme, buildRoomMesh, assembleLights, MAX_LIGHTS } from './world/geometry.js';
@@ -1500,7 +1500,16 @@ async function warnAboutConfirmation(){
   if (authChecked || !cloud.on || cloud.sess) return;
   authChecked = true;
   const s = await cloudAuthSettings();
-  if (!s || s.autoconfirm) return;                 // nothing to warn about
+  if (!s) return;
+
+  /* The provider button appears because the project says the provider is on,
+     not because the code hopes it is. A "Continue with Google" that leads to
+     `Unsupported provider` is worse than no button, and which providers a
+     project has enabled is not something this build can know at build time. */
+  const oauthRow = document.getElementById('cur-oauth');
+  if (oauthRow) oauthRow.hidden = !s.google;
+
+  if (s.autoconfirm) return;                       // nothing to warn about
   const note = document.getElementById('cur-cloud-note');
   if (!note || note.textContent) return;           // never talk over a live message
   note.innerHTML =
@@ -1662,6 +1671,14 @@ document.getElementById('curator').addEventListener('keydown', (e) => {
     if (pw.length < 6){ cloudNote.textContent = 'the password needs at least six characters'; return null; }
     return { email, pw };
   };
+  document.getElementById('cur-google').addEventListener('click', () => {
+    cloudNote.textContent = 'handing you to Google…';
+    /* Comes back to this exact URL with the session in the fragment, which
+       cloudBoot reads and erases. The origin has to be listed under
+       Authentication → URL Configuration in Supabase or the trip ends on an
+       error page — there is no way to check that from here beforehand. */
+    cloudOAuth('google');
+  });
   document.getElementById('cur-signin').addEventListener('click', async () => {
     const c = creds(); if (!c) return;
     cloudNote.textContent = 'signing in…';
@@ -2784,6 +2801,8 @@ window.DBG = {
   },
   /** Swap the handler called when a session is genuinely gone. */
   onAuthLostForTest(fn){ setAuthLost(fn); return !!fn; },
+  /** The id every row-level-security policy is compared against. */
+  cloudUidForTest(){ return cloud.sess ? cloud.sess.uid : null; },
   /** Put a work into the collection without a file picker, then read back what
    *  the gallery would say about it. `where` is a frame key, so the caption can
    *  be checked on the wall rather than only in the office. */

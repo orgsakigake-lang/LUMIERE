@@ -109,6 +109,36 @@ network — you are finished. Skip to *Hanging your drawings well* at the bottom
    > where you started. Then raise **Rate Limits → Emails per hour**, which
    > stays low even with your own SMTP.
 
+   ### Optional: one-click Google sign-in
+
+   The gallery has the frontend for this already. The button is **hidden until
+   your project says the provider is enabled** — it reads `/auth/v1/settings`
+   at boot — so there is no dead control to click and no configuration in this
+   repo. Turn it on and it appears; turn it off and it goes away.
+
+   Three steps, all outside this codebase:
+
+   1. **Google Cloud Console → APIs & Services → Credentials → Create OAuth
+      client ID → Web application.** Under *Authorised redirect URIs* add the
+      one Supabase gives you, which is
+      `https://<your-project>.supabase.co/auth/v1/callback`. Copy the client ID
+      and secret.
+   2. **Supabase → Authentication → Sign In / Providers → Google:** enable it
+      and paste both values.
+   3. **Supabase → Authentication → URL Configuration:** add every origin the
+      gallery is served from to *Redirect URLs* — your Pages URL **and**
+      `http://localhost:8000/` if you develop locally. Miss this and the round
+      trip ends on an error page. It is the step people skip.
+
+   Supabase returns the session in the URL **fragment**, which never reaches a
+   server — not ours, not GitHub's — so the token cannot land in an access log.
+   The gallery reads it once at boot and immediately erases it from the address
+   bar, where it would otherwise survive a copied link or a screenshot.
+
+   Worth it? For one curator, honestly marginal: you sign in once per browser
+   either way, and a password manager fills the form in one click too. It earns
+   its place if you dislike passwords or expect to sign in on many machines.
+
    Sign-in is email and password. There is also a six-digit-code button, and it
    is best thought of as a fallback: besides the rate limit, Supabase's default
    template mails a confirmation **link** rather than the code that box wants —

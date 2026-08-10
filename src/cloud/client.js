@@ -152,9 +152,61 @@ export async function cloudAuthSettings(){
     const rs = await cfetch('/auth/v1/settings');
     if (!rs.ok) return null;
     const d = await rs.json();
+    const ext = d.external || {};
     return { autoconfirm: !!d.mailer_autoconfirm,
              signupDisabled: !!d.disable_signup,
-             emailEnabled: !!(d.external && d.external.email) };
+             emailEnabled: !!ext.email, google: !!ext.google, github: !!ext.github };
+  } catch(e){ return null; }
+}
+
+/* ————— signing in with somebody else's account —————
+   No SDK, so this is the bare OAuth redirect: hand the visitor to Supabase,
+   which hands them to Google, which hands them back here with the session in
+   the URL *fragment*. The fragment is deliberate on Supabase's part — it never
+   reaches a server, not ours and not GitHub's, so the token cannot end up in
+   an access log. It does end up in the address bar, which is why takeHashSession
+   below erases it the moment it has been read.
+
+   This is the same mechanism behind the confirmation link that once arrived
+   pointing at `localhost:3000/#access_token=…`: not a broken link, a correct
+   one aimed at a redirect URL nobody had configured. Which is the whole risk
+   here — the provider has to be enabled in Supabase *and* this exact origin
+   listed under URL Configuration, or the round trip ends on an error page. */
+export function cloudOAuthURL(provider, returnTo){
+  const back = returnTo || (location.origin + location.pathname + location.search);
+  return cloud.url + '/auth/v1/authorize?provider=' + encodeURIComponent(provider)
+       + '&redirect_to=' + encodeURIComponent(back);
+}
+export function cloudOAuth(provider){ location.href = cloudOAuthURL(provider); }
+
+/** Read a session out of the URL fragment on the way back in, and take the
+ *  fragment out of the address bar. Returns true if one was found. */
+export function takeHashSession(){
+  const h = (location.hash || '').replace(/^#/, '');
+  if (!h || h.indexOf('access_token=') < 0) return false;
+  const p = new URLSearchParams(h);
+  const access_token = p.get('access_token');
+  if (!access_token) return false;
+  cloudSaveSess({
+    access_token,
+    refresh_token: p.get('refresh_token'),
+    expires_in: +(p.get('expires_in') || 3600),
+    /* No user object comes back in the fragment; uid is read from the token
+       itself. It is a JWT, and `sub` is the id every RLS policy compares
+       against — so getting this wrong means every read returns nothing. */
+    user: { id: jwtSub(access_token), email: null },
+  });
+  try {
+    history.replaceState(null, '', location.pathname + location.search);
+  } catch(e){ location.hash = ''; }
+  return true;
+}
+/* Decode only. Nothing here trusts the contents — the server verifies the
+   signature on every request; this just needs the id to ask about. */
+function jwtSub(tok){
+  try {
+    const b = tok.split('.')[1].replace(/-/g, '+').replace(/_/g, '/');
+    return JSON.parse(atob(b + '==='.slice((b.length + 3) % 4))).sub || null;
   } catch(e){ return null; }
 }
 
@@ -346,7 +398,12 @@ export async function cloudLoadGallery(slug){
  *  must not stop the Curator's Office from initialising. */
 export async function cloudBoot(){
   if (!cloud.on) return { mode: 'off', data: null };
-  try { const s = JSON.parse(localStorage.getItem('lumiere_sess') || 'null'); if (s) cloud.sess = s; } catch(e){}
+  /* Before the stored session, because a fragment means the visitor has just
+     come back from a provider and that is newer than whatever is on disk. */
+  const viaRedirect = takeHashSession();
+  if (!viaRedirect){
+    try { const s = JSON.parse(localStorage.getItem('lumiere_sess') || 'null'); if (s) cloud.sess = s; } catch(e){}
+  }
 
   try {
     if (cloud.sess && Date.now() > cloud.sess.expires_at) await cloudRefresh();
