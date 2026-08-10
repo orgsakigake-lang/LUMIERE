@@ -2427,6 +2427,8 @@ if (DBG_FULL) Object.assign(window.DBG, {
   presentation(w, h, lineArt = false){
     return { orientation: orientationOf(w, h), fill: suggestFill(w, h, lineArt) };
   },
+  /** Triangles in a built room — the phase E budget, checkable. */
+  roomTris(gx, gz){ const r = rooms.get(roomKey(gx, gz)); return r && r.nIdx ? r.nIdx/3 : 0; },
   /** How many rooms each strategy keeps, and a way to force one of them.
    *  Portal culling must never change a pixel, only how many rooms are asked
    *  to produce it — DBG.culling('frustum') is how that gets proven. */

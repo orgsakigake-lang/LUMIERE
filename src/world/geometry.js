@@ -142,6 +142,104 @@ export function buildRoomMesh(r, daylight){
   }
 
   curMat = 2;                          // everything from here is plain-shaded
+
+  /* ————— swept profiles —————
+     Three things here were drawn as the cheapest shape that occupied roughly
+     the right space: picture frames as twelve flat quads, ceiling rosettes as
+     *square* annuli, and chandelier arms as single quads with no thickness at
+     all — visible as a hairline from the side and gone entirely edge-on. One
+     profile swept along a path fixes all three, and at this scale a faceted
+     sweep is what moulding actually looks like anyway. */
+
+  /** Revolve a [radius, y] profile about a vertical axis. Rosettes, hubs. */
+  function revolveY(cx, cz, prof, seg, col){
+    for (let i = 0; i < prof.length - 1; i++){
+      const [r0, y0] = prof[i], [r1, y1] = prof[i+1];
+      /* Normal from the profile segment, rotated outward. */
+      const dr = r1 - r0, dy = y1 - y0;
+      const nl = Math.hypot(dr, dy) || 1;
+      const nr = dy / nl, ny = -dr / nl;
+      for (let s2 = 0; s2 < seg; s2++){
+        const a0 = s2/seg * Math.PI*2, a1 = (s2+1)/seg * Math.PI*2;
+        const c0 = Math.cos(a0), n0 = Math.sin(a0), c1 = Math.cos(a1), n1 = Math.sin(a1);
+        const mc = Math.cos((a0+a1)/2), mn = Math.sin((a0+a1)/2);
+        quad(cx + c0*r0, y0, cz + n0*r0,  cx + c1*r0, y0, cz + n1*r0,
+             cx + c1*r1, y1, cz + n1*r1,  cx + c0*r1, y1, cz + n0*r1,
+             mc*nr, ny, mn*nr, col, 0.35, 0.35);
+      }
+    }
+  }
+
+  /** A round bar between two points. Chandelier arms and stems. */
+  function tube(ax, ay, az, bx, by, bz, rad, sides, col){
+    let dx = bx-ax, dy = by-ay, dz = bz-az;
+    const len = Math.hypot(dx, dy, dz) || 1;
+    dx /= len; dy /= len; dz /= len;
+    /* Any vector not parallel to the axis gives a frame to spin around. */
+    let ux = 0, uy = 1, uz = 0;
+    if (Math.abs(dy) > 0.94){ ux = 1; uy = 0; }
+    let px = uy*dz - uz*dy, py = uz*dx - ux*dz, pz = ux*dy - uy*dx;
+    const pl = Math.hypot(px, py, pz) || 1; px/=pl; py/=pl; pz/=pl;
+    const qx = dy*pz - dz*py, qy = dz*px - dx*pz, qz = dx*py - dy*px;
+    for (let i = 0; i < sides; i++){
+      const a0 = i/sides * Math.PI*2, a1 = (i+1)/sides * Math.PI*2;
+      const e = (a, k) => [Math.cos(a)*px*rad + Math.sin(a)*qx*rad,
+                           Math.cos(a)*py*rad + Math.sin(a)*qy*rad,
+                           Math.cos(a)*pz*rad + Math.sin(a)*qz*rad];
+      const o0 = e(a0), o1 = e(a1);
+      const am = (a0+a1)/2;
+      const nx = Math.cos(am)*px + Math.sin(am)*qx;
+      const ny = Math.cos(am)*py + Math.sin(am)*qy;
+      const nz = Math.cos(am)*pz + Math.sin(am)*qz;
+      quad(ax+o0[0], ay+o0[1], az+o0[2],  ax+o1[0], ay+o1[1], az+o1[2],
+           bx+o1[0], by+o1[1], bz+o1[2],  bx+o0[0], by+o0[1], bz+o0[2],
+           nx, ny, nz, col, 0.3, 0.3);
+    }
+  }
+
+  /** Sweep a moulding profile around a picture frame. `prof` is a list of
+   *  [out, proud]: how far the section stands outside the sight edge, and how
+   *  far it stands off the wall. Successive rings are joined side by side, so
+   *  the corners mitre for free. */
+  function mouldFrame(wall, u0, u1, y0, y1, prof, col){
+    const s = wsign(wall), horiz = whoriz(wall);
+    for (let i = 0; i < prof.length - 1; i++){
+      const [o0, p0] = prof[i], [o1, p1] = prof[i+1];
+      /* wp's depth is measured *into the room* from the interior face, so proud
+         maps straight through. Negating it buried the whole moulding inside the
+         wall slab, where it rendered perfectly and could not be seen. */
+      const d0 = p0, d1 = p1;
+      /* Section normal, rotated a quarter turn off the profile direction. */
+      const dO = o1 - o0, dP = p1 - p0;
+      const nl = Math.hypot(dO, dP) || 1;
+      const nOut = -dP/nl, nPro = dO/nl;
+      const wn = horiz ? [-s, 0, 0] : [0, 0, -s];     // toward the room
+      /* left, right, top, bottom — each with its own outward direction */
+      const sides = [
+        { a:[u0-o0, y0-o0], b:[u0-o0, y1+o0], c:[u0-o1, y1+o1], d:[u0-o1, y0-o1], ou:-1, oy:0 },
+        { a:[u1+o0, y1+o0], b:[u1+o0, y0-o0], c:[u1+o1, y0-o1], d:[u1+o1, y1+o1], ou:+1, oy:0 },
+        { a:[u0-o0, y1+o0], b:[u1+o0, y1+o0], c:[u1+o1, y1+o1], d:[u0-o1, y1+o1], ou:0, oy:+1 },
+        { a:[u1+o0, y0-o0], b:[u0-o0, y0-o0], c:[u0-o1, y0-o1], d:[u1+o1, y0-o1], ou:0, oy:-1 },
+      ];
+      for (const sd of sides){
+        /* `out` runs along the wall for the stiles and vertically for the
+           rails; wp maps u to z on the east/west walls and to x on north/south,
+           with no sign flip either way. */
+        const n3 = horiz ? [wn[0]*nPro, sd.oy*nOut, sd.ou*nOut]
+                         : [sd.ou*nOut, sd.oy*nOut, wn[2]*nPro];
+        q4(wp(wall, sd.a[0], sd.a[1], d0), wp(wall, sd.b[0], sd.b[1], d0),
+           wp(wall, sd.c[0], sd.c[1], d1), wp(wall, sd.d[0], sd.d[1], d1),
+           n3, col, 0.3, 0.3);
+      }
+    }
+  }
+  /* A gallery moulding: a step off the wall, a crest, an ogee fall to the
+     sight edge. Six points is enough to catch a highlight and throw a shadow. */
+  const FRAME_PROFILE = [
+    [0.000, 0.030], [0.014, 0.058], [0.032, 0.066],
+    [0.052, 0.052], [0.068, 0.032], [0.075, 0.004],
+  ];
+
   const TRIM = SCH.trim;
   for (const wallId of ['e','w','n','s']){
     const segs = r.doors[wallId] ? [[-HS, -DW], [DW, HS]] : [[-HS, HS]];
@@ -168,19 +266,7 @@ export function buildRoomMesh(r, daylight){
     const yc = A.hangY || 1.55;
     const y0 = yc - A.h/2, y1 = yc + A.h/2;
     const F = A.frame;
-    // left / right bars (full height incl. corners)
-    for (const [ua, ub, outerSign] of [[u0-BW, u0, -1], [u1, u1+BW, 1]]){
-      wquad(A.wall, ua, ub, y0-BW, y1+BW, BD, F);
-      wside(A.wall, outerSign<0 ? ua : ub, y0-BW, y1+BW, 0, BD, outerSign, F);
-      wside(A.wall, outerSign<0 ? ub : ua, y0, y1, 0, BD, -outerSign, F);
-    }
-    // top / bottom bars
-    wquad(A.wall, u0, u1, y1, y1+BW, BD, F);
-    wflat(A.wall, u0, u1, y1+BW, 0, BD, true, F);
-    wflat(A.wall, u0, u1, y1, 0, BD, false, F);
-    wquad(A.wall, u0, u1, y0-BW, y0, BD, F);
-    wflat(A.wall, u0, u1, y0, 0, BD, true, F);
-    wflat(A.wall, u0, u1, y0-BW, 0, BD, false, F);
+    mouldFrame(A.wall, u0, u1, y0, y1, FRAME_PROFILE, F);
     // canvas held proud of the wall (the art pipeline overlays pigment here)
     wquad(A.wall, u0, u1, y0, y1, 0.02, CANVAS_COL);
     // placard beside the frame, toward the roomier side
@@ -236,20 +322,26 @@ export function buildRoomMesh(r, daylight){
     const IV = [0.55, 0.50, 0.42];
     const arms = big ? 10 : 8, armL = big ? 0.74 : 0.56;
     const hubY = H - 0.62, ringY = H - 0.95;
-    ringFlat(0.55, 0.72, H - 0.012, SCH.trim);
-    ringFlat(0.20, 0.34, H - 0.012, SCH.trim);
-    box(-0.02, hubY, -0.02, 0.02, H, 0.02, BR);
-    box(-0.095, hubY - 0.15, -0.095, 0.095, hubY, 0.095, BR);
+    /* Circular, and with a section. They were square annuli lying flat on the
+       ceiling — from directly below, a plaster rosette shaped like a picture
+       frame. */
+    revolveY(0, 0, [[0.72, H-0.006], [0.66, H-0.034], [0.58, H-0.046],
+                    [0.52, H-0.028], [0.50, H-0.004]], 22, SCH.trim);
+    revolveY(0, 0, [[0.34, H-0.006], [0.30, H-0.040], [0.24, H-0.052],
+                    [0.20, H-0.030], [0.18, H-0.004]], 18, SCH.trim);
+    tube(0, hubY, 0, 0, H, 0, 0.018, 6, BR);
+    revolveY(0, 0, [[0.02, hubY], [0.085, hubY-0.045], [0.095, hubY-0.095],
+                    [0.06, hubY-0.15], [0, hubY-0.165]], 14, BR);
     for (let a = 0; a < arms; a++){
       const th = a/arms * Math.PI * 2;
       const dx = Math.cos(th), dz = Math.sin(th);
-      const pxw = -dz*0.017, pzw = dx*0.017;
-      const x0 = dx*0.095, z0 = dz*0.095, x1 = dx*armL, z1 = dz*armL;
-      quad(x0+pxw, hubY-0.13, z0+pzw,  x1+pxw, ringY+0.02, z1+pzw,
-           x1-pxw, ringY+0.02, z1-pzw, x0-pxw, hubY-0.13, z0-pzw,
-           0, 1, 0, BR, .3, .05);
-      box(x1-0.03, ringY-0.045, z1-0.03, x1+0.03, ringY+0.01, z1+0.03, BR);
-      box(x1-0.015, ringY+0.01, z1-0.015, x1+0.015, ringY+0.13, z1+0.015, IV);
+      const x0 = dx*0.085, z0 = dz*0.085, x1 = dx*armL, z1 = dz*armL;
+      /* Was a single quad with no thickness: a hairline from the side, and
+         from directly below it vanished. */
+      tube(x0, hubY-0.13, z0, x1, ringY+0.02, z1, 0.014, 5, BR);
+      revolveY(x1, z1, [[0.008, ringY-0.05], [0.038, ringY-0.03],
+                        [0.034, ringY+0.008], [0.016, ringY+0.02]], 10, BR);
+      tube(x1, ringY+0.01, z1, x1, ringY+0.13, z1, 0.013, 6, IV);
       r.flames.push(x1, ringY + 0.165, z1);
     }
   }
