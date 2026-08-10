@@ -7,6 +7,41 @@ import { mulberry32 } from '../world/seed.js';
 import { gl } from './gl.js';
 
 export let plasterTex = null, parquetTex = null, shadowTex = null;
+export let plasterNrm = null, parquetNrm = null;
+
+/* ————— normals from the albedo —————
+   These surfaces already carry their own relief in their brightness: plaster
+   blotches are shallow dents, a plank's grain and its butt joints are grooves.
+   So the height field is the luminance, and a Sobel over it gives the normal
+   — no second authoring pass, and the bumps line up with the marks by
+   construction. Uploaded as data, never as colour: a normal map decoded
+   through sRGB points the wrong way. */
+function normalFromCanvas(src, strength){
+  const n = src.width;
+  const sd = src.getContext('2d').getImageData(0, 0, n, n).data;
+  const out = document.createElement('canvas'); out.width = out.height = n;
+  const oc = out.getContext('2d'), oi = oc.createImageData(n, n);
+  const L = (x, y) => {
+    const i = (((y + n) % n) * n + ((x + n) % n)) * 4;   // wrap: these tile
+    return (0.2126*sd[i] + 0.7152*sd[i+1] + 0.0722*sd[i+2]) / 255;
+  };
+  for (let y = 0; y < n; y++)
+    for (let x = 0; x < n; x++){
+      const dx = (L(x+1,y-1) + 2*L(x+1,y) + L(x+1,y+1))
+               - (L(x-1,y-1) + 2*L(x-1,y) + L(x-1,y+1));
+      const dy = (L(x-1,y+1) + 2*L(x,y+1) + L(x+1,y+1))
+               - (L(x-1,y-1) + 2*L(x,y-1) + L(x+1,y-1));
+      let vx = -dx * strength, vy = -dy * strength, vz = 1;
+      const il = 1 / Math.hypot(vx, vy, vz);
+      const o = (y*n + x)*4;
+      oi.data[o]   = (vx*il * 0.5 + 0.5) * 255;
+      oi.data[o+1] = (vy*il * 0.5 + 0.5) * 255;
+      oi.data[o+2] = (vz*il * 0.5 + 0.5) * 255;
+      oi.data[o+3] = 255;
+    }
+  oc.putImageData(oi, 0, 0);
+  return texFromCanvas(out, true, false);
+}
 /* `srgb` distinguishes colour from data. Albedo is authored in sRGB and must be
    decoded to linear before it reaches the lighting maths — uploading it as
    RGBA8 fed gamma-encoded values into linear equations. Masks are not colour
@@ -47,6 +82,7 @@ export function makeSurfaceTextures(){
     }
     g.globalAlpha = 1;
     plasterTex = texFromCanvas(c, true);
+    plasterNrm = normalFromCanvas(c, 1.5);      // shallow — it is a flat wall
   }
   /* parquet: 8 staggered planks per 2 m tile, grain and seams */
   {
@@ -83,6 +119,7 @@ export function makeSurfaceTextures(){
       }
     }
     parquetTex = texFromCanvas(c, true);
+    parquetNrm = normalFromCanvas(c, 2.3);      // grain and joints are grooves, not corrugation
   }
   /* a soft dark rectangle for contact shadows (alpha in .a) */
   {
@@ -126,5 +163,6 @@ export function ensureSkyTex(){
     from the same seeds, so dropping the references is the whole recovery. */
 export function dropSurfaceTextures(){
   plasterTex = parquetTex = shadowTex = skyTex = null;
+  plasterNrm = parquetNrm = null;
 }
 

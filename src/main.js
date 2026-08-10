@@ -29,7 +29,7 @@ import { canvas, gl, compile, program } from './render/gl.js';
 import { PERF, dprCap } from './render/perf.js';
 import { post, postCaps, wantSamples, setForcedSamples, allocPost, runPost,
          setPostPrograms, setPostTime, uBright, uBlur, uComp, GRADE } from './render/post.js';
-import { plasterTex, parquetTex, shadowTex, skyTex, makeSurfaceTextures,
+import { plasterTex, parquetTex, plasterNrm, parquetNrm, shadowTex, skyTex, makeSurfaceTextures,
          ensureSkyTex, dropSurfaceTextures } from './render/textures.js';
 import { player, M_P, M_V, M_MV, M_PV, vpW, vpH, setViewport,
          visited, setVisited, nearRooms, midRooms } from './render/state.js';
@@ -86,6 +86,8 @@ function initPrograms(){
   gl.uniform1i(gl.getUniformLocation(progArch, 'uPlaster'), 1);
   gl.uniform1i(gl.getUniformLocation(progArch, 'uParquet'), 2);
   gl.uniform1i(gl.getUniformLocation(progArch, 'uShadow'), 3);   // per-room baked map
+  gl.uniform1i(gl.getUniformLocation(progArch, 'uPlasterN'), 4);
+  gl.uniform1i(gl.getUniformLocation(progArch, 'uParquetN'), 5);
   makeSurfaceTextures();
   progPaint = program(VS_PAINT, FS_PAINT);
   uPaint = {};
@@ -1791,6 +1793,8 @@ function frame(t){
   gl.uniform3f(uArch.upv, M_V[4], M_V[5], M_V[6]);
   gl.activeTexture(gl.TEXTURE1); gl.bindTexture(gl.TEXTURE_2D, plasterTex);
   gl.activeTexture(gl.TEXTURE2); gl.bindTexture(gl.TEXTURE_2D, parquetTex);
+  gl.activeTexture(gl.TEXTURE4); gl.bindTexture(gl.TEXTURE_2D, plasterNrm);
+  gl.activeTexture(gl.TEXTURE5); gl.bindTexture(gl.TEXTURE_2D, parquetNrm);
   gl.activeTexture(gl.TEXTURE0);
 
   function archRoomUniforms(r, ox, oz){

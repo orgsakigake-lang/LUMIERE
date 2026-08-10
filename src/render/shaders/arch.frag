@@ -4,6 +4,7 @@ in vec3 vN; in vec3 vPv; in vec2 vUV; in vec3 vCol; in vec3 vLp; in float vMat;
 uniform vec3 uFog; uniform float uSigma; uniform float uAlpha;
 uniform vec3 uAmb; uniform vec3 uUpV;
 uniform sampler2D uPlaster; uniform sampler2D uParquet;
+uniform sampler2D uPlasterN; uniform sampler2D uParquetN;
 /* Baked once per room, from the fill light looking down. uShadowIdx is which
    packed light it belongs to, or -1 when this room has none. */
 uniform highp sampler2DShadow uShadow; uniform mat4 uShadowMat; uniform int uShadowIdx;
@@ -12,14 +13,34 @@ uniform vec4 uLPos[10];   // xyz view-space position, w 1/range²
 uniform vec4 uLDir[10];   // xyz view-space axis,     w cos(outer)
 uniform vec4 uLCol[10];   // rgb colour·intensity,    w cos(inner)
 out vec4 o;
+/* A tangent frame from screen-space derivatives — no extra vertex attribute,
+   and it works for every quad this museum emits regardless of orientation. */
+mat3 cotangent(vec3 N, vec3 p, vec2 uv){
+  vec3 dp1 = dFdx(p), dp2 = dFdy(p);
+  vec2 du1 = dFdx(uv), du2 = dFdy(uv);
+  vec3 dp2p = cross(dp2, N), dp1p = cross(N, dp1);
+  vec3 T = dp2p*du1.x + dp1p*du2.x;
+  vec3 B = dp2p*du1.y + dp1p*du2.y;
+  float inv = inversesqrt(max(dot(T,T), dot(B,B)));
+  return mat3(T*inv, B*inv, N);
+}
 void main(){
   vec3 n = normalize(vN);
   vec3 vdir = normalize(-vPv);
   if (dot(n, vdir) < 0.0) n = -n;
-  /* material grain */
+  /* material grain, and the relief that goes with it */
   vec3 alb = vCol;
-  if (vMat < 0.5)      alb *= texture(uPlaster, vUV * 0.5).rgb;
-  else if (vMat < 1.5) alb *= texture(uParquet, vUV * 0.5).rgb;
+  vec2 st = vUV * 0.5;
+  float rough = 1.0;                       // 0 polished, 1 matte
+  if (vMat < 0.5){
+    alb *= texture(uPlaster, st).rgb;
+    n = normalize(cotangent(n, vPv, st) * (texture(uPlasterN, st).xyz * 2.0 - 1.0));
+    rough = 0.86;
+  } else if (vMat < 1.5){
+    alb *= texture(uParquet, st).rgb;
+    n = normalize(cotangent(n, vPv, st) * (texture(uParquetN, st).xyz * 2.0 - 1.0));
+    rough = 0.30;                          // waxed boards
+  } else rough = 0.62;
   /* analytic corner occlusion — rooms are boxes, so distance to the two
      other surface planes is a fine stand-in for baked AO */
   vec3 dd = vec3(6.76 - abs(vLp.x), min(vLp.y, 4.2 - vLp.y), 6.76 - abs(vLp.z));
@@ -29,7 +50,12 @@ void main(){
      after the loop, which dimmed a spotlight's own pool wherever it crossed a
      corner — light does not stop arriving because a wall is nearby. */
   vec3 acc = uAmb * alb * ao;
-  float gloss = smoothstep(0.86, 0.99, dot(n, uUpV));
+  /* Schlick. Every dielectric turns into a mirror at a grazing angle, and its
+     absence is why the floor read as a photograph of wood rather than as a
+     waxed surface with a room above it. */
+  float fres = 0.04 + 0.96 * pow(1.0 - clamp(dot(n, vdir), 0.0, 1.0), 5.0);
+  float shine = mix(120.0, 14.0, rough);
+  float gloss = mix(1.0, smoothstep(0.86, 0.99, dot(n, uUpV)), 0.35);
 
   /* How much of the fill light reaches here. vLp is already room-local, which
      is the space the map was baked in, so no room offset enters this. */
@@ -81,7 +107,10 @@ void main(){
     if (i == uShadowIdx) c *= lit;
     acc += alb * c * max(dot(n, L), 0.0);
     vec3 hv = normalize(L + vdir);
-    acc += c * pow(max(dot(n, hv), 0.0), 56.0) * gloss * 0.65;
+    /* Scaled so the Fresnel does not spend the grade: A1 and A2 tuned this
+       museum to a frame mean near 29, and an unrestrained grazing highlight
+       took it to 39 and lifted the blacks with it. */
+    acc += c * pow(max(dot(n, hv), 0.0), shine) * gloss * fres * (1.4 - rough) * 0.55;
   }
   float f = 1.0 - exp(-uSigma * length(vPv));
   o = vec4(mix(acc, uFog, f), uAlpha);
