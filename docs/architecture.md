@@ -310,6 +310,26 @@ on `github.io` and on `localhost`, because Canvas2D rasterisation is not
 bit-exact across page contexts. Always capture and compare a baseline inside a
 single run on one host. Never hard-code a golden hash recorded elsewhere.
 
+**Painted size is a contract, not a quality setting.** Generated works are
+painted at `TEX_SIZES` — 384-wide, 0.75 of the original 512 — and *that number
+is the same on every machine on purpose*. A generator draws at its dimensions,
+so the same seed at a different size is a different picture: not merely softer,
+a different image. Rendering both confirms it, and the flow-field works diverge
+visibly while the Voronoi ones barely move.
+
+So scaling this by the visitor's hardware — the obvious way to make slow
+machines faster, and worth 35% of the generation cost — would quietly falsify
+two stated promises: that revisiting a room hangs the same paintings, and that
+the algorithm and seed on the placard identify the work. A test asserts the
+size does not move with `hardwareConcurrency`. `?art=<scale>` pins it for
+measurement; `DBG.artPNG(gx,gz,i)` returns the image rather than its hash,
+which is the only way to answer "does the cheaper size still look like the
+painting" — a hash can only say that two renderings differ, never whether the
+difference matters.
+
+Loans are unaffected: a visitor's own drawing comes from their file at
+`LOAN_SIZES` (1024-wide) and is never generated.
+
 **Headless is slow.** CI runs on SwiftShader, where entering the gallery costs
 about 12 seconds at 720×405 and 32 at 720p. Hence the small viewport, the 150s
 timeout, and one shared page for the in-gallery group. Nothing waits for the art

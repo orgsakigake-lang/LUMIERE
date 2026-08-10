@@ -22,7 +22,48 @@ import { player, visited } from '../render/state.js';
 let loans = null;
 export function setLoanProvider(p){ loans = p; }
 
-export const TEX_SIZES = { L: [512, 384], P: [384, 512], S: [448, 448], W: [512, 320] };
+/* ————— how large a generated work is painted —————
+   A work costs what its area costs — the generators are per-pixel — and these
+   were 512-wide because that was free on the machine they were written on.
+   Measured on a four-core Intel laptop, five works took 423 ms at 512 and
+   275 ms at 384: **35% off**, and the queue is already limited to the 3×3
+   neighbourhood and sorted by ring, so size was the only lever left.
+
+   Three-quarters, not a half. The cost is not proportional to area — 0.5 has a
+   quarter of the pixels but still took 198 ms, because a large part of each
+   work is fixed setup. Halving the resolution buys 18 points more than 0.75
+   does and looks it, so 0.75 is where the curve stops paying.
+
+   ————— why this is one number and not a per-machine dial —————
+   A generator draws *at* these dimensions, so **a different size is a
+   different picture**. Not merely softer: same seed, same palette, same
+   character, different image — checked by rendering both, and the flow-field
+   works diverge visibly while the Voronoi ones barely move.
+
+   That makes size part of the museum's contract, not a quality setting. The
+   promise is that revisiting room (1000, −2000) hangs the same paintings, and
+   that the algorithm and seed on the placard identify the work. Scaling this
+   by the visitor's CPU would have quietly made both false — two people at the
+   same coordinates in the same gallery seeing different paintings, and
+   DBG.artHash meaning something different on every machine.
+
+   So every machine paints at the same size, and a fast one spends the saving
+   rather than banking it. What a large display gives up is a little sharpness
+   walking right up to a work; `V` re-renders that at 1024 regardless, which is
+   the view built for looking closely. ?art= pins the scale for measurement and
+   keeps the old rendering reachable.
+
+   Loans are untouched — a visitor's own drawing comes from their file at
+   LOAN_SIZES and is never generated. So is the Graphite theme, which is solo
+   and generates nothing at all. */
+const ART_PIN = /[?&]art=(0?\.\d+|1(?:\.0+)?)\b/.exec(
+  typeof location !== 'undefined' ? location.search : '');
+export const ART_SCALE = ART_PIN ? +ART_PIN[1] : 0.75;
+/* Even dimensions: several generators work in 2×2 blocks, and an odd edge
+   column is a visible seam rather than a rounding detail. */
+const at = (w, h) => [Math.max(2, Math.round(w * ART_SCALE / 2) * 2),
+                      Math.max(2, Math.round(h * ART_SCALE / 2) * 2)];
+export const TEX_SIZES = { L: at(512, 384), P: at(384, 512), S: at(448, 448), W: at(512, 320) };
 /* A visitor's own drawing gets twice the linear resolution of a generated
    painting — four times the pixels. It has to carry real pencil work, and
    unlike the procedural pieces it is also sitting inside a mount, so only part
@@ -33,7 +74,8 @@ export const LOAN_SIZES = { L: [1024, 768], P: [768, 1024], S: [896, 896], W: [1
 function makePool(n, w, h){
   return { w, h, slots: Array.from({length: n}, () => ({ tex: null, used: false, A: null, r: null })) };
 }
-export const POOLS = { L: makePool(24,512,384), P: makePool(24,384,512), S: makePool(24,448,448), W: makePool(24,512,320) };
+export const POOLS = { L: makePool(24, ...TEX_SIZES.L), P: makePool(24, ...TEX_SIZES.P),
+                       S: makePool(24, ...TEX_SIZES.S), W: makePool(24, ...TEX_SIZES.W) };
 export const PPOOL = makePool(64, 256, 128);
 function acquireSlot(pool, A, r){
   for (const s of pool.slots){

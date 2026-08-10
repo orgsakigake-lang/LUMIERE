@@ -2604,6 +2604,14 @@ function frame(t){
 
 /* ————— §12 DBG hooks (quiet; for scripted verification) ————— */
 window.DBG = {
+  /** The work as an image, at exactly the size it is painted for the wall.
+   *  artHash proves two renderings are identical; this is for the question it
+   *  cannot answer — whether a cheaper size still looks like the painting. */
+  artPNG(gx, gz, i){
+    const r = DBG.artHash(gx, gz, i);
+    if (typeof r === 'string') return r;
+    return { ...r, png: scratch.toDataURL('image/png') };
+  },
   artHash(gx, gz, i){
     preemptArtJobs();
     const r = getRoom(gx, gz), A = r.artworks[i];

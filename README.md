@@ -208,5 +208,16 @@ appear where the walking is long; the occasional empty pedestal reads
   (3.5 ms/frame, one texture upload/frame, pooled textures) · bright-pass bloom,
   ACES tonemap, vignette, grain · WebGL context loss rebuilds everything from
   seeds · storage and pointer lock degrade gracefully in sandboxed embeds.
+- **Adaptive where it is safe to be, fixed where it is not.** Painter count,
+  quality tier and per-room light budget all follow the machine; the *painted
+  size of a work* deliberately does not. A generator draws at its dimensions,
+  so the same seed at a different size is a different picture — making that
+  depend on a visitor's CPU would mean two people at the same coordinates
+  seeing different paintings. Everyone paints at 384; `?art=` pins it.
+- The quality dial has a memory. A tier abandoned for being too slow goes on
+  probation that doubles each time it disappoints, because a ratchet with a
+  dead band will otherwise climb into a tier the machine cannot hold and stay
+  there — measured, a laptop parked at 46 fps for an entire session.
 - Debug hooks on `window.DBG` (`tp`, `seed`, `autopilot`, `post`, `stats`,
-  `artHash`, `luma`, `frame`, `findSpecial`).
+  `artHash`, `artPNG`, `luma`, `frame`, `perf`, `reflections`, `maxLights`,
+  `caption`, `findSpecial`).

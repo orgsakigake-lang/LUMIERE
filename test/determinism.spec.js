@@ -1,4 +1,36 @@
 import { test, expect } from '@playwright/test';
+
+test.describe('what a seed is worth', () => {
+  /* Generated works are painted at a fixed size, and that is a contract rather
+     than a quality setting: a generator draws *at* its dimensions, so the same
+     seed at a different size is a different picture — verified by rendering
+     both, where the flow-field works diverge visibly.
+
+     Painting smaller was worth 35% of the generation cost on a four-core
+     laptop, and the tempting version of that change scales the size by the
+     visitor's CPU. It would have quietly broken two stated promises: that
+     revisiting a room hangs the same paintings, and that the algorithm and
+     seed printed on the placard identify the work. This asserts the size does
+     not move with the machine. */
+  test('a work is the same size whatever machine is looking at it', async ({ page }) => {
+    const seen = [];
+    for (const cores of [2, 4, 16]){
+      await page.addInitScript((n) => {
+        Object.defineProperty(navigator, 'hardwareConcurrency', { get: () => n, configurable: true });
+      }, cores);
+      await page.goto('/?q=0');
+      await page.waitForFunction(() => typeof window.DBG?.stats === 'function', null, { timeout: 60_000 });
+      const r = await page.evaluate(() => window.DBG.artHash(0, 0, 0));
+      seen.push({ cores, size: `${r.w}×${r.h}`, hash: r.hash });
+    }
+    console.log('    ' + seen.map((s) => `${s.cores} cores → ${s.size} #${s.hash}`).join(' · '));
+
+    expect(new Set(seen.map((s) => s.size)).size,
+      'the painted size moved with the core count').toBe(1);
+    expect(new Set(seen.map((s) => s.hash)).size,
+      'the same seed produced a different picture on a different machine').toBe(1);
+  });
+});
 import { boot, enter, hashes, WORKS, ROOMS, ENTER_MS } from './helpers.js';
 
 /* Left serial on purpose. These tests are independent — each takes its own
