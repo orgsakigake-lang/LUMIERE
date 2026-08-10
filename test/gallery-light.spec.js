@@ -88,6 +88,45 @@ test.describe.serial('inside the gallery — light and loans', () => {
     expect(m.level).toBeLessThan(0.06);      // a footstep peaks near 0.22
   });
 
+  test('a footstep does not touch the walk loop’s stride accumulator', async () => {
+    /* The bug this exists for: `audio.stride` is the walk loop's distance
+       accumulator, drained in `while (stride > 0.78) { stride -= 0.78;
+       footstep(spd) }`. footstep() also used `audio.stride`, as a left/right
+       flag — `(stride + 1) & 1` — which pinned it at exactly 1, forever above
+       the threshold. The loop never exited. The gallery hung on the visitor's
+       first step and filled the audio graph until the tab died.
+
+       Two modules sharing a name is invisible in review and fatal at runtime,
+       so the invariant is asserted rather than remembered. */
+    const s = await page.evaluate(() => window.DBG.strideProbe());
+    console.log(`    stride ${s.before} → ${s.after} · footstep ran: ${s.ran}`);
+    expect(s.ok, 'no audio context — the probe proved nothing').toBe(true);
+    expect(s.muted, 'muted footsteps return early and skip the path').toBe(false);
+    expect(s.ran, 'footstep did not actually run').toBe(true);
+    expect(s.after, 'footstep wrote to the walk loop’s accumulator').toBe(s.before);
+  });
+
+  test('walking terminates, however fast the visitor moves', async () => {
+    /* The other half of the same failure: a frame loop whose exit depends on a
+       variable it hands to another module should degrade, not hang. This drives
+       an absurd amount of travel through the step loop and asserts the frame
+       still returns — and that it did not emit a step per centimetre. */
+    const r = await page.evaluate(() => {
+      const key = (type) => dispatchEvent(new KeyboardEvent(type, { code: 'KeyW', key: 'w' }));
+      key('keydown');
+      const t0 = performance.now();
+      /* 200 ms of travel per step: far more ground than a real frame covers,
+         so the accumulator is genuinely owing several footsteps each time. */
+      const f = window.DBG.frame(30, 200);
+      const ms = performance.now() - t0;
+      key('keyup');
+      window.DBG.frame(2, 16.7);
+      return { ms, maxMs: f.maxMs };
+    });
+    console.log(`    30 long walking frames in ${r.ms.toFixed(0)} ms · worst ${r.maxMs} ms`);
+    expect(r.ms).toBeLessThan(15000);
+  });
+
   test('a loaned sheet is mounted, never cropped', async () => {
     /* The defect this replaces: uploads were cover-cropped to the frame's
        aspect, so a portrait drawing hung in a landscape frame silently lost

@@ -19,7 +19,12 @@ import { flashHint } from './ui/hint.js';
 export const audio = { ctx: null, master: null, music: null, verb: null, echo: null,
                 murmurBus: null, talkers: null,
                 muted: false, ok: false, active: false,
-                stride: 0, arnd: mulberry32(0xA0D10), nextNote: 0,
+                /* `stride` belongs to the walk loop in main.js: distance in
+                   metres since the last step. Audio reads the *speed* it is
+                   handed and keeps its own left/right flag in `foot` — writing
+                   to `stride` from here once turned that loop into an infinite
+                   one. See footstep(). */
+                stride: 0, foot: 0, steps: 0, arnd: mulberry32(0xA0D10), nextNote: 0,
                 stepBuf: null, scuffBuf: null, piece: 1, voices: [] };
 
 /* ————— the programmes —————
@@ -221,9 +226,14 @@ function startPiece(i){
    while somebody else answers. Scheduling it that way is most of why this
    reads as people rather than as a filter sweep. */
 function murmurScheduler(){
-  if (!audio.ok || audio.muted || !audio.talkers) return;
+  if (!audio.ok || !audio.talkers) return;
   const ctx = audio.ctx, r = audio.arnd;
   for (const t of audio.talkers){
+    /* Muted still has to move the clock forward. Returning early left every
+       talker's next phrase in the past, so unmuting after a while spent a
+       whole mute's worth of scheduling in one pass — a burst of automation
+       for speech nobody was going to hear. Silence is a gap, not a debt. */
+    if (audio.muted){ t.next = Math.max(t.next, ctx.currentTime + 4 + r()*20); continue; }
     while (t.next < ctx.currentTime + 0.5){
       const start = Math.max(t.next, ctx.currentTime + 0.05);
       const syllables = 3 + Math.floor(r()*7);
@@ -257,6 +267,24 @@ function noteScheduler(){
   }
 }
 
+/* ————— why every voice is torn down by hand —————
+   A WebAudio node is collected only when nothing downstream still holds it.
+   A gain still wired to the convolver is wired to the destination, so it
+   lives forever however long ago its source stopped — and a visitor walking
+   for a minute leaves a few hundred of them feeding a three-second stereo
+   convolution. The audio thread saturates, and because it cannot keep up the
+   whole page stutters with it. The original three-node footstep hid this;
+   ten nodes and two reverb sends did not.
+
+   So every transient chain is disconnected when its source ends. */
+function reap(source, nodes, after = 0.2){
+  const done = () => { for (const n of nodes){ try { n.disconnect(); } catch(e){} } };
+  source.onended = done;
+  /* onended does not fire if the context is suspended mid-sound, so belt and
+     braces — a timer that cannot leave the graph holding anything. */
+  setTimeout(done, (after + 0.5) * 1000);
+}
+
 /** One note in the current programme's voice. */
 function note(P, t, f){
   const ctx = audio.ctx;
@@ -279,6 +307,7 @@ function note(P, t, f){
   const g2 = ctx.createGain(); g2.gain.value = harmG;
   const o2 = ctx.createOscillator(); o2.type = 'sine'; o2.frequency.value = f * harm;
   o2.connect(g2); g2.connect(g); o2.start(t); o2.stop(t + dur + 0.2);
+  reap(o, [o, o2, g2, send, g], (t - ctx.currentTime) + dur);
 }
 
 /** Kept for the bell the gallery rings on its own account. */
@@ -288,9 +317,15 @@ export function footstep(speed){
   if (!audio.ok || audio.muted) return;
   const ctx = audio.ctx;
   const r = audio.arnd;
-  /* Heel and toe are not the same weight, so alternate sides slightly. */
-  audio.stride = (audio.stride + 1) & 1;
-  const lean = audio.stride ? 1 : 0.88;
+  /* Heel and toe are not the same weight, so alternate sides slightly.
+     This flag is `foot`, not `stride`, and the distinction is load-bearing:
+     `stride` is the walk loop's distance accumulator, and it drains it in a
+     `while (stride > 0.78)`. Writing `(stride + 1) & 1` back into it pinned
+     the value at 1 — forever above the threshold — so the first footstep
+     hung the frame and filled the audio graph until the tab died. */
+  audio.foot ^= 1;
+  audio.steps++;
+  const lean = audio.foot ? 1 : 0.88;
   const vol = Math.min(0.22, 0.075 + speed * 0.026) * lean;
 
   const body = ctx.createBufferSource(); body.buffer = audio.stepBuf;
@@ -305,6 +340,7 @@ export function footstep(speed){
   const bv = ctx.createGain(); bv.gain.value = 0.18;
   bg.connect(bv); bv.connect(audio.verb);
   body.start();
+  reap(body, [body, lp, bg, be, bv], 0.15);
 
   /* The sole brushing the board — quiet, brief, and the part your ear
      actually reads as "wood". */
@@ -320,6 +356,7 @@ export function footstep(speed){
   const sv = ctx.createGain(); sv.gain.value = 0.22;
   sg.connect(sv); sv.connect(audio.verb);
   scuff.start(ctx.currentTime + 0.006 + r()*0.004);
+  reap(scuff, [scuff, hp, sg, se, sv], 0.1);
 }
 
 /** Step to the next programme. Returns its name. */

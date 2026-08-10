@@ -625,7 +625,16 @@ function step(dt){
   }
   const spd = Math.hypot(player.vx, player.vz);
   if (spd < 0.2 || player.py > 0) audio.stride = 0;
-  else while (audio.stride > 0.78){ audio.stride -= 0.78; footstep(spd); }
+  else {
+    /* Bounded on purpose. The most this can legitimately owe is a couple of
+       steps of a single frame's travel, so eight is already unreachable — but
+       this loop's exit depends on a variable it hands to another module, and
+       when audio briefly wrote back to it the tab locked hard on the first
+       step. A frame loop should degrade, never hang. */
+    let guard = 8;
+    while (audio.stride > 0.78 && guard-- > 0){ audio.stride -= 0.78; footstep(spd); }
+    if (guard <= 0) audio.stride = 0;
+  }
   if (!isFinite(player.x) || !isFinite(player.z)){
     console.warn('[guard] non-finite position — resetting to room centre');
     player.x = player.z = player.vx = player.vz = 0;
@@ -2715,6 +2724,18 @@ if (DBG_FULL) Object.assign(window.DBG, {
   },
   /** How many oscillators the current programme is running. */
   audioVoices(){ return audio.voices.length; },
+  /** The walk loop drains `audio.stride` in a `while (stride > 0.78)` and
+   *  calls footstep() inside it, so footstep writing to `stride` is not a
+   *  tidiness question — it pinned the value above the threshold and hung the
+   *  tab on the visitor's first step. Cheap to assert, so it is asserted. */
+  strideProbe(){
+    const before = 0.79, steps = audio.steps;
+    audio.stride = before;
+    footstep(1.0);
+    const after = audio.stride;
+    audio.stride = 0;
+    return { before, after, ran: audio.steps > steps, ok: audio.ok, muted: audio.muted };
+  },
   /** The music programme: DBG.music('Glass'), or nothing to read it. */
   music(name){ if (name !== undefined) setMusic(name); return { now: musicName(), all: PIECES.map((p) => p.name) }; },
   /** Turn the baked shadow maps off, to see what they are actually doing. */
