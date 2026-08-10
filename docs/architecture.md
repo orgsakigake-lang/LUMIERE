@@ -10,15 +10,26 @@ what made the original 3843-line file hard to extend.
 npm run dev        # watch + server on :8000, unminified
 npm run build      # index.html, minified — what GitHub Pages serves
 npm run archive    # archive/index.html, no backend — see docs/permanence.md
-npm run test:fast  # boot + cloud layer, ~1 min — use this while working
-npm test           # everything, 27 tests, ~7 min — before committing
+npm run test:fast  # boot + cloud layer, ~2 min — use this while working
+npm test           # everything, 39 tests, 6-9 min — before committing
 npm run verify:sql # apply supabase-setup.sql to a throwaway PostgreSQL in
                    # Docker and assert 13 row-level-security behaviours
 ```
 
 **Use `test:fast` in the inner loop.** The full suite is slow because CI has no
 GPU: entering the gallery costs ~12s on SwiftShader and every `artHash` runs a
-generator to completion. Tests boot at `?q=0`, which pins the cheapest quality
+generator to completion.
+
+The suite is **split by group across spec files**, because a file is the unit
+Playwright can spread across workers. That took it from 20.7 minutes to 6–9.
+`inside the gallery` is two files rather than one — the entry cost is paid
+twice to halve what had become most of the run — and both stay `serial`
+internally, since sharing one page is what makes entering affordable at all.
+Four workers, not eight: each drives its own software-rendered browser and
+SwiftShader already spreads rasterisation across every core, so past about half
+of them they compete instead of overlapping. `mode: 'parallel'` inside
+`determinism` was tried for the same reason and made the whole run *slower*,
+6.4 minutes to 8.7. Tests boot at `?q=0`, which pins the cheapest quality
 tier — without that, 4× MSAA into a float buffer roughly doubles the run. The
 two renderer tests opt back into full quality because that is what they are
 testing.

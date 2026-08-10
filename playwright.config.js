@@ -6,23 +6,38 @@ import { defineConfig, devices } from '@playwright/test';
    Never hard-code a golden hash recorded elsewhere. */
 export default defineConfig({
   testDir: './test',
-  /* Serial. Parallel workers were tried on an 8-core machine and did not
-     clearly help: every worker runs its own software-rendered browser and
-     SwiftShader already spreads rasterisation across all cores, so they
-     compete for the same CPU rather than overlapping.
+  /* The suite is split by group across spec files, and Playwright gives each
+     file its own worker. That is what makes concurrency work here: the groups
+     have genuinely different shapes — determinism runs generators with no
+     browser to speak of, the renderer wants full quality, the gallery pays a
+     one-off cost to walk in and then shares that page.
 
-     The suite takes ~8 minutes here, and most of that is the renderer itself —
-     4× MSAA into an RGBA16F buffer is genuinely expensive without a GPU. That
-     is the cost of testing what actually ships. Use `npm run test:fast` (~1
-     min) while working and save this for checkpoints. */
+     An earlier note here said parallel workers had been tried and did not
+     help. That was measured against a single file, where there was nothing to
+     run in parallel — every worker would have re-run the same serial group.
+     Files are the unit Playwright can actually spread.
+
+     Four, not eight. Every worker drives its own software-rendered browser and
+     SwiftShader spreads rasterisation across all cores by itself, so past
+     about half the cores they stop overlapping and start competing.
+
+     `inside the gallery` is the long pole, so it is two files rather than one:
+     the ~15s entry is paid twice to halve a group that had grown to most of
+     the run. Both stay `serial` internally — they share one page, which is the
+     whole reason entering is affordable. */
   fullyParallel: false,
-  workers: 1,
+  workers: process.env.CI ? 2 : 4,
   reporter: [['list']],
   /* Headless CI runs on SwiftShader, where entering the gallery (25 room
      meshes + the first wing of artwork) costs ~12s at 720x405 and ~32s at
      720p. The viewport is small and the timeout generous for that reason —
      neither is a statement about real performance. */
-  timeout: 150_000,
+  /* Raised from 150s when the suite went concurrent. Four workers each drive
+     their own software-rendered browser, so the slowest tests get slower even
+     as the wall clock drops — 'frame stepping' passes alone in 47s and timed
+     out in a full run. The limit is there to catch a hang, not to police how
+     long SwiftShader takes. */
+  timeout: 240_000,
   use: {
     baseURL: 'http://localhost:8000',
     viewport: { width: 720, height: 405 },
