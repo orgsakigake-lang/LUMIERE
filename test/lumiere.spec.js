@@ -415,6 +415,54 @@ test.describe('the cloud layer', () => {
     expect(result.seen.some((u) => u.includes('/rest/v1/profiles?slug=eq.somebody'))).toBe(true);
   });
 
+  test('a failed write is kept and sent when the cloud comes back', async ({ page }) => {
+    await boot(page);
+    /* Writes used to be fire-and-forget: the local change had already happened,
+       so one that did not land left the gallery and the cloud disagreeing until
+       the next reload — where the cloud won and the visitor's hanging vanished
+       with no explanation. Losing an evening's arranging to a dropped
+       connection is not an acceptable failure mode. */
+    const r = await page.evaluate(async () => {
+      window.DBG.outbox('clear');
+      window.DBG.cloudSessForTest(true);
+      let allow = false, sent = 0;
+      window.DBG.cloudFetch((url, opt) => {
+        if (!allow) return Promise.reject(new Error('offline'));
+        sent++;
+        return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve([]) });
+      });
+
+      /* Three hangings while the network is down. */
+      window.DBG.placeForTest('0,0:0', 'u1');
+      window.DBG.outbox('clear');
+      for (const k of ['0,0:0', '0,0:1', '0,0:2']) window.DBG.enqueueForTest(k, 'u1');
+      await new Promise((res) => setTimeout(res, 400));
+      const offline = window.DBG.outbox();
+
+      /* The same frame written again must replace, not stack. */
+      window.DBG.enqueueForTest('0,0:1', 'u2');
+      const coalesced = window.DBG.outbox();
+
+      allow = true;
+      window.DBG.outbox('flush');
+      for (let i = 0; i < 40 && window.DBG.outbox().pending > 0; i++)
+        await new Promise((res) => setTimeout(res, 100));
+      const after = window.DBG.outbox();
+
+      window.DBG.cloudFetch(null);
+      window.DBG.cloudSessForTest(false);
+      window.DBG.outbox('clear');
+      return { offline, coalesced, after, sent };
+    });
+
+    console.log(`    held ${r.offline.pending} while offline · `
+              + `${r.coalesced.pending} after rewriting one · ${r.after.pending} left after reconnect`);
+    expect(r.offline.pending).toBe(3);        // nothing was thrown away
+    expect(r.coalesced.pending).toBe(3);      // rewriting a frame replaced it
+    expect(r.after.pending).toBe(0);          // and the backlog drained
+    expect(r.sent).toBeGreaterThan(0);
+  });
+
   test('a guest is put in front of the work, not at the origin', async ({ page }) => {
     await boot(page);
     /* The failure this guards: works hang wherever the curator walked, so a

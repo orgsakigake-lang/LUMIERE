@@ -358,7 +358,7 @@ function gatherIntoWing(){
   savePlacements();
   if (cloud.sess && !cloud.viewing)
     for (const [k, id] of curator.placements)
-      reportWrite(cloudSetPlacement(k, id), 'the cloud did not take that hanging');
+      enqueue('setPlacement', k, [k, id]);
   rebuildWorld();
   goToRoom(WING_ORIGIN[0], WING_ORIGIN[1], 0);
   const rooms2 = route.length;
@@ -848,6 +848,8 @@ function idbOpen(){
 async function curatorBoot(){
   curator.db = await idbOpen();
   loadFills();
+  /* Anything that did not reach the cloud last time is still owed. */
+  outboxLoad(); outboxUI();
   curator.mode = curator.db ? 'idb' : 'memory';
   /* when a cloud session (or a guest visit) will drive placements,
      the local ones stay parked — the cloud is the source of truth */
@@ -1106,7 +1108,7 @@ function curatorRemove(id){
   if (rec.url && !rec.cloudRec) URL.revokeObjectURL(rec.url);
   curator.uploads.delete(id);
   if (rec.cloudRec && cloud.sess)
-    reportWrite(cloudDeleteUpload(rec), 'the cloud kept its copy — the work returns on reload');
+    enqueue('deleteUpload', rec.id, [rec]);
   else if (curator.db){
     try { curator.db.transaction('images', 'readwrite').objectStore('images').delete(id); } catch(e){}
   }
@@ -1118,7 +1120,7 @@ function curatorRemove(id){
 function curatorClearPlacement(k){
   curator.placements.delete(k);
   if (cloud.sess && !cloud.viewing)
-    reportWrite(cloudDelPlacement(k), 'the cloud still holds that hanging — it returns on reload');
+    enqueue('delPlacement', k, [k]);
   const o = curator.overrides.get(k);
   if (o){
     gl.deleteTexture(o.tex);
@@ -1316,7 +1318,7 @@ function curatorHang(){
   curator.placements.set(k, curator.sel);
   savePlacements();
   if (cloud.sess && !cloud.viewing)
-    reportWrite(cloudSetPlacement(k, curator.sel), 'cloud did not answer — the hang is local for now');
+    enqueue('setPlacement', k, [k, curator.sel]);
   applyPlacement(t.r, t.A, i);
   flashHint('hung — a private loan to the endless gallery');
 }
@@ -1494,18 +1496,28 @@ document.getElementById('curator').addEventListener('keydown', (e) => {
   document.getElementById('cur-slug-save').addEventListener('click', async () => {
     const slug = document.getElementById('cur-slug').value.trim().toLowerCase();
     if (!/^[a-z0-9-]{3,32}$/.test(slug)){ flashHint('names are 3–32 letters, digits, dashes'); return; }
-    try { await cloudClaimSlug(slug); curatorRefresh(); flashHint('the gallery answers to <b>' + slug + '</b> now'); }
+    try { await cloudClaimSlug(slug); curatorRefresh(); flashHint('the gallery answers to <b>' + slug + '</b> now'); enqueue.claimed = slug; }
     catch(e){ flashHint(String(e.message || e)); }
   });
   document.getElementById('cur-publish').addEventListener('click', async () => {
     if (!cloud.sess || !cloud.slug) return;
     const next = !cloud.published;
-    try {
-      await cloudSetPublished(next);
+    /* Tried inline, because the visitor is watching this one and wants an
+       answer — but a failure enqueues rather than being swallowed. Whether a
+       gallery is public is the last piece of state that should be allowed to
+       disagree with the cloud. */
+    let ok = false;
+    try { const r = await cloudSetPublished(next); ok = !r || r.ok !== false; }
+    catch(e){ ok = false; }
+    if (ok){
       curatorRefresh();
       flashHint(next ? 'published — anyone with the link can walk your gallery'
                      : 'unpublished — the gallery is yours alone again');
-    } catch(e){ flashHint(String(e.message || e)); }
+    } else {
+      enqueue('setPublished', 'published', [next]);
+      flashHint(next ? 'the cloud did not answer — publishing when it does'
+                     : 'the cloud did not answer — <b>still public</b> until it does');
+    }
   });
   document.getElementById('cur-migrate').addEventListener('click', async () => {
     if (!cloud.sess) return;
@@ -1538,6 +1550,95 @@ document.getElementById('curator').addEventListener('keydown', (e) => {
 /* cfetch resolves on HTTP errors rather than rejecting, so a write the server
    turned down used to disappear into an empty catch and leave the local Map
    quietly disagreeing with the database until the next reload. Say so. */
+/* ————— the outbox —————
+   Every cloud write used to be fire-and-forget with a hint on failure. The
+   local change had already happened, so a write that did not land left the
+   gallery and the cloud quietly disagreeing until the next reload — at which
+   point the cloud's version won and the visitor's change vanished with no
+   explanation. Losing a hanging to a dropped connection is not acceptable
+   behaviour for something a person spent an evening arranging.
+
+   So writes go through a queue that outlives the attempt, and the failure
+   mode becomes "not saved yet" instead of "silently lost".
+
+   Every write here is idempotent and keyed — set or delete a placement, set
+   published, claim a slug — so a retry is always safe and a later write to
+   the same key can simply replace an earlier one. That is what keeps the
+   queue bounded when somebody toggles a switch twenty times. */
+const OUTBOX_KEY = 'lumiere_outbox', OUTBOX_MAX = 400;
+const outbox = { items: [], timer: 0, tries: 0, sending: false };
+
+function outboxLoad(){
+  if (!storageOK) return;
+  try { outbox.items = JSON.parse(localStorage.getItem(OUTBOX_KEY) || '[]'); } catch(e){}
+}
+function outboxSave(){
+  if (!storageOK) return;
+  try { localStorage.setItem(OUTBOX_KEY, JSON.stringify(outbox.items)); } catch(e){}
+}
+/** Queue a write. `key` identifies what it is about, so a newer instruction
+ *  about the same thing supersedes the older one rather than queueing behind
+ *  it — the cloud only ever needs the final answer. */
+function enqueue(kind, key, args){
+  const i = outbox.items.findIndex((it) => it.kind === kind && it.key === key);
+  if (i >= 0) outbox.items.splice(i, 1);
+  outbox.items.push({ kind, key, args });
+  if (outbox.items.length > OUTBOX_MAX) outbox.items.shift();
+  outboxSave();
+  outboxUI();
+  outboxFlush();
+}
+const OUTBOX_SEND = {
+  setPlacement: ([k, id]) => cloudSetPlacement(k, id),
+  delPlacement: ([k])     => cloudDelPlacement(k),
+  setPublished: ([on])    => cloudSetPublished(on),
+  claimSlug:    ([slug])  => cloudClaimSlug(slug),
+  deleteUpload: ([rec])   => cloudDeleteUpload(rec),
+};
+async function outboxFlush(){
+  if (outbox.sending || !outbox.items.length) return;
+  if (!cloud.on || !cloud.sess || cloud.viewing) return;   // nothing to talk to
+  outbox.sending = true;
+  clearTimeout(outbox.timer); outbox.timer = 0;
+  try {
+    while (outbox.items.length){
+      const it = outbox.items[0];
+      const send = OUTBOX_SEND[it.kind];
+      if (!send){ outbox.items.shift(); continue; }         // unknown: drop it
+      let r = null;
+      try { r = await send(it.args); } catch(e){ r = null; }
+      if (!r || !r.ok){
+        /* Back off, and say so once rather than on every attempt. */
+        outbox.tries++;
+        const wait = Math.min(60000, 1200 * Math.pow(2, Math.min(5, outbox.tries - 1)));
+        if (outbox.tries === 1)
+          flashHint('the cloud did not answer — your changes are saved here and will be sent');
+        outbox.timer = setTimeout(() => { outbox.sending = false; outboxFlush(); }, wait);
+        outboxUI();
+        return;
+      }
+      outbox.items.shift();
+      outbox.tries = 0;
+      outboxSave();
+      outboxUI();
+    }
+    outboxUI();
+  } finally {
+    if (!outbox.timer) outbox.sending = false;
+  }
+}
+/** What the office says about it. Silence when there is nothing outstanding. */
+function outboxUI(){
+  const el = document.getElementById('cur-outbox');
+  if (!el) return;
+  const n = outbox.items.length;
+  el.hidden = n === 0;
+  if (n) el.textContent = outbox.tries
+    ? `${n} change${n===1?'':'s'} not sent yet — retrying`
+    : `sending ${n} change${n===1?'':'s'}…`;
+}
+/* A write worth keeping goes in the outbox; anything else keeps the old
+   fire-and-forget behaviour, because retrying it would be meaningless. */
 function reportWrite(promise, msg){
   promise.then((r) => { if (!r || !r.ok) flashHint(msg); })
          .catch(() => flashHint(msg));
@@ -1582,6 +1683,10 @@ async function loadMyCollection(){
 async function bootCloud(){
   const { mode, data } = await cloudBoot();
   if (mode === 'off') return;
+  /* A signed-in session is the first moment there is anywhere to send what
+     the outbox is holding — including anything left over from a previous
+     visit that ended before the network came back. */
+  if (cloud.sess) outboxFlush();
   if (mode === 'guest'){
     curator.placements.clear();            // a guest sees only their host's hanging
     applyCloudUploads(data.uploads);
@@ -2360,6 +2465,8 @@ window.DBG = {
     };
   },
   cloudState(){ return { on: cloud.on, signedIn: !!cloud.sess, viewing: cloud.viewing, slug: cloud.slug }; },
+  /** Pretend to be signed in, so the outbox has somewhere to send. */
+  cloudSessForTest(on){ cloud.sess = on ? { access_token: 'test', user: { id: 'test' } } : null; return !!cloud.sess; },
 };
 
 /* The rest of the debug surface exists for the dev harness and the test
@@ -2554,6 +2661,15 @@ if (DBG_FULL) Object.assign(window.DBG, {
   presentation(w, h, lineArt = false){
     return { orientation: orientationOf(w, h), fill: suggestFill(w, h, lineArt) };
   },
+  /** Queue a placement write exactly as hanging one does. */
+  enqueueForTest(k, id){ enqueue('setPlacement', k, [k, id]); return outbox.items.length; },
+  /** The unsent-writes queue: what it holds, and a way to drive it. */
+  outbox(act){
+    if (act === 'flush') outboxFlush();
+    if (act === 'clear'){ outbox.items.length = 0; outbox.tries = 0; outboxSave(); outboxUI(); }
+    return { pending: outbox.items.length, tries: outbox.tries,
+             kinds: outbox.items.map((i) => i.kind + ':' + i.key) };
+  },
   /** The route a wing would take for n works, without hanging anything. */
   wingRoute(n = 12){ return wingRoute(n).map(({gx, gz}) => [gx, gz]); },
   /** Lay the collection out along one walkable route. Returns what it hung. */
@@ -2592,6 +2708,10 @@ if (DBG_FULL) Object.assign(window.DBG, {
   cloudFetch(fn){ setFetch(fn); return { stubbed: !!fn }; },
   cloudLoadGallery(slug){ return cloudLoadGallery(slug); },
 });
+
+/* The browser telling us the network is back is a better trigger than any
+   timer, and costs nothing while it is not. */
+addEventListener('online', () => outboxFlush());
 
 /* ————— boot ————— */
 canvas.addEventListener('webglcontextlost', (e)=>{
