@@ -46,6 +46,50 @@ test.describe('the cloud layer', () => {
     expect(result.seen.some((u) => u.includes('/rest/v1/profiles?slug=eq.somebody'))).toBe(true);
   });
 
+  test('a write that changed nothing is not reported as success', async ({ page }) => {
+    /* The bug this exists for, found against the real project: `uploads` had
+       policies for select, insert and delete but none for UPDATE. With RLS on
+       and no UPDATE policy nobody can update — the owner included — and the
+       request does not fail. It matches no rows, and PostgREST answers 200 for
+       having done nothing. Every retitle would have returned 200, been thrown
+       away by the database, and been marked sent by the outbox.
+
+       The status is therefore not the answer. The row count is. */
+    await boot(page);
+    const r = await page.evaluate(async () => {
+      const reply = (body) => Promise.resolve({
+        ok: true, status: 200, json: () => Promise.resolve(body) });
+      const out = {};
+      window.DBG.cloudSessForTest(true);
+
+      window.DBG.cloudFetch(() => reply([]));            // policy silently forbids it
+      out.blocked = await window.DBG.cloudUpdateUpload('u1', { note: 'hello' });
+
+      window.DBG.cloudFetch(() => reply([{ id: 'u1', note: 'hello' }]));
+      out.applied = await window.DBG.cloudUpdateUpload('u1', { note: 'hello' });
+
+      window.DBG.cloudFetch(() => Promise.resolve({
+        ok: false, status: 403, json: () => Promise.resolve({}) }));
+      out.refused = await window.DBG.cloudUpdateUpload('u1', { note: 'hello' });
+
+      /* And the header that makes the count visible at all must be sent. */
+      let headers = null;
+      window.DBG.cloudFetch((url, opts) => { headers = opts && opts.headers; return reply([{ id: 'u1' }]); });
+      await window.DBG.cloudUpdateUpload('u1', { note: 'x' });
+      out.prefer = headers && headers.Prefer;
+
+      window.DBG.cloudFetch(null); window.DBG.cloudSessForTest(false);
+      return out;
+    });
+    console.log(`    0 rows → ok=${r.blocked.ok} · 1 row → ok=${r.applied.ok} · 403 → ok=${r.refused.ok}`);
+
+    expect(r.blocked.ok, '200 with zero rows was treated as a successful write').toBe(false);
+    expect(r.applied.ok).toBe(true);
+    expect(r.refused.ok).toBe(false);
+    expect(r.prefer, 'without return=representation the row count is invisible')
+      .toContain('return=representation');
+  });
+
   test('a failed write is kept and sent when the cloud comes back', async ({ page }) => {
     await boot(page);
     /* Writes used to be fire-and-forget: the local change had already happened,

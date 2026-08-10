@@ -140,6 +140,28 @@ check "visitor cannot remove your file"  0 "$(rows_changed "delete from storage.
 check "visitor cannot overwrite a file"  0 "$(rows_changed "update storage.objects set name='x.jpg' where bucket_id='loans'" $VISITOR)"
 check "the owner still can rehang"       1 "$(rows_changed "update public.placements set k='3,-4:2' where owner='$OWNER'" $OWNER)"
 
+# ————— what a work says —————
+# `note` holds the description shown beside a work. It arrived after some
+# galleries did, so it is added with `add column if not exists` and the client
+# retries without it — which means "the column is missing" and "the column is
+# there but unwritable" both degrade quietly, and neither would be noticed.
+# Assert it exists, that its owner can write it, and that nobody else can.
+check "a work has somewhere to say what it is" 1 \
+  "$(psql_q -c "select count(*) from information_schema.columns
+                where table_schema='public' and table_name='uploads' and column_name='note';")"
+check "the owner can describe their own work"  1 \
+  "$(rows_changed "update public.uploads set note='Graphite on cartridge paper.' where owner='$OWNER'" $OWNER)"
+check "a visitor cannot rewrite your words"    0 \
+  "$(rows_changed "update public.uploads set note='defaced'" $VISITOR)"
+check "anon cannot rewrite your words"         0 \
+  "$(rows_changed "update public.uploads set note='defaced'" anon)"
+# `with check` is a separate clause from `using`, and only this asserts it: an
+# owner may edit their row but may not edit it into somebody else's. Postgres
+# raises on a with-check violation rather than matching nothing, so ERR is the
+# pass — and a policy written with `using` alone would quietly return 1 here.
+check "an owner cannot hand a work away"       ERR \
+  "$(rows_changed "update public.uploads set owner='$VISITOR' where owner='$OWNER'" $OWNER)"
+
 echo
 echo "bucket limits"
 check "file size limit is set"                   12582912 "$(psql_q -c "select file_size_limit from storage.buckets where id='loans'")"

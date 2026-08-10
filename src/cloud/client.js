@@ -135,10 +135,11 @@ export function cloudPublicURL(path){
    save" into "your image did not upload". So a rejected write is retried
    without it: the drawing lands either way, and the words follow once the
    migration is applied. */
-async function writeUpload(path, body, method = 'POST'){
+async function writeUpload(path, body, method = 'POST', extra = null){
   const send = (b) => cfetch(path, {
     method,
-    headers: { 'Content-Type': 'application/json', Prefer: 'return=minimal' },
+    headers: Object.assign(
+      { 'Content-Type': 'application/json', Prefer: 'return=minimal' }, extra),
     body: JSON.stringify(b),
   });
   let rs = await send(body);
@@ -173,10 +174,21 @@ export async function cloudUploadBlob(name, blob, note = ''){
 }
 
 /** Retitle a work, or rewrite what it says. Idempotent and keyed by id, so the
- *  outbox can collapse twenty edits of the same row into the last one. */
+ *  outbox can collapse twenty edits of the same row into the last one.
+ *
+ *  Asks for the row back and counts it, rather than trusting the status. A
+ *  policy that forbids the write does not fail the request — it matches no
+ *  rows, and PostgREST answers 200 for having done nothing. That is not a
+ *  hypothetical: `uploads` had no UPDATE policy at all when this function was
+ *  written, so every edit returned 200 and every edit was discarded, and the
+ *  outbox would have marked each one sent. A write that changed nothing is a
+ *  write that failed, and the queue is allowed to know. */
 export async function cloudUpdateUpload(id, patch){
-  const rs = await writeUpload('/rest/v1/uploads?id=eq.' + id, patch, 'PATCH');
-  return { ok: rs.ok };
+  const rs = await writeUpload('/rest/v1/uploads?id=eq.' + id, patch, 'PATCH',
+                               { Prefer: 'return=representation' });
+  if (!rs.ok) return { ok: false };
+  const rows = await rs.json().catch(() => null);
+  return { ok: Array.isArray(rows) && rows.length > 0, rows: rows ? rows.length : 0 };
 }
 
 /* Deletes report what happened rather than swallowing it. A half-failed

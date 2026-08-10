@@ -2982,6 +2982,7 @@ if (DBG_FULL) Object.assign(window.DBG, {
   ambient(v){ if (v !== undefined){ AMB_BASE[0]=v[0]; AMB_BASE[1]=v[1]; AMB_BASE[2]=v[2]; } return [...AMB_BASE]; },
   cloudFetch(fn){ setFetch(fn); return { stubbed: !!fn }; },
   cloudLoadGallery(slug){ return cloudLoadGallery(slug); },
+  cloudUpdateUpload(id, patch){ return cloudUpdateUpload(id, patch); },
 });
 
 /* The browser telling us the network is back is a better trigger than any

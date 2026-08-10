@@ -78,6 +78,7 @@ $fn$;
 
 drop policy if exists "uploads read"   on public.uploads;
 drop policy if exists "uploads write"  on public.uploads;
+drop policy if exists "uploads update" on public.uploads;
 drop policy if exists "uploads delete" on public.uploads;
 create policy "uploads read"   on public.uploads for select
   using (auth.uid() = owner or public.is_published(owner));
@@ -89,6 +90,15 @@ create policy "uploads write"  on public.uploads for insert with check (
   and path like (auth.uid()::text || '/%')
   and (select count(*) from public.uploads u where u.owner = auth.uid()) < 500
 );
+-- Retitling a work, and writing what it says. This policy was missing until the
+-- gallery first had a reason to update an upload — nothing ever did before —
+-- and its absence is invisible from the client: with RLS on and no UPDATE
+-- policy, *nobody* can update, the owner included. PostgREST then answers 200
+-- with zero rows changed, which reads exactly like success. `using` decides
+-- which rows may be touched; `with check` decides what they may become, so an
+-- owner cannot hand a row to somebody else on the way past.
+create policy "uploads update" on public.uploads for update
+  using (auth.uid() = owner) with check (auth.uid() = owner);
 create policy "uploads delete" on public.uploads for delete using (auth.uid() = owner);
 
 drop policy if exists "placements read"   on public.placements;

@@ -58,12 +58,18 @@ network — you are finished. Skip to *Hanging your drawings well* at the bottom
 2. **SQL Editor → New query →** paste the whole of `supabase-setup.sql` **→
    Run.** It is idempotent; running it twice is safe.
 
-   > **Already have a gallery? Re-run it.** The file gains columns as the
-   > gallery does — most recently `uploads.note`, which holds the description
-   > shown beside a work. Every addition uses `add column if not exists`, so
-   > re-running costs nothing and changes no data. Until you do, titles and
-   > descriptions still work locally and the client simply omits the field
-   > rather than failing the upload.
+   > **Already have a gallery? Re-run it.** The file gains columns and policies
+   > as the gallery does — most recently `uploads.note`, which holds the
+   > description shown beside a work, and an **UPDATE policy on `uploads`**,
+   > without which nobody can retitle a work, the owner included. Every change
+   > is idempotent, so re-running costs nothing and touches no data.
+   >
+   > That missing policy is worth knowing about, because of *how* it failed.
+   > With row-level security on and no UPDATE policy, a write does not error —
+   > it matches no rows, and PostgREST answers `200` for having done nothing.
+   > The edit looked saved and was discarded. `npm run verify:sql` now asserts
+   > that an owner can write a description and that nobody else can, and the
+   > client counts the rows it changed rather than trusting the status.
 3. **Authentication → Sign In / Up:** confirm the Email provider is enabled (it
    is by default), and turn **"Confirm email" off** if you want to create your
    account without waiting on a mail.
@@ -115,10 +121,17 @@ npm run verify:sql
 ```
 
 That starts a throwaway PostgreSQL in Docker, applies the real
-`supabase-setup.sql` to it, and asserts thirteen row-level-security behaviours —
-that an anonymous session cannot read another owner's uploads, cannot list the
-storage bucket, cannot write anything, and that an unpublished profile does not
-resolve. It needs Docker running and touches nothing outside its container.
+`supabase-setup.sql` to it, and asserts **thirty** row-level-security
+behaviours — that an anonymous session cannot read another owner's uploads,
+cannot list the storage bucket, cannot write anything, that an unpublished
+profile does not resolve, and that an owner *can* still do each of the things
+they are supposed to be able to do.
+
+That last group earns its place. The failure that prompted it was a **missing**
+policy rather than a wrong one: `uploads` had select, insert and delete but no
+UPDATE, so retitling a work silently did nothing. Every check that only asks
+"is the stranger locked out?" passes just as happily when the owner is locked
+out too, and RLS reports both as `200`.
 
 Then check it in the live project, which is the only thing that proves *your*
 database got it:
