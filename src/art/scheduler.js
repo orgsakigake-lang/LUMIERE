@@ -457,6 +457,85 @@ export const SHA = { wall:'e', u:0, w:1, h:1, hangY:1.55 };   // scratch for sha
 
 /* adaptive quality: 2 full · 1 lighter DPR · 0 low DPR, no reflections */
 
+/* ————— baked shadows —————
+   A room never changes: its walls, its furniture, its chandelier and its
+   lights are all fixed the moment it is generated. So the shadow map is baked
+   once, when the room is built, and read for the rest of the room's life —
+   the per-frame depth pass that makes shadow mapping expensive simply does not
+   happen here.
+
+   One map per room, from the fill light at the ceiling looking down. That is
+   the light that reaches the floor, and the things standing on a floor — the
+   bench, the pedestal, and the chandelier's own arms — are what there is to
+   cast. Picture lights are left unshadowed: six more maps per room to catch a
+   moulding shadowing its own wall, which is a millimetre of relief. */
+export const SHADOW_SIZE = 512;
+let shadowProg = null, shadowFBO = null, uLightMat = null;
+export function setShadowProgram(prog){
+  shadowProg = prog;
+  uLightMat = prog ? gl.getUniformLocation(prog, 'uLightMat') : null;
+}
+/** Light view-projection for a room, in room-local space — which is what
+ *  arch.vert already hands the fragment shader as vLp, so nothing has to know
+ *  about room offsets. */
+function lightMatrix(out, lp){
+  /* Looking straight down. A 104° cone from 3.05 m up covers ±3.9 m at the
+     floor, which holds every object a room can place. */
+  const near = 0.05, far = 5.2, f = 1 / Math.tan((104 * Math.PI/180) / 2);
+  const P = [f,0,0,0, 0,f,0,0, 0,0,(far+near)/(near-far),-1, 0,0,2*far*near/(near-far),0];
+  /* View: x→X, z→Y, y→Z, translated to the light. Looking down means points
+     below it must land at *negative* eye Z, or the projection puts the whole
+     room behind the near plane and the map comes back empty — which renders
+     without complaint and simply never shadows anything. Column-major. */
+  const V = [1,0,0,0,  0,0,1,0,  0,1,0,0,  -lp[0], -lp[2], -lp[1], 1];
+  for (let c = 0; c < 4; c++)
+    for (let rw = 0; rw < 4; rw++){
+      let v = 0;
+      for (let k = 0; k < 4; k++) v += P[k*4+rw] * V[c*4+k];
+      out[c*4+rw] = v;
+    }
+  return out;
+}
+export function bakeShadow(r){
+  if (!shadowProg) return;
+  const fill = r.ownLights.find(l => l.fill && !l.off);
+  r.shadowIdx = -1;
+  if (!fill || !r.vao) return;
+  if (!r.shadowTex){
+    r.shadowTex = gl.createTexture();
+    gl.bindTexture(gl.TEXTURE_2D, r.shadowTex);
+    gl.texStorage2D(gl.TEXTURE_2D, 1, gl.DEPTH_COMPONENT24, SHADOW_SIZE, SHADOW_SIZE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+    /* Comparison sampling: the hardware does the depth test and the bilinear
+       filter in one fetch, which is four free PCF taps. */
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_COMPARE_MODE, gl.COMPARE_REF_TO_TEXTURE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_COMPARE_FUNC, gl.LEQUAL);
+  }
+  if (!shadowFBO) shadowFBO = gl.createFramebuffer();
+  r.shadowMat = lightMatrix(r.shadowMat || new Float32Array(16), fill.p);
+
+  const prevFB = gl.getParameter(gl.FRAMEBUFFER_BINDING);
+  const vp = gl.getParameter(gl.VIEWPORT);
+  gl.bindFramebuffer(gl.FRAMEBUFFER, shadowFBO);
+  gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.DEPTH_ATTACHMENT, gl.TEXTURE_2D, r.shadowTex, 0);
+  gl.viewport(0, 0, SHADOW_SIZE, SHADOW_SIZE);
+  gl.clear(gl.DEPTH_BUFFER_BIT);
+  gl.useProgram(shadowProg);
+  gl.uniformMatrix4fv(uLightMat, false, r.shadowMat);
+  gl.enable(gl.DEPTH_TEST);
+  gl.colorMask(false, false, false, false);
+  gl.bindVertexArray(r.vao);
+  gl.drawElements(gl.TRIANGLES, r.nIdx, gl.UNSIGNED_SHORT, 0);
+  gl.colorMask(true, true, true, true);
+  gl.bindVertexArray(null);
+  gl.bindFramebuffer(gl.FRAMEBUFFER, prevFB);
+  gl.viewport(vp[0], vp[1], vp[2], vp[3]);
+  r.shadowIdx = 0;                      // resolved against the packed list later
+}
+
 export function makeRoomVAO(r, daylight){
   const mesh = buildRoomMesh(r, daylight);
   const vao = gl.createVertexArray();
@@ -488,9 +567,11 @@ export function makeRoomVAO(r, daylight){
     r.nFlames = r.flames.length / 3;
   }
   assembleLights(r, daylight);
+  bakeShadow(r);
   trace(`[world] built room (${r.gx},${r.gz}) seed=${r.seed}`);
 }
 export function dropRoomGL(r){
+  if (r.shadowTex){ gl.deleteTexture(r.shadowTex); r.shadowTex = null; }
   if (r.vao){ gl.deleteVertexArray(r.vao); gl.deleteBuffer(r.vbo); gl.deleteBuffer(r.ibo); }
   if (r.flameVAO){ gl.deleteVertexArray(r.flameVAO); gl.deleteBuffer(r.flameVBO); }
   r.vao = r.vbo = r.ibo = null; r.nIdx = 0;

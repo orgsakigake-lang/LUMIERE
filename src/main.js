@@ -33,11 +33,13 @@ import { plasterTex, parquetTex, shadowTex, skyTex, makeSurfaceTextures,
          ensureSkyTex, dropSurfaceTextures } from './render/textures.js';
 import { player, M_P, M_V, M_MV, M_PV, vpW, vpH, setViewport,
          visited, setVisited, nearRooms, midRooms } from './render/state.js';
-import { setLoanProvider, releaseSlot, freeAllArtSlots, discardPainted, preemptArtJobs, artJobKey,
+import { setLoanProvider, setShadowProgram, releaseSlot, freeAllArtSlots, discardPainted, preemptArtJobs, artJobKey,
          syncArtJobs, pumpArt, updateHudStat, markSeen, paintBasis, makeRoomVAO,
          dropRoomGL, TEX_SIZES, LOAN_SIZES, POOLS, PPOOL, scratch, sctx, pscratch, pctx,
          artState, PB, SHA } from './art/scheduler.js';
 
+import VS_SHADOW from './render/shaders/shadow.vert';
+import FS_SHADOW from './render/shaders/shadow.frag';
 import VS_ARCH from './render/shaders/arch.vert';
 import FS_ARCH from './render/shaders/arch.frag';
 import VS_PAINT from './render/shaders/paint.vert';
@@ -68,6 +70,9 @@ function initPrograms(){
     mv: gl.getUniformLocation(progArch, 'uMV'),
     p:  gl.getUniformLocation(progArch, 'uP'),
     fog:gl.getUniformLocation(progArch, 'uFog'),
+    shadow:gl.getUniformLocation(progArch, 'uShadow'),
+    shadowMat:gl.getUniformLocation(progArch, 'uShadowMat'),
+    shadowIdx:gl.getUniformLocation(progArch, 'uShadowIdx'),
     sig:gl.getUniformLocation(progArch, 'uSigma'),
     alpha:gl.getUniformLocation(progArch, 'uAlpha'),
     amb:gl.getUniformLocation(progArch, 'uAmb'),
@@ -80,6 +85,7 @@ function initPrograms(){
   gl.useProgram(progArch);
   gl.uniform1i(gl.getUniformLocation(progArch, 'uPlaster'), 1);
   gl.uniform1i(gl.getUniformLocation(progArch, 'uParquet'), 2);
+  gl.uniform1i(gl.getUniformLocation(progArch, 'uShadow'), 3);   // per-room baked map
   makeSurfaceTextures();
   progPaint = program(VS_PAINT, FS_PAINT);
   uPaint = {};
@@ -95,6 +101,9 @@ function initPrograms(){
   gl.bindVertexArray(null);
   gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, false);
   gl.pixelStorei(gl.UNPACK_COLORSPACE_CONVERSION_WEBGL, gl.NONE);
+  /* The depth-only pass that bakes each room's shadow map. */
+  setShadowProgram(program(VS_SHADOW, FS_SHADOW));
+
   const aniso = gl.getExtension('EXT_texture_filter_anisotropic');
   /* A wall of pictures is seen at a grazing angle more often than head-on, and
      a pencil line at a grazing angle is precisely what this filter is for. The
@@ -181,6 +190,7 @@ function packLights(r, ox, oz, force){
   }
   const LPOS = r.lpos, LDIR = r.ldir, LCOL = r.lcol;
   const list = r.lights; let n = 0;
+  r.packFillIdx = -1;
   for (let i = 0; i < list.length && n < MAX_LIGHTS; i++){
     const l = list[i];
     if (l.off) continue;                       // a frame with nothing in it
@@ -200,6 +210,9 @@ function packLights(r, ox, oz, force){
     LCOL[b+1] = dim ? l.col[1]*CANDLE[1] : l.col[1];
     LCOL[b+2] = dim ? l.col[2]*CANDLE[2] : l.col[2];
     LCOL[b+3] = l.inner;
+    /* The baked map was rendered from this room's own fill light; a neighbour's
+       spilling through a doorway is a different light and must not use it. */
+    if (l.fill && !l.spill && r.packFillIdx < 0) r.packFillIdx = n;
     n++;
   }
   if (!force){ r.packSerial = packSerial; r.packN = n; }
@@ -1501,6 +1514,7 @@ async function bootCloud(){
 let lastT = 0, frameCount = 0, fpsAcc = 0, fpsAvg = 0;
 let stalled = false, badRuns = 0, goodRuns = 0;
 let lastFaced = null, aimEl = null;
+let shadowsOn = true;
 let probeRequest = null, rafId = 0, forceDt = null;
 const probeBuf = new Uint8Array(32*32*4);
 
@@ -1787,6 +1801,14 @@ function frame(t){
       fogCur[0]+m[0]*.5, fogCur[1]+m[1]*.5, fogCur[2]+m[2]*.5);
     const nl = packLights(r, ox, oz);
     gl.uniform1i(uArch.nl, nl);
+    /* Which packed light the baked map belongs to. packLights drops lights the
+       switch turned off, so the index has to be found rather than assumed. */
+    gl.uniform1i(uArch.shadowIdx, (shadowsOn && r.shadowTex) ? r.packFillIdx : -1);
+    if (r.shadowTex){
+      gl.uniformMatrix4fv(uArch.shadowMat, false, r.shadowMat);
+      gl.activeTexture(gl.TEXTURE3); gl.bindTexture(gl.TEXTURE_2D, r.shadowTex);
+      gl.activeTexture(gl.TEXTURE0);
+    }
     gl.uniform4fv(uArch.lpos, r.lpos);
     gl.uniform4fv(uArch.ldir, r.ldir);
     gl.uniform4fv(uArch.lcol, r.lcol);
@@ -2008,10 +2030,16 @@ function frame(t){
         gl.uniform1f(uPaint.uFade, alpha * shLit / (1 + k*1.5));
         gl.drawArrays(gl.TRIANGLES, 0, 6);
       }
-      if (r.bench)
-        floorBlob(r.bench.x, r.bench.z,
-                  r.bench.alongZ ? 0.24 : 0.90, r.bench.alongZ ? 0.90 : 0.24, 0.46, 0.62);
-      if (r.pedestal) floorBlob(r.pedestal.x, r.pedestal.z, 0.26, 0.26, 1.05, 0.66);
+      /* No floor blobs where the baked map already casts. They used to be the
+         only shadow a bench had; stacked on top of a real one they doubled it
+         into a black hole. Rooms without a map — a darkroom has no fill light
+         — still get the approximation. */
+      if (!(shadowsOn && r.shadowTex && r.packFillIdx >= 0)){
+        if (r.bench)
+          floorBlob(r.bench.x, r.bench.z,
+                    r.bench.alongZ ? 0.24 : 0.90, r.bench.alongZ ? 0.90 : 0.24, 0.46, 0.62);
+        if (r.pedestal) floorBlob(r.pedestal.x, r.pedestal.z, 0.26, 0.26, 1.05, 0.66);
+      }
       gl.uniform1f(uPaint.uAT, 0);
       gl.uniform1i(uPaint.uNL, nl);
       for (const A of r.artworks){
@@ -2427,6 +2455,8 @@ if (DBG_FULL) Object.assign(window.DBG, {
   presentation(w, h, lineArt = false){
     return { orientation: orientationOf(w, h), fill: suggestFill(w, h, lineArt) };
   },
+  /** Turn the baked shadow maps off, to see what they are actually doing. */
+  shadows(on){ if (on !== undefined) shadowsOn = !!on; return shadowsOn; },
   /** Triangles in a built room — the phase E budget, checkable. */
   roomTris(gx, gz){ const r = rooms.get(roomKey(gx, gz)); return r && r.nIdx ? r.nIdx/3 : 0; },
   /** How many rooms each strategy keeps, and a way to force one of them.

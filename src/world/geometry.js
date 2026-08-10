@@ -424,7 +424,7 @@ export function assembleLights(r, daylight){
     for (const nl of nb.ownLights){
       const px = nl.p[0] + dx*S, pz = nl.p[2] + dz*S;
       const dist = Math.hypot(px - dc[0], pz - dc[2]);   // horizontal reach
-      if (dist < 2.9) cand.push([dist, { ...nl, p: [px, nl.p[1], pz] }]);
+      if (dist < 2.9) cand.push([dist, { ...nl, p: [px, nl.p[1], pz], spill: true }]);
     }
   }
   cand.sort((a, b) => a[0] - b[0]);
