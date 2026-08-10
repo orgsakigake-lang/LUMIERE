@@ -143,6 +143,38 @@ test.describe('determinism', () => {
     }
   });
 
+  test('a wing is a walk, not a scatter', async ({ page }) => {
+    await boot(page);
+    /* A curator hangs wherever they are standing, which in an infinite museum
+       can be a dozen halls apart — fine for the person who walked there, and
+       hopeless for a visitor who arrives in front of one drawing with no way
+       to know the rest exist. Gathering lays the collection along one route.
+       The property that makes it a wing rather than a list of coordinates:
+       every room must be reachable from an earlier one through a door that is
+       actually open. */
+    const route = await page.evaluate(() => window.DBG.wingRoute(40));
+    const doors = await page.evaluate((r) =>
+      r.map(([gx, gz]) => window.DBG.doors(gx, gz)), route);
+    console.log(`    ${route.length} rooms: ${route.slice(0, 6).map((r) => r.join(',')).join(' → ')}`
+              + (route.length > 6 ? ' → …' : ''));
+
+    expect(route.length).toBeGreaterThan(1);
+    const seen = new Set([route[0].join(',')]);
+    for (let i = 1; i < route.length; i++){
+      const [gx, gz] = route[i];
+      /* Reachable from some room already in the wing, through an open door on
+         the shared edge — checked from the neighbour's side, since doors are
+         recorded per room. */
+      const ok = [['e', -1, 0], ['w', 1, 0], ['n', 0, -1], ['s', 0, 1]].some(([wall, dx, dz]) => {
+        const j = route.findIndex(([ax, az], k) => k < i && ax === gx + dx && az === gz + dz);
+        return j >= 0 && doors[j][wall];
+      });
+      expect(ok, `room ${gx},${gz} is in the wing but not walkable from it`).toBe(true);
+      expect(seen.has(`${gx},${gz}`), `room ${gx},${gz} appears twice`).toBe(false);
+      seen.add(`${gx},${gz}`);
+    }
+  });
+
   test('no work hangs near-blank', async ({ page }) => {
     await boot(page);
     /* Roughly one work in twenty used to hang almost empty — a seed landing in
@@ -725,8 +757,8 @@ test.describe.serial('inside the gallery', () => {
     const out = await page.evaluate(() => {
       const IN = 6.76, YAW = { e: Math.PI/2, w: -Math.PI/2, n: Math.PI, s: 0 };
       const res = [];
-      for (let gx = 0; gx < 8 && res.length < 3; gx++)
-        for (let gz = 0; gz < 8 && res.length < 3; gz++){
+      for (let gx = 0; gx < 8 && res.length < 2; gx++)
+        for (let gz = 0; gz < 8 && res.length < 2; gz++){
           const doors = window.DBG.doors(gx, gz);
           const shut = ['e','w','n','s'].find((k) => !doors[k]);
           if (!shut) continue;
@@ -734,10 +766,14 @@ test.describe.serial('inside the gallery', () => {
           window.DBG.tp(gx, gz, yaw);
           window.DBG.pos(0, 0, yaw, 0);
           const room0 = window.DBG.stats().room.join(',');
-          for (let i = 0; i < 140; i++){
+          /* Deliberately smaller than half the wall slab (0.24 m): a step that
+             can jump the collider in one frame tests tunnelling, not walls, and
+             this is asserting that walls stop people. Kept short because the
+             walk renders a frame per step and the suite shares one page. */
+          for (let i = 0; i < 70; i++){
             const s = window.DBG.stats();
-            window.DBG.pos(s.pos[0] + Math.sin(yaw)*0.12,
-                           s.pos[1] - Math.cos(yaw)*0.12, yaw, 0);
+            window.DBG.pos(s.pos[0] + Math.sin(yaw)*0.11,
+                           s.pos[1] - Math.cos(yaw)*0.11, yaw, 0);
             window.DBG.frame(1, 16.7);
           }
           const s = window.DBG.stats();

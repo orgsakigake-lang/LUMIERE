@@ -225,6 +225,7 @@
   .rv-opt:hover, .rv-opt:focus-visible{border-color:rgba(201,169,106,.5); color:var(--bone); outline:none;}
   .rv-opt[aria-pressed="true"]{border-color:var(--brass); color:var(--brass);}
   .rv-foot{display:flex; gap:.5rem; margin-top:.9rem; flex-wrap:wrap;}
+  #cur-gather{border-color:rgba(201,169,106,.45);}
   .cur-note{margin-top:1.2rem; font-size:.62rem; letter-spacing:.18em; text-transform:uppercase;
             color:rgba(169,159,140,.55); line-height:2;}
   .key{color:var(--brass); font-weight:400;}

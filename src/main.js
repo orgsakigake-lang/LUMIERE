@@ -303,7 +303,78 @@ const YAW_FACING = { s: 0, n: Math.PI, e: Math.PI / 2, w: -Math.PI / 2 };
  *  can be a dozen rooms out in an infinite museum. Spawning a guest at the
  *  origin and wishing them luck is not showing them anything: they see
  *  generated art, assume that is all there is, and leave. */
+/* ————— the wing —————
+   A curator hangs works wherever they happen to be standing, which in an
+   infinite museum can be a dozen halls apart. That is fine for the person who
+   walked there and hopeless for a visitor: they arrive in front of one drawing
+   with no way to know the rest exist, and in a solo theme the halls between
+   are empty and dark. So a collection can be *gathered* — laid out along a
+   short walk through adjoining rooms, in the order the works were added.
+
+   The route is a ring spiral from the wing's own room outward, and it only
+   steps to rooms the previous one actually opens onto: a wing you cannot walk
+   without passing through a wall is not a wing. */
+const WING_ORIGIN = [0, 0];
+function wingRoute(need){
+  const seen = new Set([roomKey(WING_ORIGIN[0], WING_ORIGIN[1])]);
+  const route = [{ gx: WING_ORIGIN[0], gz: WING_ORIGIN[1] }];
+  let capacity = getRoom(WING_ORIGIN[0], WING_ORIGIN[1]).artworks.length;
+  const DIRS = [['e',1,0], ['n',0,1], ['w',-1,0], ['s',0,-1]];
+  for (let i = 0; i < route.length && capacity < need && route.length < 40; i++){
+    const { gx, gz } = route[i];
+    const r = getRoom(gx, gz);
+    for (const [wall, dx, dz] of DIRS){
+      if (capacity >= need) break;
+      if (!r.doors[wall]) continue;                 // must be walkable
+      const k = roomKey(gx + dx, gz + dz);
+      if (seen.has(k)) continue;
+      seen.add(k);
+      route.push({ gx: gx + dx, gz: gz + dz });
+      capacity += getRoom(gx + dx, gz + dz).artworks.length;
+    }
+  }
+  return route;
+}
+/** Hang the whole collection along that route, in order. Returns what it did. */
+function gatherIntoWing(){
+  const works = [...curator.uploads.keys()];
+  if (!works.length){ flashHint('the collection is empty'); return null; }
+  const route = wingRoute(works.length);
+  /* Clear only what this rehang replaces, so a work hung deliberately in some
+     far hall is not silently swept up. */
+  for (const { gx, gz } of route){
+    const r = getRoom(gx, gz);
+    for (let i = 0; i < r.artworks.length; i++) curator.placements.delete(artJobKey(r, i));
+  }
+  let n = 0;
+  outer:
+  for (const { gx, gz } of route){
+    const r = getRoom(gx, gz);
+    for (let i = 0; i < r.artworks.length; i++){
+      if (n >= works.length) break outer;
+      curator.placements.set(artJobKey(r, i), works[n++]);
+    }
+  }
+  savePlacements();
+  if (cloud.sess && !cloud.viewing)
+    for (const [k, id] of curator.placements)
+      reportWrite(cloudSetPlacement(k, id), 'the cloud did not take that hanging');
+  rebuildWorld();
+  goToRoom(WING_ORIGIN[0], WING_ORIGIN[1], 0);
+  const rooms2 = route.length;
+  flashHint(`${n} work${n===1?'':'s'} hung across ${rooms2} room${rooms2===1?'':'s'} — this is the wing`);
+  return { hung: n, rooms: rooms2, left: works.length - n };
+}
+
 function spawnAtCollection(placements){
+  /* A visitor arrives at the wing when there is one — its first room is where
+     the collection starts, and walking forward is the tour. */
+  const originKey = roomKey(WING_ORIGIN[0], WING_ORIGIN[1]);
+  for (const k of placements.keys())
+    if (k.startsWith(originKey + ':')){
+      goToRoom(WING_ORIGIN[0], WING_ORIGIN[1], 0);
+      return true;
+    }
   let best = null;
   for (const k of placements.keys()){
     const m = /^(-?\d+),(-?\d+):(\d+)$/.exec(k);
@@ -1377,6 +1448,10 @@ document.getElementById('curator').addEventListener('keydown', (e) => {
     document.getElementById('cur-pass').placeholder = 'a new key (3+ characters)';
     curatorRefresh();
     setTimeout(() => document.getElementById('cur-pass').focus(), 50);
+  });
+  document.getElementById('cur-gather').addEventListener('click', () => {
+    if (!curatorCanEdit()) return;
+    if (gatherIntoWing()) curatorToggle();     // step out and look at it
   });
   document.getElementById('cur-file').addEventListener('change', (e) => {
     if (e.target.files && e.target.files.length) curatorAddFiles([...e.target.files]);
@@ -2479,6 +2554,10 @@ if (DBG_FULL) Object.assign(window.DBG, {
   presentation(w, h, lineArt = false){
     return { orientation: orientationOf(w, h), fill: suggestFill(w, h, lineArt) };
   },
+  /** The route a wing would take for n works, without hanging anything. */
+  wingRoute(n = 12){ return wingRoute(n).map(({gx, gz}) => [gx, gz]); },
+  /** Lay the collection out along one walkable route. Returns what it hung. */
+  gather(){ return gatherIntoWing(); },
   /** Turn the baked shadow maps off, to see what they are actually doing. */
   shadows(on){ if (on !== undefined) shadowsOn = !!on; return shadowsOn; },
   /** Triangles in a built room — the phase E budget, checkable. */
