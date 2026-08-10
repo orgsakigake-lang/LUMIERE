@@ -24,6 +24,8 @@ export function cloudPublicURL(){ return ''; }
 const unreachable = () => { throw new Error('this gallery keeps no cloud'); };
 export const cloudSendCode = unreachable;
 export const cloudVerify = unreachable;
+export const cloudPassword = unreachable;
+export const cloudSignUp = unreachable;
 export const cloudUploadBlob = unreachable;
 export const cloudClaimSlug = unreachable;
 export const cloudSetPublished = unreachable;

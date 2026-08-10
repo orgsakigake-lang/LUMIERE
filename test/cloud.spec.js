@@ -2,6 +2,21 @@ import { test, expect } from '@playwright/test';
 import { boot, enter, hashes, WORKS, ROOMS, ENTER_MS } from './helpers.js';
 
 test.describe('the cloud layer', () => {
+  test('the archive stub answers every call the real client does', async () => {
+    /* The archive build swaps cloud/client.js for an inert stub of the same
+       shape. esbuild only notices a missing export at build time, so adding a
+       function to the client and forgetting the stub breaks `npm run archive`
+       and nothing else — which is exactly what happened when password sign-in
+       landed. CI caught it; this catches it a step earlier and says why. */
+    const fs = await import('node:fs/promises');
+    const names = (src) => new Set(
+      [...src.matchAll(/export (?:async function|function|const) (\w+)/g)].map((m) => m[1]));
+    const real = names(await fs.readFile('src/cloud/client.js', 'utf8'));
+    const stub = names(await fs.readFile('src/cloud/client.stub.js', 'utf8'));
+    const missing = [...real].filter((n) => !stub.has(n));
+    expect(missing, `client.stub.js is missing: ${missing.join(', ')}`).toEqual([]);
+  });
+
   /* The point of decoupling it: the read calls return plain data and touch
      neither the DOM nor the render scheduler, so they can be driven against a
      stubbed transport with no Supabase project in the loop. */
