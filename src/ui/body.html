@@ -33,10 +33,15 @@
     </div>
     <div id="cur-cloud-lock" hidden>
       <div class="sub">This gallery keeps its collection in the cloud. Sign in with your
-        email — a six-digit code will be sent to it. No password exists to forget.</div>
+        email and a password.</div>
       <div class="row">
         <input type="email" id="cur-email" placeholder="you@example.com" autocomplete="email">
-        <button class="btn" id="cur-send">Send code</button>
+        <input type="password" id="cur-pw" placeholder="password" autocomplete="current-password">
+      </div>
+      <div class="row">
+        <button class="btn" id="cur-signin">Sign in</button>
+        <button class="btn" id="cur-signup">Create account</button>
+        <button class="btn" id="cur-send">Email me a code instead</button>
       </div>
       <div class="row" id="cur-code-row" hidden>
         <input type="text" id="cur-code" placeholder="six-digit code" inputmode="numeric" autocomplete="one-time-code" maxlength="8">

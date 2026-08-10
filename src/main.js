@@ -22,6 +22,7 @@ import { SPECIAL, rooms, roomKey, getRoom, spotAt, specialAt, RIG } from './worl
 import { THEMES, THEME_ORDER, DEFAULT_THEME, theme, themeName, setThemeName,
          nextThemeName } from './world/themes.js';
 import { cloud, setFetch, cloudSaveSess, cloudSendCode, cloudVerify, cloudPublicURL,
+         cloudPassword, cloudSignUp,
          cloudUploadBlob, cloudDeleteUpload, cloudSetPlacement, cloudDelPlacement,
          cloudClaimSlug, cloudSetPublished, cloudLoadMine, cloudLoadGallery, cloudBoot } from './cloud/client.js';
 import { SCHEMES, applyScheme, buildRoomMesh, assembleLights, MAX_LIGHTS } from './world/geometry.js';
@@ -1466,7 +1467,37 @@ document.getElementById('curator').addEventListener('keydown', (e) => {
   const emailIn = document.getElementById('cur-email');
   const codeIn = document.getElementById('cur-code');
   const cloudNote = document.getElementById('cur-cloud-note');
-  emailIn.addEventListener('keydown', (e) => { if (e.key === 'Enter') document.getElementById('cur-send').click(); e.stopPropagation(); });
+  const pwIn = document.getElementById('cur-pw');
+  emailIn.addEventListener('keydown', (e) => { if (e.key === 'Enter') pwIn.focus(); e.stopPropagation(); });
+  pwIn.addEventListener('keydown', (e) => { if (e.key === 'Enter') document.getElementById('cur-signin').click(); e.stopPropagation(); });
+  /** Shared tail of every way in. */
+  async function afterSignIn(){
+    cloudNote.textContent = '';
+    await loadMyCollection();
+    curatorRefresh();
+    flashHint('welcome, curator — your loans follow you now');
+  }
+  const creds = () => {
+    const email = emailIn.value.trim(), pw = pwIn.value;
+    if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)){ cloudNote.textContent = 'that does not read like an email address'; return null; }
+    if (pw.length < 6){ cloudNote.textContent = 'the password needs at least six characters'; return null; }
+    return { email, pw };
+  };
+  document.getElementById('cur-signin').addEventListener('click', async () => {
+    const c = creds(); if (!c) return;
+    cloudNote.textContent = 'signing in…';
+    try { await cloudPassword(c.email, c.pw); await afterSignIn(); }
+    catch(e){ cloudNote.textContent = String(e.message || e); }
+  });
+  document.getElementById('cur-signup').addEventListener('click', async () => {
+    const c = creds(); if (!c) return;
+    cloudNote.textContent = 'creating the account…';
+    try {
+      const r = await cloudSignUp(c.email, c.pw);
+      if (r === 'signed-in') await afterSignIn();
+      else cloudNote.textContent = 'confirm the account from the email, then sign in here';
+    } catch(e){ cloudNote.textContent = String(e.message || e); }
+  });
   codeIn.addEventListener('keydown', (e) => { if (e.key === 'Enter') document.getElementById('cur-verify').click(); e.stopPropagation(); });
   document.getElementById('cur-send').addEventListener('click', async () => {
     const email = emailIn.value.trim();

@@ -56,8 +56,18 @@ network — you are finished. Skip to *Hanging your drawings well* at the bottom
    about five thousand works.
 2. **SQL Editor → New query →** paste the whole of `supabase-setup.sql` **→
    Run.** It is idempotent; running it twice is safe.
-3. **Authentication → Sign In / Up:** confirm the Email provider is enabled. It
-   is by default. There are no passwords — sign-in is a six-digit code.
+3. **Authentication → Sign In / Up:** confirm the Email provider is enabled (it
+   is by default), and turn **"Confirm email" off** if you want to create your
+   account without waiting on a mail.
+
+   Sign-in is email and password. There is also a six-digit-code option, but it
+   depends on Supabase delivering mail: the built-in sender is rate-limited to a
+   couple of messages an hour and is explicitly not for production, and its
+   default template sends a confirmation *link* rather than the code — so a new
+   project cannot complete that flow until someone edits the template to include
+   `{{ .Token }}`. For a gallery with one curator, a password is fewer moving
+   parts between you and your own drawings. Row-level security does not care
+   which you used.
 4. **Settings → API Keys:** copy the **publishable** (anon) key, and put it with
    your project URL into `src/config.js`:
 

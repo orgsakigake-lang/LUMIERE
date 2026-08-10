@@ -79,6 +79,40 @@ export async function cloudSendCode(email){
   if (!rs.ok) throw new Error((await rs.json().catch(()=>({}))).msg || 'could not send the code');
 }
 
+/* ————— password sign-in —————
+   The OTP flow depends on Supabase actually delivering an email, and its
+   built-in mailer is rate-limited to a couple an hour and explicitly not for
+   production — and its default templates send a confirmation *link* rather
+   than the code this flow needs, so a fresh project cannot sign anyone in
+   until someone edits a template.
+
+   For a gallery with one curator that is a lot of moving parts between a
+   person and their own drawings. A password needs no mail server, no
+   template, and no rate limit. Row-level security is unchanged either way:
+   the session is what it is, and the policies decide what it can do. */
+export async function cloudPassword(email, password){
+  const rs = await cfetch('/auth/v1/token?grant_type=password', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email, password }),
+  });
+  const d = await rs.json().catch(() => ({}));
+  if (!rs.ok || !d.access_token)
+    throw new Error(d.msg || d.error_description || d.error || 'that did not sign you in');
+  cloudSaveSess(d);
+}
+/** Create the account, then sign in with it. Supabase returns a session
+ *  directly when email confirmation is off, and nothing when it is on. */
+export async function cloudSignUp(email, password){
+  const rs = await cfetch('/auth/v1/signup', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email, password }),
+  });
+  const d = await rs.json().catch(() => ({}));
+  if (!rs.ok) throw new Error(d.msg || d.error_description || d.error || 'could not create that account');
+  if (d.access_token){ cloudSaveSess(d); return 'signed-in'; }
+  return 'confirm';                 // a confirmation mail was sent instead
+}
+
 export async function cloudVerify(email, token){
   const rs = await cfetch('/auth/v1/verify', {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
