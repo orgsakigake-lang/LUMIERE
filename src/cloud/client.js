@@ -270,6 +270,32 @@ export async function cloudUploadBlob(name, blob, note = ''){
   return { id, path };
 }
 
+/** Replace a work's image with an edited one — same row, same id, so every
+ *  placement pointing at it stays put. The objects themselves are immutable
+ *  (a year of cache says so, and a CDN believes it), so an edit is a new
+ *  object at a fresh path, the row repointed, and only then the old object
+ *  deleted. That order is the whole design: fail at any step and the gallery
+ *  still renders — either the untouched original, or the finished edit —
+ *  never a path with nothing behind it. */
+export async function cloudReplaceBlob(id, oldPath, blob){
+  const path = cloud.sess.uid + '/' + crypto.randomUUID() + '.jpg';
+  const rs0 = await cfetch('/storage/v1/object/loans/' + path, {
+    method: 'POST',
+    headers: { 'Content-Type': blob.type || 'image/jpeg',
+               'cache-control': 'max-age=31536000, immutable' },
+    body: blob,
+  });
+  if (!rs0.ok) return { ok: false };
+  const upd = await cloudUpdateUpload(id, { path });
+  if (!upd.ok){
+    /* The row still names the old object; the orphan is ours to sweep. */
+    cfetch('/storage/v1/object/loans/' + path, { method: 'DELETE' }).catch(() => {});
+    return { ok: false };
+  }
+  cfetch('/storage/v1/object/loans/' + oldPath, { method: 'DELETE' }).catch(() => {});
+  return { ok: true, path };
+}
+
 /** Retitle a work, or rewrite what it says. Idempotent and keyed by id, so the
  *  outbox can collapse twenty edits of the same row into the last one.
  *

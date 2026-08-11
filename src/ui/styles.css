@@ -239,7 +239,9 @@
   #cur-review{margin-top:1rem; padding:.9rem 1rem; border:1px solid rgba(201,169,106,.32);
               border-radius:2px; background:rgba(201,169,106,.045);}
   .rv-head{font-size:.66rem; letter-spacing:.18em; text-transform:uppercase;
-           color:var(--brass); margin-bottom:.75rem;}
+           color:var(--brass); margin-bottom:.3rem;}
+  .rv-sub{font-size:.68rem; color:rgba(169,159,140,.62); line-height:1.5;
+          margin-bottom:.75rem;}
   .rv-list{max-height:22rem; overflow-y:auto; display:flex; flex-direction:column; gap:.4rem;}
   /* The thumbnail grew because the row now asks the visitor to write about the
      picture, and a 2.2rem square is not enough of it to write from. */
@@ -260,7 +262,14 @@
          white-space:nowrap;}
   .rv-or{font-size:.58rem; letter-spacing:.14em; text-transform:uppercase;
          color:rgba(169,159,140,.55);}
+  .rv-side{display:flex; flex-direction:column; gap:.35rem; align-items:stretch;}
   .rv-seg{display:flex; gap:.3rem;}
+  /* Glyph buttons: same voice as the fill pair, but square, because a glyph
+     stretched across a word-shaped button reads as a typo. */
+  .rv-tool{flex:1; font-size:.78rem; text-transform:none; letter-spacing:0;
+           padding:.18rem 0; line-height:1;}
+  /* An edit in flight: the row answers nothing until the image lands. */
+  .rv-row.busy{opacity:.45; pointer-events:none;}
   .rv-opt{font:inherit; font-size:.6rem; letter-spacing:.1em; text-transform:uppercase;
           padding:.3rem .55rem; cursor:pointer; background:transparent; border-radius:1px;
           border:1px solid rgba(169,159,140,.22); color:var(--bone-dim);

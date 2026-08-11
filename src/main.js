@@ -24,7 +24,8 @@ import { THEMES, THEME_ORDER, DEFAULT_THEME, theme, themeName, setThemeName,
          nextThemeName } from './world/themes.js';
 import { cloud, setFetch, cloudSaveSess, cloudSendCode, cloudVerify, cloudPublicURL,
          cloudPassword, cloudSignUp, cloudAuthSettings, setAuthLost, cloudOAuth,
-         cloudUploadBlob, cloudDeleteUpload, cloudUpdateUpload, cloudSetPlacement, cloudDelPlacement,
+         cloudUploadBlob, cloudDeleteUpload, cloudUpdateUpload, cloudReplaceBlob,
+         cloudSetPlacement, cloudDelPlacement,
          cloudClaimSlug, cloudSetPublished, cloudLoadMine, cloudLoadGallery, cloudBoot } from './cloud/client.js';
 import { SCHEMES, applyScheme, buildRoomMesh, assembleLights, MAX_LIGHTS } from './world/geometry.js';
 import { canvas, gl, compile, program } from './render/gl.js';
@@ -1050,8 +1051,59 @@ function refreshHung(ids){
   if (touched) syncArtJobs();
 }
 
-/** The review sheet: one screen for the whole batch, each row pre-filled. */
-function curatorReview(recs){
+/* ————— simple edits —————
+   Rotation and mirroring, nothing more. Phones lie about which way up a
+   drawing was scanned, and a signature reveals a flatbed scan was mirrored —
+   those two accidents are what this fixes. It is not an editor: levels,
+   crop and tone belong to the lighting model and the mount, which already
+   treat every work on the wall consistently. */
+function turnBitmap(src, op){
+  const rot = op !== 'flip';
+  const w = rot ? src.height : src.width, h = rot ? src.width : src.height;
+  const c = document.createElement('canvas');
+  c.width = w; c.height = h;
+  const g = c.getContext('2d');
+  if (op === 'cw'){ g.translate(w, 0); g.rotate(Math.PI/2); }
+  else if (op === 'ccw'){ g.translate(0, h); g.rotate(-Math.PI/2); }
+  else { g.translate(w, 0); g.scale(-1, 1); }
+  g.drawImage(src, 0, 0);
+  return c;
+}
+
+/** Apply a turn to a work wherever that work lives, cloud first: if the new
+ *  image cannot land remotely, nothing changes locally either, so what the
+ *  sheet shows is always what a returning visitor will see. */
+async function transformWork(rec, op){
+  if (!rec.blob && rec.url) rec.blob = await (await fetch(rec.url)).blob();
+  const src = await createImageBitmap(rec.blob);
+  const c = turnBitmap(src, op);
+  src.close();
+  const blob = await encodeUpload(c, looksLikeLineArt(c));
+  if (!blob) return false;
+  if (rec.cloudRec){
+    if (!cloud.sess){ flashHint('sign in again to edit a cloud work'); return false; }
+    const r = await cloudReplaceBlob(rec.id, rec.path, blob);
+    if (!r.ok){ flashHint('the edit could not reach the cloud — nothing was changed'); return false; }
+    rec.path = r.path;
+  }
+  if (rec.bmp){ rec.bmp.close(); rec.bmp = null; }
+  if (rec.url && rec.url.startsWith('blob:')) URL.revokeObjectURL(rec.url);
+  rec.blob = blob;
+  rec.url = URL.createObjectURL(blob);
+  rec.orientation = orientationOf(c.width, c.height);
+  if (!rec.cloudRec && curator.db){
+    try { curator.db.transaction('images', 'readwrite').objectStore('images')
+            .put({ id: rec.id, name: rec.name, note: rec.note || '', blob }); } catch(e){}
+  }
+  refreshHung(new Set([rec.id]));   // a work already on a wall turns with it
+  curatorGrid();
+  return true;
+}
+
+/** The review sheet: one screen for the whole batch, each row pre-filled.
+ *  Also reachable for the whole collection via “Edit works…”, which is what
+ *  `reopened` marks — same sheet, different opening line. */
+function curatorReview(recs, reopened = false){
   const box = document.getElementById('cur-review');
   if (!box) return;
   if (!recs.length){ box.hidden = true; box.textContent = ''; return; }
@@ -1060,7 +1112,15 @@ function curatorReview(recs){
 
   const head = document.createElement('div');
   head.className = 'rv-head';
-  head.textContent = `Added ${recs.length} work${recs.length === 1 ? '' : 's'} — how ${recs.length === 1 ? 'it hangs' : 'they hang'}, and what ${recs.length === 1 ? 'it says' : 'they say'}`;
+  head.textContent = reopened
+    ? `The collection, ${recs.length} work${recs.length === 1 ? '' : 's'} — how each hangs, and what it says`
+    : `Added ${recs.length} work${recs.length === 1 ? '' : 's'} — how ${recs.length === 1 ? 'it hangs' : 'they hang'}, and what ${recs.length === 1 ? 'it says' : 'they say'}`;
+  /* The two fill words are framing-shop language, and nobody should need a
+     framing shop to add a drawing. Say what each one does, once, up top. */
+  const sub = document.createElement('div');
+  sub.className = 'rv-sub';
+  sub.textContent = 'Mounted shows the whole image at its own proportions on a mat · '
+                  + 'full bleed fills the frame edge to edge, trimming what overflows';
   const list = document.createElement('div');
   list.className = 'rv-list';
 
@@ -1094,17 +1154,54 @@ function curatorReview(recs){
     fields.append(tIn, dIn);
 
     const or = document.createElement('div'); or.className = 'rv-or';
-    or.textContent = rec.orientation;
+    or.textContent = rec.orientation || '';
+    /* A work loaded from the cloud arrives as a URL and nothing else; its
+       proportions are known the moment the row's own thumbnail decodes. */
+    if (!rec.orientation) im.addEventListener('load', () => {
+      if (!im.naturalWidth) return;
+      rec.orientation = orientationOf(im.naturalWidth, im.naturalHeight);
+      or.textContent = rec.orientation;
+    }, { once: true });
     const seg = document.createElement('div'); seg.className = 'rv-seg';
-    const mk = (mode, label) => {
+    const mk = (mode, label, why) => {
       const b = document.createElement('button');
       b.type = 'button'; b.className = 'rv-opt'; b.textContent = label;
+      b.title = why;
       b.addEventListener('click', () => { curator.fills.set(rec.id, mode); paint(); });
       return b;
     };
-    const bMount = mk('mount', 'Mounted'), bBleed = mk('bleed', 'Full bleed');
+    const bMount = mk('mount', 'Mounted',
+      'The whole image at its own proportions, set on a mat — nothing is cropped');
+    const bBleed = mk('bleed', 'Full bleed',
+      'Fills the frame edge to edge — whatever overflows the frame’s shape is trimmed');
     seg.append(bMount, bBleed);
-    row.append(im, fields, or, seg);
+    /* One turn per press, never two racing: an edit re-encodes and possibly
+       crosses the network, so the row goes quiet until it lands. */
+    const tools = document.createElement('div'); tools.className = 'rv-seg rv-tools';
+    const tool = (op, glyph, label) => {
+      const b = document.createElement('button');
+      b.type = 'button'; b.className = 'rv-opt rv-tool'; b.textContent = glyph;
+      b.title = label;
+      b.setAttribute('aria-label', `${label} — ${rec.name}`);
+      b.addEventListener('click', async () => {
+        if (row.classList.contains('busy')) return;
+        row.classList.add('busy');
+        const ok = await transformWork(rec, op).catch((e) => {
+          trace('[curator] edit failed', e);
+          flashHint('that edit did not take — the work is unchanged');
+          return false;
+        });
+        row.classList.remove('busy');
+        if (ok){ im.src = rec.url; or.textContent = rec.orientation; }
+      });
+      return b;
+    };
+    tools.append(tool('ccw', '⟲', 'Rotate left'),
+                 tool('cw', '⟳', 'Rotate right'),
+                 tool('flip', '⇋', 'Mirror'));
+    const side = document.createElement('div'); side.className = 'rv-side';
+    side.append(seg, tools);
+    row.append(im, fields, or, side);
     list.append(row);
     rows.push({ rec, bMount, bBleed });
   }
@@ -1135,7 +1232,7 @@ function curatorReview(recs){
   });
   foot.append(all('mount', 'All mounted'), all('bleed', 'All full bleed'), done);
 
-  box.append(head, list, foot);
+  box.append(head, sub, list, foot);
   paint();
 }
 
@@ -1455,6 +1552,10 @@ function curatorGrid(){
     empty.textContent = 'The private collection is empty — add works above.';
     grid.append(empty);
   }
+  /* Guests browse; owners edit. The button only exists where pressing it
+     could ever do something. */
+  const editBtn = document.getElementById('cur-edit');
+  if (editBtn) editBtn.hidden = !curator.uploads.size || !!cloud.viewing;
   document.getElementById('cur-store').textContent =
     curator.mode === 'idb' ? 'collection kept in this browser · placements remembered'
                            : 'this embedding cannot keep files — loans last for this visit only';
@@ -1628,6 +1729,13 @@ document.getElementById('curator').addEventListener('keydown', (e) => {
   document.getElementById('cur-file').addEventListener('change', (e) => {
     if (e.target.files && e.target.files.length) curatorAddFiles([...e.target.files]);
     e.target.value = '';
+  });
+  /* The same sheet the batch review uses, opened over the whole collection —
+     titles, descriptions, fills and turns for works added any time, not only
+     in the minute after the file picker closed. */
+  document.getElementById('cur-edit').addEventListener('click', () => {
+    if (!curatorCanEdit()) return;
+    curatorReview([...curator.uploads.values()], true);
   });
   document.getElementById('curator').addEventListener('click', (e) => {
     if (e.target === document.getElementById('curator')) curatorToggle();
@@ -2814,6 +2922,11 @@ window.DBG = {
   /** The single writer both captions go through, exposed so a test can prove
    *  the wall label and the enlarged view render a description identically. */
   fillCaptionForTest(root, d){ fillCaption(root, d); return true; },
+  /** The one pixel operation behind every review-sheet edit button. */
+  turnForTest(src, op){ return turnBitmap(src, op); },
+  /** Open the review sheet over given records, so a test can count its knobs
+   *  without a file picker. */
+  reviewForTest(recs, reopened){ curatorReview(recs, reopened); return true; },
   /** What a placard and the enlarged view would print for a frame. One call,
    *  because the whole point of describeWork is that they cannot disagree. */
   caption(gx, gz, i){

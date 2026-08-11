@@ -360,6 +360,64 @@ test.describe.serial('inside the gallery — light and loans', () => {
     expect(by['panorama'].orientation).toBe('landscape');
   });
 
+  test('a turn moves every pixel where it said it would, and undoes itself', async () => {
+    /* The review sheet's edit buttons all stand on one function. Axis-aligned
+       90° turns and mirrors of integer-sized images involve no resampling, so
+       the assertion here is byte equality, not similarity: rotate-then-unrotate
+       and mirror-twice must return the exact input, and a single turn must put
+       a known corner pixel exactly where the transform says corners go. */
+    const r = await page.evaluate(() => {
+      const c = document.createElement('canvas'); c.width = 3; c.height = 2;
+      const g = c.getContext('2d');
+      g.fillStyle = '#fff'; g.fillRect(0, 0, 3, 2);
+      g.fillStyle = '#f00'; g.fillRect(0, 0, 1, 1);        // top-left, red
+      g.fillStyle = '#00f'; g.fillRect(2, 1, 1, 1);        // bottom-right, blue
+      const bytes = (cv) => [...cv.getContext('2d').getImageData(0, 0, cv.width, cv.height).data].join(',');
+      const at = (cv, x, y) => [...cv.getContext('2d').getImageData(x, y, 1, 1).data].slice(0, 3).join(',');
+      const cw = window.DBG.turnForTest(c, 'cw');
+      const undone = window.DBG.turnForTest(cw, 'ccw');
+      const mirrored2 = window.DBG.turnForTest(window.DBG.turnForTest(c, 'flip'), 'flip');
+      return {
+        dims: [cw.width, cw.height],
+        redAfterCW: at(cw, 1, 0),          // (x,y) → (h-1-y, x): (0,0) → (1,0)
+        blueAfterCW: at(cw, 0, 2),         // (2,1) → (0,2)
+        roundTrip: bytes(undone) === bytes(c),
+        mirrorTwice: bytes(mirrored2) === bytes(c),
+      };
+    });
+    expect(r.dims).toEqual([2, 3]);
+    expect(r.redAfterCW).toBe('255,0,0');
+    expect(r.blueAfterCW).toBe('0,0,255');
+    expect(r.roundTrip).toBe(true);
+    expect(r.mirrorTwice).toBe(true);
+  });
+
+  test('the review sheet offers the turns, and explains its own words', async () => {
+    /* "Mounted" and "full bleed" are framing-shop language — the gallery's own
+       curator had to ask what they meant, which is the proof the sheet needed
+       to say. And every row carries the three turns, since a phone that lied
+       about which way up a drawing was scanned is the commonest edit there is. */
+    const r = await page.evaluate(() => {
+      window.DBG.reviewForTest([
+        { id: 'rv-t1', name: 'A test sheet', note: '', url: '', orientation: 'portrait' },
+      ], true);
+      const box = document.getElementById('cur-review');
+      const out = {
+        head: box.querySelector('.rv-head')?.textContent || '',
+        sub: box.querySelector('.rv-sub')?.textContent || '',
+        tools: [...box.querySelectorAll('.rv-tool')].map((b) => b.title),
+        fillTips: [...box.querySelectorAll('.rv-seg:not(.rv-tools) .rv-opt')].map((b) => b.title),
+      };
+      window.DBG.reviewForTest([]);                        // leave the office as found
+      return out;
+    });
+    expect(r.head).toContain('The collection');
+    expect(r.sub.toLowerCase()).toContain('mounted');
+    expect(r.sub.toLowerCase()).toContain('full bleed');
+    expect(r.tools).toEqual(['Rotate left', 'Rotate right', 'Mirror']);
+    for (const tip of r.fillTips) expect(tip.length).toBeGreaterThan(10);
+  });
+
   test('the image uses its tonal range instead of crushing into black', async () => {
     /* The colour pipeline had no sRGB encode and no sRGB decode, so everything
        was displayed at L^2.2 and the whole museum lived in about 70 of the 255
