@@ -368,6 +368,14 @@ export function cycleMusic(){
   return P.name;
 }
 export function musicName(){ return PIECES[audio.piece]?.name ?? 'silence'; }
+/** A programme drawn by lot — never silence, and when asked, never the one
+ *  already sounding. The music is generated on the spot, so handing every
+ *  visitor a different soundtrack at the door costs nothing and infringes
+ *  nobody: there is no recording to own. */
+export function randomMusic(differ = false){
+  const pool = PIECES.filter((p, i) => !p.quiet && !(differ && i === audio.piece));
+  return pool[(Math.random() * pool.length) | 0].name;
+}
 /** Choose a programme by name or index, for boot and for tests. */
 export function setMusic(which){
   const i = typeof which === 'number'

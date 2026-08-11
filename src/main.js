@@ -18,7 +18,7 @@ import { mat4, perspective, mulM, mulT, viewMatrix, extractPlanes, boxVisible } 
 import { storageOK, persist, savePersist } from './persist.js';
 import { flashHint, toggleLegend } from './ui/hint.js';
 import { audio, initAudio, bell, footstep, toggleMute, setAudioActive,
-         cycleMusic, musicName, setMusic, PIECES } from './audio.js';
+         cycleMusic, musicName, setMusic, randomMusic, PIECES } from './audio.js';
 import { SPECIAL, rooms, roomKey, getRoom, spotAt, specialAt, RIG } from './world/rooms.js';
 import { THEMES, THEME_ORDER, DEFAULT_THEME, theme, themeName, setThemeName,
          nextThemeName } from './world/themes.js';
@@ -472,6 +472,13 @@ function doJump(){
   if (player.py <= 0.0001 && player.jumps === 0){
     player.vy = 4.6; player.jumps = 1; player.lastJumpT = now;
     footstep(2.2);
+    /* A jump spins the programme — you leave the floor in one tune and land
+       in another. Once per launch, not per press, so the double jump does not
+       switch twice; and a hall someone asked to keep quiet stays quiet. */
+    if (musicName() !== 'silence'){
+      setMusic(randomMusic(true));
+      flashHint(`now playing — <b>${musicName()}</b>`);
+    }
   } else if (player.jumps === 1 && now - player.lastJumpT < 520){
     player.vy = 4.25; player.jumps = 2;
     if (audio.ok && !audio.muted) bell(audio.ctx.currentTime + 0.01, 659.26);
@@ -3299,7 +3306,11 @@ if (gl){
   swUI();
   /* Before the first room is built: the theme decides the schemes the meshes
      are cut from and the rig genLights reads. */
-  if (persist.music) setMusic(persist.music);
+  /* Every visit opens on a programme drawn at the door, so no two visitors
+     need share a soundtrack — the music is generated, so a fresh draw costs
+     nothing. The one saved choice that still binds across visits is silence:
+     somebody who asked for a quiet hall gets a quiet hall, every time. */
+  setMusic(persist.music === 'silence' ? 'silence' : randomMusic());
   setThemeName(persist.theme || DEFAULT_THEME);
   applyThemeConstants();
   themeUI();

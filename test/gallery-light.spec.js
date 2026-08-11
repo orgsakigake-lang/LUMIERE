@@ -47,6 +47,31 @@ test.describe.serial('inside the gallery — light and loans', () => {
     expect(darkH.mean).toBeGreaterThan(1);         // still navigable, not a black screen
   });
 
+  test('each visit opens on its own tune, and a jump lands in another', async () => {
+    /* The soundtrack is drawn by lot at the door — generated music has no
+       recording to license, so every visitor can be handed a different one.
+       This runs before any test touches the programme, so `first` really is
+       the boot draw. A jump then spins it: leave the floor in one tune, land
+       in a different one — never silence, and never the same piece, which is
+       what makes a single sample assertable. */
+    const first = await page.evaluate(() => window.DBG.music().now);
+    expect(first).not.toBe('silence');
+
+    await page.keyboard.press('Space');
+    await page.waitForTimeout(150);
+    const second = await page.evaluate(() => window.DBG.music().now);
+    expect(second).not.toBe('silence');
+    expect(second).not.toBe(first);
+
+    /* Silence is the one choice a jump must respect — it was asked for. */
+    await page.waitForFunction(() => window.DBG.stats().py === 0 && window.DBG.stats().jumps === 0);
+    await page.evaluate(() => window.DBG.music('silence'));
+    await page.keyboard.press('Space');
+    await page.waitForTimeout(150);
+    expect(await page.evaluate(() => window.DBG.music().now)).toBe('silence');
+    console.log(`    boot draw: ${first} · after jump: ${second}`);
+  });
+
   test('the music is generated, and every programme plays', async () => {
     /* Nothing is sampled, which is the point: generated music carries no
        licence, cannot be taken down, adds no bytes to a single-file page, and
