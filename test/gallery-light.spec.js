@@ -47,29 +47,46 @@ test.describe.serial('inside the gallery — light and loans', () => {
     expect(darkH.mean).toBeGreaterThan(1);         // still navigable, not a black screen
   });
 
-  test('each visit opens on its own tune, and a jump lands in another', async () => {
+  test('each visit opens on its own tune, and a jump leaves it alone', async () => {
     /* The soundtrack is drawn by lot at the door — generated music has no
        recording to license, so every visitor can be handed a different one.
        This runs before any test touches the programme, so `first` really is
-       the boot draw. A jump then spins it: leave the floor in one tune, land
-       in a different one — never silence, and never the same piece, which is
-       what makes a single sample assertable. */
+       the boot draw. A jump must not touch it: it briefly did, and the owner
+       asked why the space bar was changing the songs. Movement is movement. */
     const first = await page.evaluate(() => window.DBG.music().now);
     expect(first).not.toBe('silence');
 
     await page.keyboard.press('Space');
     await page.waitForTimeout(150);
-    const second = await page.evaluate(() => window.DBG.music().now);
-    expect(second).not.toBe('silence');
-    expect(second).not.toBe(first);
+    expect(await page.evaluate(() => window.DBG.music().now)).toBe(first);
+    console.log(`    boot draw: ${first} · survives a jump`);
+  });
 
-    /* Silence is the one choice a jump must respect — it was asked for. */
-    await page.waitForFunction(() => window.DBG.stats().py === 0 && window.DBG.stats().jumps === 0);
-    await page.evaluate(() => window.DBG.music('silence'));
-    await page.keyboard.press('Space');
-    await page.waitForTimeout(150);
-    expect(await page.evaluate(() => window.DBG.music().now)).toBe('silence');
-    console.log(`    boot draw: ${first} · after jump: ${second}`);
+  test('rain silences the music, and its passing brings a tune back', async () => {
+    /* The rainy season is synthesized weather — wash, sheets, drops, far
+       thunder — and it admits no music: turning it on rests the programme,
+       turning it off draws a fresh one. `sounding` proves nodes actually
+       exist in the running context, not merely that a flag flipped. */
+    const r = await page.evaluate(() => {
+      const before = window.DBG.music().now;
+      window.DBG.rain(true);
+      const during = { ...window.DBG.rain(), music: window.DBG.music().now,
+                       swRain: document.getElementById('sw-rain').classList.contains('on'),
+                       swMusic: document.getElementById('sw-music').classList.contains('on') };
+      window.DBG.rain(false);
+      const after = { ...window.DBG.rain(), music: window.DBG.music().now,
+                      swRain: document.getElementById('sw-rain').classList.contains('on') };
+      return { before, during, after };
+    });
+    console.log(`    before: ${r.before} · raining: music=${r.during.music} sounding=${r.during.sounding} · after: ${r.after.music}`);
+    expect(r.during.on).toBe(true);
+    expect(r.during.sounding).toBe(true);
+    expect(r.during.music).toBe('silence');
+    expect(r.during.swRain).toBe(true);
+    expect(r.during.swMusic).toBe(false);
+    expect(r.after.on).toBe(false);
+    expect(r.after.music).not.toBe('silence');
+    expect(r.after.swRain).toBe(false);
   });
 
   test('the music is generated, and every programme plays', async () => {

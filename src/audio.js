@@ -25,7 +25,7 @@ export const audio = { ctx: null, master: null, music: null, verb: null, echo: n
                    to `stride` from here once turned that loop into an infinite
                    one. See footstep(). */
                 stride: 0, foot: 0, steps: 0, arnd: mulberry32(0xA0D10), nextNote: 0,
-                stepBuf: null, scuffBuf: null, piece: 1, voices: [] };
+                stepBuf: null, scuffBuf: null, piece: 1, voices: [], rainOn: false };
 
 /* ————— the programmes —————
    Semitone offsets from the root. Everything is a mode with no minor
@@ -191,6 +191,8 @@ export function initAudio(){
     startPiece(audio.piece);
     setInterval(noteScheduler, 120);        // lookahead scheduler
     setInterval(murmurScheduler, 250);
+    setInterval(rainScheduler, 150);
+    if (audio.rainOn) startRain();          // asked for before the context existed
   } catch(e){ /* a silent museum is still a museum */ }
 }
 
@@ -384,6 +386,135 @@ export function setMusic(which){
   if (i < 0) return musicName();
   if (audio.ok) startPiece(i); else audio.piece = i;
   return musicName();
+}
+
+/* ————— rain —————
+   A rainy season for the museum, synthesized like everything else: no
+   recording, no license, no loop point to notice. Three layers are what make
+   it read as weather rather than as a noise floor — a low wash that is the
+   weight of heavy rain, a hiss above it that swells and eases like sheets
+   crossing the roof, and single drops scattered across the stereo field.
+   Distant thunder arrives rarely enough to stay soothing. Rain and music are
+   never mixed; the caller keeps them exclusive. */
+let rainNodes = null, nextDrop = 0, nextThunder = 0;
+
+function startRain(){
+  const ctx = audio.ctx;
+  if (!ctx || rainNodes) return;
+  const bus = ctx.createGain(); bus.gain.value = 0;
+  bus.connect(audio.master);
+  /* A little of the hall, so the weather sits in the building rather than
+     on the headphones. */
+  const send = ctx.createGain(); send.gain.value = 0.15;
+  bus.connect(send); send.connect(audio.verb);
+
+  const len = (ctx.sampleRate * 4) | 0;
+  const noise = ctx.createBuffer(2, len, ctx.sampleRate);
+  const nr = mulberry32(0xDA1);
+  for (let c = 0; c < 2; c++){
+    const d = noise.getChannelData(c);
+    for (let i = 0; i < len; i++) d[i] = nr()*2 - 1;
+  }
+
+  const layer = (cut, gain) => {
+    const src = ctx.createBufferSource(); src.buffer = noise; src.loop = true;
+    const f = ctx.createBiquadFilter(); f.type = 'lowpass';
+    f.frequency.value = cut; f.Q.value = 0.5;
+    const g = ctx.createGain(); g.gain.value = gain;
+    src.connect(f); f.connect(g); g.connect(bus);
+    src.start();
+    return { src, f, g };
+  };
+  /* Measured, not guessed (DBG.audioLevel): 0.14/0.085 put the rain at RMS
+     0.016 against the music's ~0.023 — rain billed as heavy, arriving lighter
+     than a bell programme — and 0.22/0.135 only reached parity. These land it
+     at 0.026–0.034 depending on where the swell is breathing, a third to a
+     half over the music, peaks ~0.17: unmistakably a downpour, nowhere near
+     the rails. */
+  const body = layer(420, 0.30);       // the weight of a downpour
+  const hiss = layer(2600, 0.18);      // the texture of it
+
+  /* Sheets of rain: the hiss breathes on a period slow enough that you feel
+     the swell without ever catching the cycle. */
+  const lfo = ctx.createOscillator(); lfo.frequency.value = 0.045;
+  const lg = ctx.createGain(); lg.gain.value = 0.065;
+  lfo.connect(lg); lg.connect(hiss.g.gain); lfo.start();
+
+  bus.gain.setTargetAtTime(1, ctx.currentTime, 1.8);   // weather arrives; it is not switched on
+  rainNodes = { bus, send, body, hiss, lfo, lg, noise };
+  nextDrop = ctx.currentTime + 0.1;
+  nextThunder = ctx.currentTime + 18 + audio.arnd()*40;
+}
+
+function stopRain(){
+  if (!rainNodes) return;
+  const ctx = audio.ctx, R = rainNodes;
+  rainNodes = null;
+  R.bus.gain.setTargetAtTime(0, ctx.currentTime, 0.5);
+  setTimeout(() => {
+    for (const n of [R.body.src, R.hiss.src, R.lfo]){ try { n.stop(); } catch(e){} }
+    for (const n of [R.bus, R.send, R.body.f, R.body.g, R.hiss.f, R.hiss.g, R.lg]){
+      try { n.disconnect(); } catch(e){}
+    }
+  }, 2500);
+}
+
+function rainScheduler(){
+  if (!audio.ok || !rainNodes) return;
+  const ctx = audio.ctx, r = audio.arnd;
+  /* Muted still advances the clocks — silence is a gap, not a debt. */
+  if (audio.muted){
+    nextDrop = Math.max(nextDrop, ctx.currentTime + 0.3);
+    nextThunder = Math.max(nextThunder, ctx.currentTime + 10);
+    return;
+  }
+  /* Drops: dense enough to read as a downpour, each one quiet enough to
+     stay under the wash — patter, not percussion. */
+  while (nextDrop < ctx.currentTime + 0.35){
+    const t = Math.max(nextDrop, ctx.currentTime + 0.02);
+    const src = ctx.createBufferSource(); src.buffer = audio.scuffBuf;
+    src.playbackRate.value = 0.8 + r()*1.6;
+    const bp = ctx.createBiquadFilter(); bp.type = 'bandpass';
+    bp.frequency.value = 700 + r()*3800; bp.Q.value = 2.2;
+    const g = ctx.createGain();
+    const peak = 0.008 + r()*0.022;
+    g.gain.setValueAtTime(0, t);
+    g.gain.linearRampToValueAtTime(peak, t + 0.004);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + 0.03 + r()*0.05);
+    const pan = ctx.createStereoPanner(); pan.pan.value = r()*2 - 1;
+    src.connect(bp); bp.connect(g); g.connect(pan); pan.connect(rainNodes.bus);
+    src.start(t); src.stop(t + 0.12);
+    reap(src, [src, bp, g, pan], 0.2);
+    nextDrop = t + 0.02 + r()*0.07;
+  }
+  /* Thunder: far away, low, and rare — a slow swell that darkens as it
+     fades, the way distance eats the highs first. */
+  if (nextThunder < ctx.currentTime + 0.35){
+    const t = Math.max(nextThunder, ctx.currentTime + 0.05);
+    const src = ctx.createBufferSource(); src.buffer = rainNodes.noise;
+    const f = ctx.createBiquadFilter(); f.type = 'lowpass'; f.Q.value = 0.8;
+    f.frequency.setValueAtTime(110, t);
+    f.frequency.linearRampToValueAtTime(60, t + 4.5);
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(0.0001, t);
+    g.gain.exponentialRampToValueAtTime(0.12 + r()*0.12, t + 0.9 + r()*0.8);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + 4.0 + r()*2.0);
+    src.connect(f); f.connect(g); g.connect(rainNodes.bus);
+    src.start(t); src.stop(t + 7);
+    reap(src, [src, f, g], 7);
+    nextThunder = t + 35 + r()*70;
+  }
+}
+
+/** Whether the rainy season is on (the wish, which survives across visits). */
+export function rainActive(){ return audio.rainOn; }
+/** Whether rain is actually sounding right now (needs a running context). */
+export function rainSounding(){ return !!rainNodes; }
+export function setRain(on){
+  audio.rainOn = !!on;
+  if (!audio.ok) return audio.rainOn;   // remembered; initAudio honours it
+  if (audio.rainOn) startRain(); else stopRain();
+  return audio.rainOn;
 }
 
 document.addEventListener('visibilitychange', () => {

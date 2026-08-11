@@ -17,8 +17,9 @@ import { ALGO_NAMES, ALGOS, makeTitle, finishArt, resetGrain,
 import { mat4, perspective, mulM, mulT, viewMatrix, extractPlanes, boxVisible } from './render/mat4.js';
 import { storageOK, persist, savePersist } from './persist.js';
 import { flashHint, toggleLegend } from './ui/hint.js';
-import { audio, initAudio, bell, footstep, toggleMute, setAudioActive,
-         cycleMusic, musicName, setMusic, randomMusic, PIECES } from './audio.js';
+import { audio, initAudio, footstep, toggleMute, setAudioActive,
+         cycleMusic, musicName, setMusic, randomMusic, PIECES,
+         setRain, rainActive, rainSounding } from './audio.js';
 import { SPECIAL, rooms, roomKey, getRoom, spotAt, specialAt, RIG } from './world/rooms.js';
 import { THEMES, THEME_ORDER, DEFAULT_THEME, theme, themeName, setThemeName,
          nextThemeName } from './world/themes.js';
@@ -241,6 +242,28 @@ const DAY_FOG = [0.0876, 0.0804, 0.0678];   // see FOG in config.js — same re-
 function swUI(){
   document.getElementById('sw-lights').classList.toggle('on', lightsOn);
   document.getElementById('sw-shutters').classList.toggle('on', WIN.on);
+  document.getElementById('sw-music').classList.toggle('on', musicName() !== 'silence');
+  document.getElementById('sw-rain').classList.toggle('on', rainActive());
+}
+/* ————— music and rain —————
+   Two switches, never both on: the rainy season was asked for as "no music",
+   and a pentatonic bell over a downpour would honour neither. Turning the
+   music off is the one music choice that binds across visits — everything
+   else opens on the door's random draw. */
+function setMusicOn(on, quiet){
+  if (on && rainActive()) applyRain(false, true);
+  setMusic(on ? randomMusic() : 'silence');
+  persist.music = musicName(); savePersist();
+  swUI();
+  if (!quiet) flashHint(on ? `now playing — <b>${musicName()}</b>` : 'the music rests');
+}
+function applyRain(on, quiet){
+  setRain(on);
+  persist.rain = !!on; savePersist();
+  if (on && musicName() !== 'silence') setMusic('silence');
+  if (!on) setMusic(persist.music === 'silence' ? 'silence' : randomMusic());
+  swUI();
+  if (!quiet) flashHint(on ? 'a rainy season settles over the museum' : 'the rain passes');
 }
 function setLights(on, quiet){
   lightsOn = !!on; swUI();
@@ -454,7 +477,10 @@ addEventListener('keydown', (e)=>{
   if (e.code === 'KeyH'){ curatorHang(); return; }
   if (e.code === 'KeyU'){ curatorUnhang(); return; }
   if (e.code === 'KeyT'){ applyTheme(nextThemeName()); return; }
-  if (e.code === 'KeyN'){ const n = cycleMusic(); if (n) { persist.music = n; savePersist(); } return; }
+  if (e.code === 'KeyN'){
+    if (rainActive()) applyRain(false, true);          // music takes the hall back
+    const n = cycleMusic(); if (n){ persist.music = n; savePersist(); } swUI(); return;
+  }
   /* The legend had no way back: it faded after eleven seconds and the first
      notice overwrote it for good. Both keys, because ? needs a shift. */
   if (e.key === '?' || e.code === 'Slash'){ toggleLegend(); return; }
@@ -469,19 +495,14 @@ addEventListener('keydown', (e)=>{
 function doJump(){
   if (inspect.on || !entered) return;
   const now = performance.now();
+  /* A jump is a jump and nothing else. It used to spin the music programme
+     and the second step used to ring a bell — both were asked to go: sound
+     that comments on movement stops being background. */
   if (player.py <= 0.0001 && player.jumps === 0){
     player.vy = 4.6; player.jumps = 1; player.lastJumpT = now;
     footstep(2.2);
-    /* A jump spins the programme — you leave the floor in one tune and land
-       in another. Once per launch, not per press, so the double jump does not
-       switch twice; and a hall someone asked to keep quiet stays quiet. */
-    if (musicName() !== 'silence'){
-      setMusic(randomMusic(true));
-      flashHint(`now playing — <b>${musicName()}</b>`);
-    }
   } else if (player.jumps === 1 && now - player.lastJumpT < 520){
     player.vy = 4.25; player.jumps = 2;
-    if (audio.ok && !audio.muted) bell(audio.ctx.currentTime + 0.01, 659.26);
   }
 }
 addEventListener('keyup', (e)=>{ keys.delete(e.code); });
@@ -3165,6 +3186,29 @@ if (DBG_FULL) Object.assign(window.DBG, {
   },
   /** How many oscillators the current programme is running. */
   audioVoices(){ return audio.voices.length; },
+  /** RMS and peak of what the master bus actually sends, averaged over `ms`.
+   *  A temporary analyser tap — sound can only be judged by measuring it,
+   *  and a headless harness has no ears. */
+  audioLevel(ms = 300){
+    if (!audio.ok) return Promise.resolve(null);
+    const an = audio.ctx.createAnalyser(); an.fftSize = 2048;
+    audio.master.connect(an);
+    const buf = new Float32Array(an.fftSize);
+    return new Promise((res) => {
+      const t0 = performance.now(); let rms = 0, peak = 0, n = 0;
+      const tick = () => {
+        an.getFloatTimeDomainData(buf);
+        let s = 0;
+        for (let i = 0; i < buf.length; i++){
+          const v = buf[i]; s += v*v; if (Math.abs(v) > peak) peak = Math.abs(v);
+        }
+        rms += Math.sqrt(s / buf.length); n++;
+        if (performance.now() - t0 < ms) requestAnimationFrame(tick);
+        else { try { audio.master.disconnect(an); } catch(e){} res({ rms: +(rms/n).toFixed(4), peak: +peak.toFixed(4) }); }
+      };
+      tick();
+    });
+  },
   /** The walk loop drains `audio.stride` in a `while (stride > 0.78)` and
    *  calls footstep() inside it, so footstep writing to `stride` is not a
    *  tidiness question — it pinned the value above the threshold and hung the
@@ -3179,6 +3223,9 @@ if (DBG_FULL) Object.assign(window.DBG, {
   },
   /** The music programme: DBG.music('Glass'), or nothing to read it. */
   music(name){ if (name !== undefined) setMusic(name); return { now: musicName(), all: PIECES.map((p) => p.name) }; },
+  /** The weather: DBG.rain(true|false), or nothing to read it. `sounding`
+   *  needs a running AudioContext; `on` is the wish and survives reloads. */
+  rain(on){ if (on !== undefined) applyRain(!!on, true); return { on: rainActive(), sounding: rainSounding() }; },
   /** Turn the baked shadow maps off, to see what they are actually doing. */
   shadows(on){ if (on !== undefined) shadowsOn = !!on; return shadowsOn; },
   /** Pin the floor reflections on or off; null hands them back to the quality
@@ -3308,9 +3355,12 @@ if (gl){
      are cut from and the rig genLights reads. */
   /* Every visit opens on a programme drawn at the door, so no two visitors
      need share a soundtrack — the music is generated, so a fresh draw costs
-     nothing. The one saved choice that still binds across visits is silence:
-     somebody who asked for a quiet hall gets a quiet hall, every time. */
-  setMusic(persist.music === 'silence' ? 'silence' : randomMusic());
+     nothing. Two saved choices bind across visits: silence, because a quiet
+     hall was asked for; and the rainy season, which brings its own sound and
+     admits no music beside it. */
+  if (persist.rain){ setRain(true); setMusic('silence'); }
+  else setMusic(persist.music === 'silence' ? 'silence' : randomMusic());
+  swUI();                                   // the switches tell the truth from the first frame
   setThemeName(persist.theme || DEFAULT_THEME);
   applyThemeConstants();
   themeUI();
@@ -3329,4 +3379,6 @@ if (gl){
 }
 document.getElementById('sw-lights').addEventListener('click', () => setLights(!lightsOn));
 document.getElementById('sw-shutters').addEventListener('click', () => setShutters(!WIN.on));
+document.getElementById('sw-music').addEventListener('click', () => setMusicOn(musicName() === 'silence'));
+document.getElementById('sw-rain').addEventListener('click', () => applyRain(!rainActive()));
 document.getElementById('sw-curator').addEventListener('click', () => curatorToggle());
