@@ -6,6 +6,8 @@ uniform vec3 uN;            // view-space surface normal
 uniform vec3 uFog; uniform float uSigma; uniform float uFade; uniform float uEm;
 uniform float uGlaze;       // 0 varnish on canvas, 1 glass over a mounted work
 uniform float uAT;          // 1 → texture alpha shapes the quad (contact shadows)
+uniform float uRain;        // 0 dry → 1 downpour; only the sky quads ever raise it
+uniform float uTime;        // the shared shader clock, pinned by DBG.freeze
 uniform int uNL;
 uniform vec4 uLPos[10]; uniform vec4 uLDir[10]; uniform vec4 uLCol[10];
 out vec4 o;
@@ -47,6 +49,26 @@ void main(){
   if (uGlaze > 0.0){
     float fres = pow(1.0 - max(dot(n, vdir), 0.0), 5.0);
     acc += vec3(uEm * uGlaze * min(fres, 0.45) * 0.9);
+  }
+  /* ————— weather on the glass —————
+     Every painting keeps uRain at 0, so this costs them one coherent branch.
+     Two things sell rain through a window: the sky goes overcast — grey,
+     dimmer, a touch cool — and rivulets run down the pane. The rivulets are
+     texture-space columns with per-column phase, two layers at different
+     scales and speeds so no repetition ever lines up. */
+  if (uRain > 0.0){
+    float lum = dot(acc, vec3(0.299, 0.587, 0.114));
+    acc = mix(acc, vec3(lum) * vec3(0.86, 0.92, 1.04) * 0.5, uRain * 0.62);
+    float s = 0.0;
+    for (int k = 0; k < 2; k++){
+      float x = vUV.x * (k == 0 ? 26.0 : 43.0) + float(k) * 7.31;
+      float ph = fract(sin(floor(x) * 127.1) * 43758.5453);
+      float y = fract(vUV.y * 1.35 + uTime * (k == 0 ? 0.9 : 1.5) + ph * 9.0);
+      float w = abs(fract(x) - 0.5);
+      s += step(ph, 0.62) * smoothstep(0.10, 0.0, w) * smoothstep(0.42, 0.0, y)
+         * (k == 0 ? 1.0 : 0.6);
+    }
+    acc += vec3(s * uRain * uEm * 0.20);
   }
   float f = 1.0 - exp(-uSigma * length(vPv));
   o = vec4(mix(acc, uFog, f), uFade * mix(1.0, t.a, uAT));

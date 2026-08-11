@@ -148,6 +148,42 @@ export function ensureSkyTex(){
   sun.addColorStop(0, 'rgba(255,253,244,0.95)'); sun.addColorStop(0.25, 'rgba(255,244,214,0.45)');
   sun.addColorStop(1, 'rgba(255,244,214,0)');
   g.fillStyle = sun; g.fillRect(0, 0, 256, 384);
+
+  /* Beyond the glass: a far town under the light — two rows of rooftops
+     dissolved in haze, a chimney here, one spire. Deliberately faint and
+     low in the pane: the point is that there is a world out there, not that
+     anyone should look at it instead of the art. Seeded, so every window in
+     every gallery shows the same town. */
+  const rnd = (s => () => ((s = (s * 1664525 + 1013904223) >>> 0), s / 4294967296))(0xC17F);
+  const hz = g.createLinearGradient(0, 240, 0, 384);
+  hz.addColorStop(0, 'rgba(233,205,160,0)');
+  hz.addColorStop(0.55, 'rgba(226,196,152,0.5)');
+  hz.addColorStop(1, 'rgba(219,188,146,0.75)');
+  g.fillStyle = hz; g.fillRect(0, 240, 256, 144);
+  const roofrow = (base, amp, col) => {
+    g.fillStyle = col;
+    let x = -6 + rnd()*4;
+    while (x < 260){
+      const w = 14 + rnd()*26, h = amp * (0.5 + rnd());
+      g.fillRect(x, base - h, w, h + 60);
+      if (rnd() < 0.3) g.fillRect(x + w*0.28, base - h - 7, 3, 8);       // a chimney
+      if (rnd() < 0.1){                                                  // a spire
+        const cx = x + w/2;
+        g.beginPath(); g.moveTo(cx - 3.5, base - h);
+        g.lineTo(cx, base - h - 15); g.lineTo(cx + 3.5, base - h);
+        g.closePath(); g.fill();
+      }
+      x += w + 2 + rnd()*8;
+    }
+  };
+  /* Checked at gallery distance, not at the canvas: the glass is emissive,
+     and at 0.42/0.55 the town bleached into it and read as a smudge. */
+  roofrow(304, 16, 'rgba(172,152,146,0.58)');   // far: half-dissolved
+  roofrow(330, 26, 'rgba(138,120,120,0.74)');   // nearer: still only a silhouette
+  const gnd = g.createLinearGradient(0, 318, 0, 384);
+  gnd.addColorStop(0, 'rgba(0,0,0,0)'); gnd.addColorStop(1, 'rgba(210,178,138,0.9)');
+  g.fillStyle = gnd; g.fillRect(0, 318, 256, 66);
+
   skyTex = gl.createTexture();
   gl.bindTexture(gl.TEXTURE_2D, skyTex);
   gl.texStorage2D(gl.TEXTURE_2D, 8, gl.SRGB8_ALPHA8, 256, 384);   // sky is colour

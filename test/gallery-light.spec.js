@@ -89,6 +89,35 @@ test.describe.serial('inside the gallery — light and loans', () => {
     expect(r.after.swRain).toBe(false);
   });
 
+  test('rain reaches the windows: overcast glass, a dimmed sun', async () => {
+    /* Windows exist only while the shutters stand open. With the weather
+       pinned at full, the sky quads go grey and streaked and the sun spots
+       lose half their strength — so in a room that owns a window, the whole
+       frame must measurably darken. Frozen time pins every other animated
+       thing; the weather is the only difference between the two readings. */
+    await page.keyboard.press('KeyO');                    // daylight — windows exist
+    const r = await page.evaluate(() => {
+      let seat = null;
+      for (let gx = -2; gx <= 2 && !seat; gx++)
+        for (let gz = -2; gz <= 2 && !seat; gz++)
+          if (window.DBG.roomWindows(gx, gz).length) seat = [gx, gz];
+      if (!seat) return { seat: null };
+      window.DBG.tp(seat[0], seat[1], 0);
+      window.DBG.freeze(60);
+      window.DBG.rainVisForTest(0);
+      const dry = window.DBG.histogram(2).mean;
+      window.DBG.rainVisForTest(1);
+      const wet = window.DBG.histogram(2).mean;
+      window.DBG.rainVisForTest(null);
+      window.DBG.freeze(null);
+      return { seat, dry, wet };
+    });
+    await page.keyboard.press('KeyO');                    // the night returns
+    expect(r.seat).toBeTruthy();
+    console.log(`    room (${r.seat}) — frame mean dry ${r.dry} · raining ${r.wet}`);
+    expect(r.wet).toBeLessThan(r.dry - 0.5);
+  });
+
   test('the music is generated, and every programme plays', async () => {
     /* Nothing is sampled, which is the point: generated music carries no
        licence, cannot be taken down, adds no bytes to a single-file page, and

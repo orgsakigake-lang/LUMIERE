@@ -95,7 +95,7 @@ function initPrograms(){
   makeSurfaceTextures();
   progPaint = program(VS_PAINT, FS_PAINT);
   uPaint = {};
-  for (const nm of ['uMV','uP','uO','uU','uV','uN','uTex','uFog','uSigma','uFade','uEm','uGlaze','uAT','uNL','uLPos','uLDir','uLCol'])
+  for (const nm of ['uMV','uP','uO','uU','uV','uN','uTex','uFog','uSigma','uFade','uEm','uGlaze','uAT','uNL','uLPos','uLDir','uLCol','uRain','uTime'])
     uPaint[nm] = gl.getUniformLocation(progPaint, nm);
   quadVAO = gl.createVertexArray();
   gl.bindVertexArray(quadVAO);
@@ -187,6 +187,10 @@ const CANDLE = [0.55, 0.399, 0.234];
    68 times a frame for at most 25 distinct answers. Each room now keeps its own
    packed arrays and a serial; the frame loop bumps the serial once. */
 let packSerial = 1;
+/* How visible the weather is: eased toward the rain switch at roughly the
+   pace of the audible fade, so the glass and the sound arrive together.
+   `rainPin` lets a test hold it at an exact value while frames step. */
+let rainVis = 0, rainPin = null, sunDim = 1;
 function packLights(r, ox, oz, force){
   if (!force && r.packSerial === packSerial) return r.packN;
   if (!r.lpos){
@@ -212,9 +216,13 @@ function packLights(r, ox, oz, force){
     LDIR[b+1] = M_V[1]*l.d[0] + M_V[5]*l.d[1] + M_V[9]*l.d[2];
     LDIR[b+2] = M_V[2]*l.d[0] + M_V[6]*l.d[1] + M_V[10]*l.d[2];
     LDIR[b+3] = l.outer;
-    LCOL[b]   = dim ? l.col[0]*CANDLE[0] : l.col[0];
-    LCOL[b+1] = dim ? l.col[1]*CANDLE[1] : l.col[1];
-    LCOL[b+2] = dim ? l.col[2]*CANDLE[2] : l.col[2];
+    /* An overcast sun: while the rain is up, the shafts through the windows
+       lose most of their strength, or the room stays improbably sunny under
+       a streaming pane. */
+    const ss = l.sun ? sunDim : 1;
+    LCOL[b]   = (dim ? l.col[0]*CANDLE[0] : l.col[0]) * ss;
+    LCOL[b+1] = (dim ? l.col[1]*CANDLE[1] : l.col[1]) * ss;
+    LCOL[b+2] = (dim ? l.col[2]*CANDLE[2] : l.col[2]) * ss;
     LCOL[b+3] = l.inner;
     /* The baked map was rendered from this room's own fill light; a neighbour's
        spilling through a doorway is a different light and must not use it. */
@@ -2596,11 +2604,23 @@ function frame(t){
   gl.uniform1f(uArch.alpha, 1);
   gl.disable(gl.BLEND);
 
+  /* The shared shader clock, needed from pass 2 on (rain on the glass,
+     flames, shafts, motes). Frozen time pins them all for the A/B tests. */
+  const shaderT = frozenT !== null ? frozenT : (performance.now() % 300000) / 1000;
+  /* The weather eases in at the pace of its sound. */
+  const rainTarget = rainActive() ? 1 : 0;
+  rainVis = rainPin !== null ? rainPin
+          : Math.abs(rainTarget - rainVis) < 0.004 ? rainTarget
+          : rainVis + (rainTarget - rainVis) * Math.min(1, dt * 1.1);
+  sunDim = 1 - 0.55 * rainVis;
+
   /* pass 2: pigment — textured paintings + placards, blended over the
      dark placeholder canvases so each work can fade into being */
   gl.useProgram(progPaint);
   gl.uniformMatrix4fv(uPaint.uP, false, M_P);
   gl.uniform1f(uPaint.uSigma, sigCur);
+  gl.uniform1f(uPaint.uTime, shaderT);
+  gl.uniform1f(uPaint.uRain, 0);
   gl.uniform1i(uPaint.uTex, 0);
   gl.activeTexture(gl.TEXTURE0);
   gl.enable(gl.BLEND);
@@ -2753,8 +2773,11 @@ function frame(t){
       if (WIN.on && r.windows.length){
         gl.uniform1i(uPaint.uNL, 0);
         gl.uniform1f(uPaint.uFade, 1);
-        gl.uniform1f(uPaint.uEm, 1.65);
+        /* Overcast steals some of the sky's own light before the shader
+           greys what remains — two small steps that read as one weather. */
+        gl.uniform1f(uPaint.uEm, 1.65 * (1 - 0.30 * rainVis));
         gl.uniform1f(uPaint.uGlaze, 0);
+        gl.uniform1f(uPaint.uRain, rainVis);
         gl.bindTexture(gl.TEXTURE_2D, ensureSkyTex());
         const IN2 = HS - WT;
         for (const wn of r.windows){
@@ -2776,11 +2799,11 @@ function frame(t){
           gl.uniform3f(uPaint.uV, 0, wn.h, 0);
           gl.drawArrays(gl.TRIANGLES, 0, 6);
         }
+        gl.uniform1f(uPaint.uRain, 0);        // the next room's paintings are dry
       }
     }
 
   /* additive pass: moon shafts + dust motes in the rare rooms */
-  const shaderT = frozenT !== null ? frozenT : (performance.now() % 300000) / 1000;
   let addOn = false;
   /* candle flames on the chandeliers */
   if (lightsOn){
@@ -2984,6 +3007,19 @@ if (DBG_FULL) Object.assign(window.DBG, {
   },
   /** Register a placement without a backend, so guest arrival is testable. */
   placeForTest(k, uploadId){ curator.placements.set(k, uploadId); return curator.placements.size; },
+  /** Pin the weather's visual strength while frames step (null lets it ease
+   *  again) — the ramp is time-based, so a test cannot simply wait for it. */
+  rainVisForTest(v){
+    rainPin = v === null ? null : Math.max(0, Math.min(1, +v));
+    if (rainPin !== null){ rainVis = rainPin; sunDim = 1 - 0.55 * rainVis; }
+    return rainVis;
+  },
+  /** Which walls of a room hold windows, so a test can stand where weather
+   *  is visible instead of hoping. */
+  roomWindows(gx, gz){
+    const r = getRoom(gx, gz);
+    return r && r.windows ? r.windows.map((w) => ({ wall: w.wall, u: +w.u.toFixed(2) })) : [];
+  },
   /** Where a guest would be dropped — {gx,gz} or null for an empty collection. */
   collectionSpawn(){
     const before = [player.gx, player.gz];
