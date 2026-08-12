@@ -83,16 +83,27 @@
   /* ——— the corner nav: the guide, and the way back ——— */
   /* Above the intro plate (z 10) so the ? answers before entering; the office,
      the guide and the enlarged view (15/16/20) still cover it when open. */
-  #corner-nav{position:fixed; left:1.1rem; top:1.1rem; display:flex; gap:.55rem; z-index:12;}
-  #corner-nav button{width:1.9rem; height:1.9rem; border-radius:50%; padding:0; line-height:1;
+  #corner-nav{position:fixed; left:1.1rem; top:1.1rem; display:flex; gap:.55rem; z-index:12;
+            transition:opacity .5s ease;}
+  #corner-nav button{min-width:1.9rem; height:1.9rem; border-radius:.95rem; padding:0; line-height:1;
             display:flex; align-items:center; justify-content:center; cursor:pointer;
             background:rgba(20,17,13,.55); border:1px solid rgba(201,169,106,.3);
             font-family:var(--serif); font-size:.9rem; color:rgba(201,169,106,.85);
-            transition:color .3s ease, border-color .3s ease;}
+            transition:color .3s ease, border-color .3s ease, padding .4s ease;}
+  body.entered:not(.locked) #corner-nav button{padding-left:.6rem;}
   #corner-nav button:hover{color:var(--bone); border-color:rgba(201,169,106,.65);}
   #corner-nav button:focus{outline:none;}
   #corner-nav button:focus-visible{color:var(--bone); box-shadow:0 0 0 2px var(--brass-faint);}
   body:not(.entered) #back-btn{display:none;}   /* nowhere to go back to yet */
+  /* No cursor exists while the pointer is locked, so the nav withdraws to
+     quiet dots; Esc frees the cursor and the pills bloom, labelled, exactly
+     when they become clickable. */
+  body.entered.locked #corner-nav{opacity:.3;}
+  #corner-nav .lbl{max-width:0; overflow:hidden; white-space:nowrap;
+            font-size:.58rem; letter-spacing:.26em; text-transform:uppercase;
+            color:rgba(169,159,140,.85);
+            transition:max-width .4s ease, margin .4s ease, padding .4s ease;}
+  body.entered:not(.locked) #corner-nav .lbl{max-width:7rem; margin-left:.5em; padding-right:.55em;}
 
   /* ——— the visitor’s guide ——— */
   #help{z-index:16; cursor:default;}

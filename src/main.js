@@ -559,8 +559,15 @@ addEventListener('keydown', (e)=>{
      legend — the legend is only the first-entry hint now. */
   if (e.key === '?' || e.code === 'Slash'){ helpToggle(true); return; }
   /* Escape left inspect stuck — the only way out was F or a walk key, neither
-     of which is what anyone reaches for. */
-  if (e.key === 'Escape' && inspect.on){ inspectOff(); return; }
+     of which is what anyone reaches for. Beyond that: while the pointer is
+     locked the browser eats Esc to free the cursor and this handler never
+     hears it, so an Esc that *does* arrive means the cursor was already free —
+     the second press, and it steps out to the entrance. */
+  if (e.key === 'Escape'){
+    if (inspect.on) inspectOff();
+    else if (!locked) leaveGallery();
+    return;
+  }
   if (e.code === 'Space'){ doJump(); return; }
   if (inspect.on && ['KeyW','KeyA','KeyS','KeyD'].includes(e.code)) inspectOff();
   keys.add(e.code);
@@ -582,9 +589,20 @@ function doJump(){
 addEventListener('keyup', (e)=>{ keys.delete(e.code); });
 addEventListener('blur', ()=>{ keys.clear(); dragging = false; });
 
+let unlockHinted = false;
 document.addEventListener('pointerlockchange', ()=>{
   locked = document.pointerLockElement === canvas;
   document.body.classList.toggle('locked', locked);
+  /* The first time the cursor comes free in the open gallery, say what it is
+     now for — once. Not when a panel took the pointer on purpose: the office,
+     the guide and the enlarged view release the lock themselves. */
+  if (!locked && entered && !unlockHinted
+      && document.getElementById('help').hidden
+      && document.getElementById('curator').hidden
+      && document.getElementById('modal').hidden){
+    unlockHinted = true;
+    flashHint('the cursor is yours — <b>Esc</b> again steps out to the entrance · a click returns to walking');
+  }
 });
 canvas.addEventListener('mousedown', (e)=>{
   if (!entered) return;
@@ -3616,9 +3634,10 @@ document.getElementById('enter').addEventListener('click', ()=>{
   tryPointerLock();          // inside the gesture; drag-look if it declines
   setTimeout(() => toggleLegend(false), 11000);   // ? brings it back
 });
-/* The ← beside the ? — back out to the entrance. The world stays warm behind
-   the plate; entering again resumes exactly where the visitor stood. */
-document.getElementById('back-btn').addEventListener('click', ()=>{
+/* Back out to the entrance — the ← at the upper left, or Esc once the cursor
+   is free. The world stays warm behind the plate; entering again resumes
+   exactly where the visitor stood. */
+function leaveGallery(){
   if (!entered) return;
   if (document.pointerLockElement) document.exitPointerLock();
   releaseInput();
@@ -3628,7 +3647,8 @@ document.getElementById('back-btn').addEventListener('click', ()=>{
   document.getElementById('intro-note').textContent = 'the halls remain as you left them';
   introEl.hidden = false;
   requestAnimationFrame(()=>{ introEl.style.opacity = '1'; });
-});
+}
+document.getElementById('back-btn').addEventListener('click', leaveGallery);
 
 if (gl){
   initPrograms();

@@ -4,9 +4,12 @@
 <!-- Outside #hud on purpose: #hud fades in only after entering, and the guide
      must answer at the door too. The arrow appears once there is a gallery to
      come back from. -->
+<!-- While the pointer is locked no cursor exists to click these, so they sit
+     as quiet dots; the moment Esc frees the cursor they widen into labelled
+     pills — reachable exactly when they are reaching for them. -->
 <div id="corner-nav">
-  <button id="help-btn" type="button" title="the visitor’s guide — ?">?</button>
-  <button id="back-btn" type="button" title="return to the entrance">←</button>
+  <button id="help-btn" type="button" title="the visitor’s guide — ?">?<span class="lbl">guide</span></button>
+  <button id="back-btn" type="button" title="return to the entrance — Esc, once the cursor is free">←<span class="lbl">entrance</span></button>
 </div>
 
 <div id="hud">
@@ -122,7 +125,7 @@
         <div class="help-row"><b class="key">Space</b><span>jump — again within half a second for a second step</span></div>
         <div class="help-h">Looking</div>
         <div class="help-row"><b class="key">mouse</b><span>look around — walking, running and jumping carry on while you do</span></div>
-        <div class="help-row"><b class="key">Esc</b><span>free the cursor</span></div>
+        <div class="help-row"><b class="key">Esc</b><span>free the cursor — press it again to step out to the entrance</span></div>
         <div class="help-row"><b class="key">click</b><span>give it back to the gallery</span></div>
         <div class="help-row"><b class="key">drag</b><span>also steers the view, wherever the cursor is free</span></div>
         <div class="help-h">The works</div>
@@ -150,7 +153,8 @@
     </div>
     <div class="cur-note">The switches at the lower right — lights, shutters, music, rain, curator —
       answer to touch as well as keys. The <b class="key">?</b> at the upper left opens this
-      guide from anywhere; the <b class="key">←</b> beside it returns you to the entrance.</div>
+      guide from anywhere; the <b class="key">←</b> beside it returns you to the entrance —
+      press <b class="key">Esc</b> first to free the cursor, or just press Esc twice.</div>
     <div class="row"><button class="btn" id="help-close">Return to the gallery</button></div>
   </div>
 </div>

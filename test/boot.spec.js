@@ -39,6 +39,21 @@ test.describe('boot', () => {
     await expect(page.locator('#help')).toBeHidden();
   });
 
+  test('Esc with a free cursor steps out to the entrance, and entering resumes', async ({ page }) => {
+    await boot(page);
+    await enter(page);
+    /* Headless Chromium grants pointer lock, and a locked Esc belongs to the
+       browser — free the cursor first, exactly as a visitor's first press
+       does, then send the second. */
+    await page.evaluate(() => document.exitPointerLock());
+    await page.waitForFunction(() => !document.pointerLockElement);
+    await page.keyboard.press('Escape');
+    await expect(page.locator('#intro')).toBeVisible();
+    expect(await page.evaluate(() => document.body.classList.contains('entered'))).toBe(false);
+    await enter(page);
+    await expect(page.locator('#intro')).toBeHidden();
+  });
+
   test('a work hangs on one wall at a time', async ({ page }) => {
     await boot(page);
     const r = await page.evaluate(() => {
