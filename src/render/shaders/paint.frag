@@ -8,6 +8,12 @@ uniform float uGlaze;       // 0 varnish on canvas, 1 glass over a mounted work
 uniform float uAT;          // 1 → texture alpha shapes the quad (contact shadows)
 uniform float uRain;        // 0 dry → 1 downpour; only the sky quads ever raise it
 uniform float uTime;        // the shared shader clock, pinned by DBG.freeze
+uniform float uWin;         // 1 → this quad is a window pane, painted in layers
+uniform vec2 uWinUV;        // the pane's slice of the shared panorama: offset, width
+uniform vec3 uWinT;         // view-space direction of increasing pane-u
+uniform sampler2D uWinA;    // the sky, with the one sun
+uniform sampler2D uWinB;    // the far skyline
+uniform sampler2D uWinC;    // the near roofs, a few lamps lit
 uniform int uNL;
 uniform vec4 uLPos[10]; uniform vec4 uLDir[10]; uniform vec4 uLCol[10];
 out vec4 o;
@@ -17,7 +23,25 @@ void main(){
   vec3 n = normalize(uN);
   vec3 vdir = normalize(-vPv);
   if (dot(n, vdir) < 0.0) n = -n;
-  vec3 acc = alb * uEm;
+  vec3 acc;
+  /* ————— beyond the glass —————
+     Every painting keeps uWin at 0: one coherent branch. A pane shows its
+     slice of a shared three-strip panorama, and the slice slides with the
+     view — the ray through the glass is continued to each strip's depth,
+     the sky sweeping farthest and the near roofs least, which is all
+     parallax is. The town therefore moves against the mullions as the
+     visitor walks, instead of being wallpaper pasted behind the frame. */
+  if (uWin > 0.5){
+    float g = dot(-vdir, uWinT) / max(abs(dot(vdir, n)), 0.22);
+    g = clamp(g, -3.0, 3.0);
+    float uu = uWinUV.x + vUV.x * uWinUV.y;
+    vec3 sky = texture(uWinA, vec2(uu + g * 0.085, vUV.y)).rgb;
+    vec4 tf  = texture(uWinB, vec2(uu + g * 0.048, vUV.y));
+    vec4 tn  = texture(uWinC, vec2(uu + g * 0.026, vUV.y));
+    acc = mix(mix(sky, tf.rgb, tf.a), tn.rgb, tn.a) * uEm;
+  } else {
+    acc = alb * uEm;
+  }
   for (int i = 0; i < 10; i++){   // MAX_LIGHTS in world/geometry.js
     if (i >= uNL) break;
     vec3 L = uLPos[i].xyz - vPv;

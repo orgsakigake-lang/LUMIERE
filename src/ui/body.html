@@ -4,11 +4,12 @@
 <div id="hud">
   <div class="hud-corner" id="hud-loc">Wing 0 · Hall 0</div>
   <div class="hud-corner" id="hud-stat">1 room</div>
+  <button id="help-btn" type="button" title="?"><b>?</b> help</button>
   <div class="hud-corner" id="hud-toast"></div>
   <div id="hud-legend" class="show">
-    <b>W A S D</b> walk<span>·</span><b>drag</b> look<span>·</span><b>Space</b> jump<span>·</span><b>F</b> inspect<span>·</span><b>V</b> view larger<span>·</span><b>E</b> save<br>
+    <b>W A S D</b> walk<span>·</span><b>mouse</b> look<span>·</span><b>Space</b> jump<span>·</span><b>F</b> inspect<span>·</span><b>V</b>/<b>E</b> view larger<br>
     <b>L</b> lights<span>·</span><b>O</b> shutters<span>·</span><b>T</b> theme<span>·</span><b>C</b> curator<span>·</span><b>M</b> sound<span>·</span><b>N</b> music<span>·</span><b>H</b>/<b>U</b> hang, take down
-    <div class="dismiss"><b>?</b> hides and recalls this</div>
+    <div class="dismiss"><b>?</b> opens the full visitor’s guide</div>
   </div>
   <div id="switches">
     <button class="sw on" id="sw-lights" title="L">lights</button>
@@ -69,6 +70,12 @@
       </div>
       <div class="row cur-themes" id="cur-themes" role="group" aria-label="Gallery theme"></div>
       <div id="cur-review" hidden></div>
+      <div class="row" id="cur-wing" hidden>
+        <span class="sub">The wing ·</span>
+        <button class="btn" id="cur-wing-minus" type="button" title="one room fewer — the works are laid again, snugly">−</button>
+        <span class="sub" id="cur-wing-n"></span>
+        <button class="btn" id="cur-wing-plus" type="button" title="one more room, empty, ready for new work">+</button>
+      </div>
       <div class="row">
         <label class="btn" for="cur-file">Add works…</label>
         <input type="file" id="cur-file" accept="image/*" multiple hidden>
@@ -82,10 +89,56 @@
       <div id="cur-grid"></div>
       <div class="cur-note">
         Select a work above, walk to any frame, and press <b class="key">H</b> to hang it ·
-        <b class="key">U</b> takes it down · the cross removes it from the collection<br>
+        <b class="key">U</b> takes it down · the cross removes it from the collection ·
+        a work hangs on one wall at a time<br>
         <span id="cur-store"></span>
       </div>
     </div>
+  </div>
+</div>
+
+<div class="plate" id="help" hidden>
+  <div class="panel">
+    <h2>Visitor’s Guide</h2>
+    <div class="sub">every key and switch in the gallery</div>
+    <hr class="rule">
+    <div class="help-cols">
+      <div>
+        <div class="help-h">Moving</div>
+        <div class="help-row"><b class="key">W A S D</b><span>walk the halls</span></div>
+        <div class="help-row"><b class="key">Shift</b><span>run</span></div>
+        <div class="help-row"><b class="key">Space</b><span>jump — again within half a second for a second step</span></div>
+        <div class="help-h">Looking</div>
+        <div class="help-row"><b class="key">mouse</b><span>look around — walking, running and jumping carry on while you do</span></div>
+        <div class="help-row"><b class="key">Esc</b><span>free the cursor</span></div>
+        <div class="help-row"><b class="key">click</b><span>give it back to the gallery</span></div>
+        <div class="help-row"><b class="key">drag</b><span>also steers the view, wherever the cursor is free</span></div>
+        <div class="help-h">The works</div>
+        <div class="help-row"><b class="key">F</b><span>inspect the work before you — right-click does the same</span></div>
+        <div class="help-row"><b class="key">V</b> / <b class="key">E</b><span>view it larger — the enlarged view carries its own Save button</span></div>
+        <div class="help-row"><b class="key">Esc</b><span>step back</span></div>
+      </div>
+      <div>
+        <div class="help-h">Room &amp; mood</div>
+        <div class="help-row"><b class="key">L</b><span>lamps on and off</span></div>
+        <div class="help-row"><b class="key">O</b><span>shutters — daylight in, town beyond the glass</span></div>
+        <div class="help-row"><b class="key">T</b><span>next gallery theme</span></div>
+        <div class="help-row"><b class="key">M</b><span>sound on and off</span></div>
+        <div class="help-row"><b class="key">N</b><span>next music programme</span></div>
+        <div class="help-h">The curator</div>
+        <div class="help-row"><b class="key">C</b><span>the Curator’s Office — your own collection</span></div>
+        <div class="help-row"><b class="key">H</b><span>hang the chosen work on the frame before you</span></div>
+        <div class="help-row"><b class="key">U</b><span>take it down</span></div>
+        <div class="help-row"><b class="key">?</b><span>this guide</span></div>
+        <div class="help-h">Sharing</div>
+        <div class="help-row"><span>Your gallery is <b class="key">private</b> until you say otherwise:
+          sign in in the office, claim a name, and switch on
+          <b class="key">anyone with the link</b> — switch it off to make it yours alone again.</span></div>
+      </div>
+    </div>
+    <div class="cur-note">The switches at the lower right — lights, shutters, music, rain, curator —
+      answer to touch as well as keys.</div>
+    <div class="row"><button class="btn" id="help-close">Return to the gallery</button></div>
   </div>
 </div>
 
@@ -99,7 +152,7 @@
       seeded, singular, unrepeatable. <em>No one else will ever see these works.</em></p>
     <button id="enter" autofocus>Enter the gallery</button>
     <div class="legend">
-      <b>W&thinsp;A&thinsp;S&thinsp;D</b> walk · <b>drag</b> look · <b>Space</b> jump, twice ·
+      <b>W&thinsp;A&thinsp;S&thinsp;D</b> walk · <b>mouse</b> look · <b>Space</b> jump, twice ·
       <b>F</b> inspect · <b>V</b> view larger · <b>M</b> sound<br>
       <b>L</b> lights · <b>O</b> shutters · <b>N</b> music · <b>C</b> curator
     </div>
@@ -112,7 +165,7 @@
   <div class="t"></div>
   <div class="m"></div>
   <div class="d" hidden></div>
-  <div class="k">V — view larger &nbsp;·&nbsp; E — save &nbsp;·&nbsp; F — step back</div>
+  <div class="k">V / E — view larger &nbsp;·&nbsp; F — step back</div>
 </div>
 
 <div class="plate" id="modal" hidden>

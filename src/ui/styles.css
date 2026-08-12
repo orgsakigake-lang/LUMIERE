@@ -80,6 +80,38 @@
   #hud-legend .dismiss{margin-top:.35rem; font-size:.6rem; color:rgba(169,159,140,.42);}
   body:not(.entered) #hud-legend{opacity:0 !important;}
 
+  /* ——— the visitor’s guide ——— */
+  /* The one clickable thing in #hud, which is pointer-events:none — so it
+     re-enables them itself, exactly as #switches does. */
+  #help-btn{position:fixed; left:50%; top:1.25rem; transform:translateX(-50%);
+            pointer-events:auto; z-index:7; background:none; border:0; cursor:pointer;
+            font-family:var(--serif); font-size:.7rem; letter-spacing:.3em;
+            text-transform:uppercase; color:rgba(169,159,140,.65);
+            transition:color .3s ease;}
+  #help-btn b{color:rgba(201,169,106,.85); font-weight:400; margin-right:.15em;}
+  #help-btn:hover{color:var(--bone);}
+  #help-btn:focus{outline:none;}
+  #help-btn:focus-visible{color:var(--bone); box-shadow:0 -2px 0 0 var(--brass-faint) inset;}
+  #help{z-index:16; cursor:default;}
+  #help .panel{width:min(88vw, 46rem); max-height:82vh; overflow-y:auto;
+               background:#14110D; border:1px solid rgba(201,169,106,.28);
+               padding:2.2rem 2.4rem; box-shadow:0 30px 80px rgba(0,0,0,.8);
+               scrollbar-width:thin; scrollbar-color:rgba(201,169,106,.32) transparent;}
+  #help h2{font-weight:400; font-size:1.15rem; letter-spacing:.3em; text-transform:uppercase;
+           color:var(--bone); margin:0 0 .4rem;}
+  #help .sub{font-size:.66rem; letter-spacing:.22em; text-transform:uppercase;
+             color:var(--bone-dim); line-height:2;}
+  #help .rule{margin:1.2rem 0;}
+  #help .row{display:flex; gap:.8rem; align-items:center; margin-top:1.4rem;}
+  .help-cols{display:grid; grid-template-columns:1fr 1fr; gap:0 2.4rem;}
+  @media (max-width:38rem){ .help-cols{grid-template-columns:1fr;} }
+  .help-h{margin:1.1rem 0 .3rem; font-size:.62rem; letter-spacing:.32em;
+          text-transform:uppercase; color:var(--brass);}
+  .help-row{display:flex; gap:.7em; align-items:baseline; padding:.22rem 0;
+            font-size:.74rem; line-height:1.55; color:var(--bone-dim);}
+  .help-row b{white-space:nowrap;}
+  .help-row span{letter-spacing:.04em;}
+
   /* The reticle answers when there is something to look at. */
   #aim.live{background:var(--bone); box-shadow:0 0 0 3px rgba(201,169,106,.22);}
   body.entered #aim.live{opacity:.85;}
@@ -207,6 +239,8 @@
   .cur-item img{width:100%; aspect-ratio:1; object-fit:cover; display:block; filter:saturate(.92);}
   .cur-item .nm{margin-top:.4rem; font-size:.6rem; letter-spacing:.12em; color:var(--bone-dim);
                 white-space:nowrap; overflow:hidden; text-overflow:ellipsis; text-transform:uppercase;}
+  /* Hung works say so — a work can hang on one wall only. */
+  .cur-item.hung .nm::after{content:' · hung'; color:var(--brass);}
   /* a real <button>, and a drawn cross — Georgia's × is a small maths glyph
      that sits below the optical centre of the box. Always visible: opacity:0
      until :hover left this unreachable on touch. */
@@ -278,6 +312,9 @@
   .rv-opt[aria-pressed="true"]{border-color:var(--brass); color:var(--brass);}
   .rv-foot{display:flex; gap:.5rem; margin-top:.9rem; flex-wrap:wrap;}
   #cur-gather{border-color:rgba(201,169,106,.45);}
+  /* the wing sizer: glyph buttons, square-ish, same voice as the fill tools */
+  #cur-wing .btn{padding:.3rem .9rem; font-size:.85rem; letter-spacing:0;
+                 text-transform:none; line-height:1;}
   #cur-outbox{margin-top:.9rem; color:#C9A96A;}
   .cur-note{margin-top:1.2rem; font-size:.62rem; letter-spacing:.18em; text-transform:uppercase;
             color:rgba(169,159,140,.55); line-height:2;}

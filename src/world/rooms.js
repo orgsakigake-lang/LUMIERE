@@ -109,6 +109,24 @@ export function getRoom(gx, gz){
       r.windows.push({ wall, u, w: 1.3, h: 2.3, cy: 1.78 });
     }
   }
+  /* Potted plants in the corners of ordinary rooms — small green
+     punctuation in the sepia. Their own stream, never `ar`: one extra
+     draw there would shift every artwork in the world. */
+  if (!r.special){
+    const dr = mulberry32(h2(gx, gz, 0xDEC0 ^ WORLD_SEED));
+    r.plants = [];
+    for (const [sx, sz] of [[1,1],[1,-1],[-1,1],[-1,-1]]){
+      if (dr() < 0.22){
+        r.plants.push({
+          x: sx * (HS - 1.0 - dr()*0.5),
+          z: sz * (HS - 1.0 - dr()*0.5),
+          s: 0.8 + dr()*0.5,               // overall scale
+          leaves: 6 + (dr()*4 | 0),
+          ph: dr()*Math.PI*2,              // where the first leaf points
+        });
+      }
+    }
+  }
   rooms.set(k, r);
   return r;
 }

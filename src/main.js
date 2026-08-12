@@ -95,7 +95,8 @@ function initPrograms(){
   makeSurfaceTextures();
   progPaint = program(VS_PAINT, FS_PAINT);
   uPaint = {};
-  for (const nm of ['uMV','uP','uO','uU','uV','uN','uTex','uFog','uSigma','uFade','uEm','uGlaze','uAT','uNL','uLPos','uLDir','uLCol','uRain','uTime'])
+  for (const nm of ['uMV','uP','uO','uU','uV','uN','uTex','uFog','uSigma','uFade','uEm','uGlaze','uAT','uNL','uLPos','uLDir','uLCol','uRain','uTime',
+                    'uWin','uWinUV','uWinT','uWinA','uWinB','uWinC'])
     uPaint[nm] = gl.getUniformLocation(progPaint, nm);
   quadVAO = gl.createVertexArray();
   gl.bindVertexArray(quadVAO);
@@ -128,7 +129,7 @@ function initPrograms(){
     uComp[nm] = gl.getUniformLocation(pComp, nm);
 
   progFlame = program(VS_FLAME, FS_FLAME);
-  for (const nm of ['uMV','uP','uTime','uCol','uMY'])
+  for (const nm of ['uMV','uP','uTime','uCol','uMY','uEyeY'])
     uFlame[nm] = gl.getUniformLocation(progFlame, nm);
   progShaft = program(VS_SHAFT, FS_SHAFT);
   for (const nm of ['uMV','uP','uC','uAxis','uDim','uCol','uTime'])
@@ -199,12 +200,25 @@ function packLights(r, ox, oz, force){
     r.lcol = new Float32Array(MAX_LIGHTS*4);
   }
   const LPOS = r.lpos, LDIR = r.ldir, LCOL = r.lcol;
+  /* The distance budget, eased. The old hard steps (all lights within 10 m,
+     6 within 26 m, else 4) cut the tail of the list in a single frame as the
+     player walked — and the tail is where a neighbour's doorway-spill
+     chandelier lives, so the fixture blinked. Each tier now fades out over
+     two metres, every pass reads the same faded pack, and the count only
+     drops once its tier has gone fully dark. */
+  const bdx = ox - player.x, bdz = oz - player.z;
+  const bd = Math.sqrt(bdx*bdx + bdz*bdz);
+  const f1 = Math.max(0, Math.min(1, (12 - bd) / 2));
+  const f2 = Math.max(0, Math.min(1, (28 - bd) / 2));
+  const cap = Math.min(MAX_LIGHTS, lightCap);
   const list = r.lights; let n = 0;
   r.packFillIdx = -1;
-  for (let i = 0; i < list.length && n < MAX_LIGHTS; i++){
+  for (let i = 0; i < list.length && n < cap; i++){
     const l = list[i];
     if (l.off) continue;                       // a frame with nothing in it
     if (!lightsOn && !l.sun && !l.fill) continue;
+    const tier = n >= 6 ? f1 : n >= 4 ? f2 : 1;
+    if (tier <= 0) break;                      // slots only get farther down the list
     const dim = !lightsOn && l.fill;
     const b = n*4;
     const px = l.p[0]+ox, py = l.p[1], pz = l.p[2]+oz;
@@ -219,7 +233,7 @@ function packLights(r, ox, oz, force){
     /* An overcast sun: while the rain is up, the shafts through the windows
        lose most of their strength, or the room stays improbably sunny under
        a streaming pane. */
-    const ss = l.sun ? sunDim : 1;
+    const ss = (l.sun ? sunDim : 1) * tier;
     LCOL[b]   = (dim ? l.col[0]*CANDLE[0] : l.col[0]) * ss;
     LCOL[b+1] = (dim ? l.col[1]*CANDLE[1] : l.col[1]) * ss;
     LCOL[b+2] = (dim ? l.col[2]*CANDLE[2] : l.col[2]) * ss;
@@ -349,46 +363,85 @@ const YAW_FACING = { s: 0, n: Math.PI, e: Math.PI / 2, w: -Math.PI / 2 };
    steps to rooms the previous one actually opens onto: a wing you cannot walk
    without passing through a wall is not a wing. */
 const WING_ORIGIN = [0, 0];
-function wingRoute(need){
+function wingRoute(need, extraRooms = 0){
   const seen = new Set([roomKey(WING_ORIGIN[0], WING_ORIGIN[1])]);
   const route = [{ gx: WING_ORIGIN[0], gz: WING_ORIGIN[1] }];
   let capacity = getRoom(WING_ORIGIN[0], WING_ORIGIN[1]).artworks.length;
+  /* Rooms taken on past the point where the works already fit — the
+     curator's kept-empty rooms. With extraRooms 0 this walk is exactly
+     what it always was. */
+  let past = 0;
   const DIRS = [['e',1,0], ['n',0,1], ['w',-1,0], ['s',0,-1]];
-  for (let i = 0; i < route.length && capacity < need && route.length < 40; i++){
+  for (let i = 0; i < route.length && (capacity < need || past < extraRooms) && route.length < 40; i++){
     const { gx, gz } = route[i];
     const r = getRoom(gx, gz);
     for (const [wall, dx, dz] of DIRS){
-      if (capacity >= need) break;
+      if (capacity >= need && past >= extraRooms) break;
       if (!r.doors[wall]) continue;                 // must be walkable
       const k = roomKey(gx + dx, gz + dz);
       if (seen.has(k)) continue;
       seen.add(k);
+      if (capacity >= need) past++;
       route.push({ gx: gx + dx, gz: gz + dz });
       capacity += getRoom(gx + dx, gz + dz).artworks.length;
     }
   }
   return route;
 }
+/* The rooms a wing of nRooms rooms occupies — the same walk, sized by room
+   count alone. What a gather must sweep before it lays the works again. */
+const wingFootprint = (nRooms) => nRooms > 0 ? wingRoute(0, nRooms - 1) : [];
+/* How many rooms the curator keeps past what the works fill, and how far the
+   last gather actually reached — the second is what a shrink must clean up.
+   A browser preference, like the fills: the cloud already shows visitors a
+   compact wing through the placements themselves. */
+let wingExtra = 0, wingPrev = 0;
+function loadWingPrefs(){
+  if (!storageOK) return;
+  try {
+    wingExtra = Math.min(39, Math.max(0, JSON.parse(localStorage.getItem('lumiere_wing_extra') || '0') | 0));
+    wingPrev  = Math.min(40, Math.max(0, JSON.parse(localStorage.getItem('lumiere_wing_prev') || '0') | 0));
+  } catch(e){}
+}
+function saveWingPrefs(){
+  if (!storageOK) return;
+  try {
+    localStorage.setItem('lumiere_wing_extra', JSON.stringify(wingExtra));
+    localStorage.setItem('lumiere_wing_prev', JSON.stringify(wingPrev));
+  } catch(e){}
+}
+loadWingPrefs();
 /** Hang the whole collection along that route, in order. Returns what it did. */
 function gatherIntoWing(){
   const works = [...curator.uploads.keys()];
   if (!works.length){ flashHint('the collection is empty'); return null; }
-  const route = wingRoute(works.length);
-  /* Clear only what this rehang replaces, so a work hung deliberately in some
-     far hall is not silently swept up. */
-  for (const { gx, gz } of route){
+  const route = wingRoute(works.length, wingExtra);
+  /* The previous gather may have reached further than this one will — a
+     shrink must sweep the whole footprint it ever held, and tell the cloud,
+     or stale placements keep hanging for visitors past the wing's end. A
+     work hung deliberately in some far hall is still not swept up. */
+  for (const { gx, gz } of wingFootprint(Math.max(route.length, wingPrev))){
     const r = getRoom(gx, gz);
-    for (let i = 0; i < r.artworks.length; i++) curator.placements.delete(artJobKey(r, i));
+    for (let i = 0; i < r.artworks.length; i++){
+      const k = artJobKey(r, i);
+      if (!curator.placements.delete(k)) continue;
+      if (cloud.sess && !cloud.viewing) enqueue('delPlacement', k, [k]);
+    }
   }
+  /* Works are unrepeatable: one still hanging in a far hall keeps its wall
+     and is left out of the wing rather than hung twice. */
+  const elsewhere = new Set(curator.placements.values());
+  const toHang = works.filter((id) => !elsewhere.has(id));
   let n = 0;
   outer:
   for (const { gx, gz } of route){
     const r = getRoom(gx, gz);
     for (let i = 0; i < r.artworks.length; i++){
-      if (n >= works.length) break outer;
-      curator.placements.set(artJobKey(r, i), works[n++]);
+      if (n >= toHang.length) break outer;
+      curator.placements.set(artJobKey(r, i), toHang[n++]);
     }
   }
+  wingPrev = route.length; saveWingPrefs();
   savePlacements();
   if (cloud.sess && !cloud.viewing)
     for (const [k, id] of curator.placements)
@@ -396,8 +449,10 @@ function gatherIntoWing(){
   rebuildWorld();
   goToRoom(WING_ORIGIN[0], WING_ORIGIN[1], 0);
   const rooms2 = route.length;
-  flashHint(`${n} work${n===1?'':'s'} hung across ${rooms2} room${rooms2===1?'':'s'} — this is the wing`);
-  return { hung: n, rooms: rooms2, left: works.length - n };
+  const kept = works.length - toHang.length;
+  flashHint(`${n} work${n===1?'':'s'} hung across ${rooms2} room${rooms2===1?'':'s'} — this is the wing`
+    + (kept ? ` · ${kept} kept ${kept===1?'its wall':'their walls'} elsewhere` : ''));
+  return { hung: n, rooms: rooms2, left: toHang.length - n };
 }
 
 function spawnAtCollection(placements){
@@ -469,6 +524,10 @@ addEventListener('keydown', (e)=>{
         || e.code === 'Space' || e.key === 'Escape') modal.click();
     return;
   }
+  if (!document.getElementById('help').hidden){
+    if (e.key === 'Escape' || e.key === '?' || e.code === 'Slash') helpToggle(false);
+    return;                              // the guide is open — the gallery holds still
+  }
   if (!document.getElementById('curator').hidden){
     if (e.code === 'KeyC') curatorToggle();
     return;                              // panel is open — the gallery holds still
@@ -489,9 +548,9 @@ addEventListener('keydown', (e)=>{
     if (rainActive()) applyRain(false, true);          // music takes the hall back
     const n = cycleMusic(); if (n){ persist.music = n; savePersist(); } swUI(); return;
   }
-  /* The legend had no way back: it faded after eleven seconds and the first
-     notice overwrote it for good. Both keys, because ? needs a shift. */
-  if (e.key === '?' || e.code === 'Slash'){ toggleLegend(); return; }
+  /* Both keys, because ? needs a shift. The full guide, not the two-line
+     legend — the legend is only the first-entry hint now. */
+  if (e.key === '?' || e.code === 'Slash'){ helpToggle(true); return; }
   /* Escape left inspect stuck — the only way out was F or a walk key, neither
      of which is what anyone reaches for. */
   if (e.key === 'Escape' && inspect.on){ inspectOff(); return; }
@@ -538,15 +597,33 @@ addEventListener('mousemove', (e)=>{
   player.pitch = Math.max(-1.5, Math.min(1.5, player.pitch - dy * sens));
 });
 function tryPointerLock(){
+  /* unadjustedMovement is the better look, but on platforms without raw
+     input the whole request rejects rather than degrading — which is how
+     free-look silently never engaged and visitors were left click-dragging.
+     Ask again plainly before giving up. */
+  const plain = () => {
+    try {
+      const q = canvas.requestPointerLock();
+      if (q && q.catch) q.catch(()=>{});
+    } catch(e){ /* drag-look remains */ }
+  };
   try {
     const p = canvas.requestPointerLock({ unadjustedMovement: true });
-    if (p && p.catch) p.catch(()=>{});
-  } catch(e){ /* drag-look remains */ }
+    if (p && p.catch) p.catch(plain);
+  } catch(e){ plain(); }
+}
+/* Panels need the cursor; the gallery wants it locked. Hand it over on open,
+   take it back on close — closes come from clicks, which carry the user
+   gesture a re-lock needs (an Esc-close falls back to click-to-lock). */
+function releasePointer(){
+  try { if (document.pointerLockElement) document.exitPointerLock(); } catch(e){}
 }
 canvas.addEventListener('click', ()=>{ if (entered && !locked) tryPointerLock(); });
 
-/* collider gather: 3×3 rooms → anchor-local AABBs (preallocated) */
-const colBuf = new Float32Array(4 * 128);
+/* collider gather: 3×3 rooms → anchor-local AABBs (preallocated).
+   192, not 128: the potted plants brought each room to ~13 boxes and nine
+   rooms were brushing the old ceiling. */
+const colBuf = new Float32Array(4 * 192);
 let colN = 0;
 function gatherColliders(){
   colN = 0;
@@ -554,7 +631,7 @@ function gatherColliders(){
     const { r, ox, oz } = midRooms[ri];
     const cs = r.colliders;
     for (let i = 0; i < cs.length; i++){
-      if (colN >= 128) break;
+      if (colN >= 192) break;
       const c = cs[i], b = colN * 4;
       colBuf[b] = c.cx + ox; colBuf[b+1] = c.cz + oz;
       colBuf[b+2] = c.hx;    colBuf[b+3] = c.hz;
@@ -807,6 +884,7 @@ function viewWork(){
   modal.querySelector('.cap .m').textContent = 'bringing it closer…';
   modal.querySelector('img').removeAttribute('src');
   modal.hidden = false;
+  releasePointer();
   /* Reserve the plate at the work's true proportions before anything is drawn.
      The frame is width:fit-content around an <img> with no src, so it used to
      collapse to a ~50px square and then snap to full size — a layout jump at
@@ -909,6 +987,7 @@ document.getElementById('modal').addEventListener('click', () => {
   modal.hidden = true;
   document.getElementById('modal-save').hidden = true;
   if (modalURL){ URL.revokeObjectURL(modalURL); modalURL = null; }
+  tryPointerLock();
 });
 
 /* ————— §13 The Curator's Office —————
@@ -953,7 +1032,14 @@ async function curatorBoot(){
   if (storageOK && !cloudDriven){
     try {
       const p = JSON.parse(localStorage.getItem('lumiere_placements') || '[]');
-      for (const [k, id] of p) curator.placements.set(k, id);
+      /* Placements saved before works became unrepeatable may hold the same
+         work on several walls. First hung wins; the rest quietly come down. */
+      const seen = new Set();
+      for (const [k, id] of p){
+        if (seen.has(id)) continue;
+        seen.add(id);
+        curator.placements.set(k, id);
+      }
     } catch(e){}
   }
   if (curator.db){
@@ -1537,6 +1623,12 @@ function curatorCanEdit(){
   if (!curator.unlocked && !cloud.sess){ flashHint('the curator’s office is locked — press <b>C</b>'); return false; }
   return true;
 }
+/* Where a work already hangs, if anywhere other than frame k. */
+function placementElsewhere(id, k){
+  for (const [pk, pid] of curator.placements)
+    if (pid === id && pk !== k) return pk;
+  return null;
+}
 function curatorHang(){
   if (curator.placements.size >= MAX_PLACEMENTS){
     flashHint(`${MAX_PLACEMENTS} works are already hung — take one down first`);
@@ -1548,6 +1640,17 @@ function curatorHang(){
   if (!t){ flashHint('stand before a frame to hang your work'); return; }
   const i = t.r.artworks.indexOf(t.A);
   const k = artJobKey(t.r, i);
+  /* One work, one wall. The same drawing at every corner is a print run,
+     not a hanging — so a work that already hangs somewhere else stays there
+     until it is deliberately taken down. */
+  const pk = placementElsewhere(curator.sel, k);
+  if (pk){
+    const m = /^(-?\d+),(-?\d+):/.exec(pk);
+    const f = (n) => (n < 0 ? '−' + (-n) : '' + n);
+    flashHint(m ? `this work already hangs in Wing ${f(+m[1])} · Hall ${f(+m[2])} — take it down there first (<b>U</b>)`
+                : 'this work already hangs elsewhere — take it down first (<b>U</b>)');
+    return;
+  }
   if (t.A.override){                       // replacing a previous loan
     const o = curator.overrides.get(k);
     if (o){ gl.deleteTexture(o.tex); curator.overrides.delete(k); }
@@ -1567,12 +1670,26 @@ function curatorUnhang(){
   curatorClearPlacement(t.A.overrideKey);
   flashHint('taken down — the seeded work returns');
 }
+/* The wing row: how many rooms the next gather will take, and for whom.
+   Guests browse someone else's hanging — the sizer is not theirs to press. */
+function wingUI(){
+  const row = document.getElementById('cur-wing');
+  if (!row) return;
+  row.hidden = !curator.uploads.size || !!cloud.viewing;
+  if (row.hidden) return;
+  const t = wingRoute(curator.uploads.size, wingExtra).length;
+  document.getElementById('cur-wing-n').textContent =
+    `${t} room${t === 1 ? '' : 's'}${wingExtra ? ` · ${wingExtra} kept empty` : ''}`;
+}
 function curatorGrid(){
+  wingUI();
   const grid = document.getElementById('cur-grid');
   grid.textContent = '';
+  const placed = new Set(curator.placements.values());
   for (const rec of curator.uploads.values()){
     const d = document.createElement('div');
-    d.className = 'cur-item' + (curator.sel === rec.id ? ' sel' : '');
+    d.className = 'cur-item' + (curator.sel === rec.id ? ' sel' : '')
+                + (placed.has(rec.id) ? ' hung' : '');
     const im = document.createElement('img'); im.src = rec.url; im.alt = rec.name;
     const nm = document.createElement('div'); nm.className = 'nm'; nm.textContent = rec.name;
     const rm = document.createElement('button'); rm.className = 'rm'; rm.type = 'button';
@@ -1713,11 +1830,30 @@ function curatorToggle(){
   const p = document.getElementById('curator');
   p.hidden = !p.hidden;
   if (!p.hidden){
-    releaseInput(); inspectOff();
+    releaseInput(); releasePointer(); inspectOff();
     curatorRefresh();
     if (!curator.unlocked) setTimeout(focusFirstField, 50);
-  } else canvas.focus();
+  } else { canvas.focus(); tryPointerLock(); }
 }
+/* The visitor's guide. It never opens over the office or the enlarged view —
+   those hold the keyboard, and two plates at once is a pile-up. */
+function helpToggle(force){
+  const p = document.getElementById('help');
+  const show = force === undefined ? p.hidden : force;
+  if (show){
+    if (!document.getElementById('modal').hidden
+        || !document.getElementById('curator').hidden) return;
+    p.hidden = false; releaseInput(); releasePointer();
+  } else {
+    p.hidden = true; canvas.focus(); tryPointerLock();
+  }
+}
+document.getElementById('help-btn').addEventListener('click', () => helpToggle(true));
+document.getElementById('help-close').addEventListener('click', () => helpToggle(false));
+/* Click past the panel to return — the enlarged view already behaves this way. */
+document.getElementById('help').addEventListener('click', (e) => {
+  if (e.target === e.currentTarget) helpToggle(false);
+});
 /* Esc closes the office from anywhere inside it. The text fields stopPropagation
    on keydown so WASD cannot leak into the world — which also means C can never
    reach the window handler once a field has focus, leaving no keyboard way out.
@@ -1761,6 +1897,33 @@ document.getElementById('curator').addEventListener('keydown', (e) => {
   document.getElementById('cur-gather').addEventListener('click', () => {
     if (!curatorCanEdit()) return;
     if (gatherIntoWing()) curatorToggle();     // step out and look at it
+  });
+  /* The wing sizer. + reaches one room further and walks the curator into
+     it, ready to hang new work; − pulls the wing in and lays the works
+     again, snugly. The fit itself is automatic: a gather never takes more
+     rooms than the works and the kept-empty count ask for. */
+  document.getElementById('cur-wing-plus').addEventListener('click', () => {
+    if (!curatorCanEdit()) return;
+    const works = curator.uploads.size;
+    if (!works){ flashHint('the collection is empty — add works first'); return; }
+    const grown = wingRoute(works, wingExtra + 1);
+    if (grown.length <= wingRoute(works, wingExtra).length){
+      flashHint('the wing cannot reach further'); return;
+    }
+    wingExtra++; saveWingPrefs(); wingUI();
+    curatorToggle();
+    const last = grown[grown.length - 1];
+    goToRoom(last.gx, last.gz, 0);
+    flashHint('a new room joins the wing — choose a work (<b>C</b>) and press <b>H</b> at any frame');
+  });
+  document.getElementById('cur-wing-minus').addEventListener('click', () => {
+    if (!curatorCanEdit()) return;
+    if (!wingExtra){
+      flashHint('the wing is already as small as the works allow — Gather lays it snugly');
+      return;
+    }
+    wingExtra--; saveWingPrefs(); wingUI();
+    if (wingPrev && gatherIntoWing()) curatorToggle();
   });
   document.getElementById('cur-file').addEventListener('change', (e) => {
     if (e.target.files && e.target.files.length) curatorAddFiles([...e.target.files]);
@@ -2064,7 +2227,19 @@ function applyCloudUploads(list){
   for (const rec of list) if (!curator.uploads.has(rec.id)) curator.uploads.set(rec.id, rec);
 }
 function applyCloudPlacements(pairs){
-  for (const [k, id] of pairs) curator.placements.set(k, id);
+  /* Works are unrepeatable now: first hung wins, later copies come down.
+     An owner's session also tells the cloud, so old duplicate rows converge
+     to the one hanging that is actually shown. */
+  const seen = new Set(curator.placements.values());
+  for (const [k, id] of pairs){
+    if (curator.placements.get(k) === id) continue;
+    if (seen.has(id)){
+      if (cloud.sess && !cloud.viewing) enqueue('delPlacement', k, [k]);
+      continue;
+    }
+    seen.add(id);
+    curator.placements.set(k, id);
+  }
 }
 async function loadMyCollection(){
   const data = await cloudLoadMine();
@@ -2259,13 +2434,21 @@ function reflecting(){ return reflectPin === null ? PERF.q >= 1 : reflectPin; }
    you occupy and the one you are stepping into whole; past 26 m a room is at
    best a bright rectangle at the end of an enfilade. packLights orders fill
    lights first, so what a clamp drops is always the least important light in
-   the room, never the one shaping it. */
-function lightBudget(ox, oz){
-  const dx = ox - player.x, dz = oz - player.z;
-  const d2 = dx*dx + dz*dz;
-  return d2 < 100 ? MAX_LIGHTS : d2 < 676 ? 6 : 4;
-}
+   the room, never the one shaping it — and it fades the tail out over two
+   metres rather than cutting it, so nothing blinks as the player walks. */
 let lightCap = MAX_LIGHTS;
+
+/* ————— which slice of the town a pane looks onto —————
+   Every wall gets its own stretch of the shared panorama, seeded from the
+   room and the wall alone — draw-time only, so the world's determinism is
+   untouched. wn.u rides along the wall in the same scale, which is what
+   makes two windows on one wall show one continuous scene through both. */
+const SKY_SLICE = 0.141;    // panorama fraction per pane; matches the 1.3 : 2.3 glass
+function windowSlice(r, wn, flip){
+  const wi = wn.wall === 'e' ? 1 : wn.wall === 'w' ? 2 : wn.wall === 'n' ? 3 : 4;
+  const wallOff = (h2(r.gx, r.gz, SALT_WIN ^ (wi * 0x9E37)) >>> 0) / 4294967296;
+  return wallOff + (flip * wn.u - wn.w / 2) * (SKY_SLICE / wn.w);
+}
 
 /** Frustum test against the room mirrored below the floor, for the reflection
  *  pass. Cheap, and the only visibility that pass can honestly use. */
@@ -2462,7 +2645,7 @@ function frame(t){
       (AMB_BASE[0]+m[0])*as, (AMB_BASE[1]+m[1])*as, (AMB_BASE[2]+m[2])*as);
     gl.uniform3f(uArch.fog,
       fogCur[0]+m[0]*.5, fogCur[1]+m[1]*.5, fogCur[2]+m[2]*.5);
-    const nl = Math.min(packLights(r, ox, oz), lightCap, lightBudget(ox, oz));
+    const nl = packLights(r, ox, oz);
     gl.uniform1i(uArch.nl, nl);
     /* Which packed light the baked map belongs to. packLights drops lights the
        switch turned off, so the index has to be found rather than assumed. */
@@ -2496,6 +2679,17 @@ function frame(t){
      obvious once seen. The mirrored room box is the honest test.
      The floor then covers them at slight transparency: a polished sheen. */
   const nowMs = performance.now();
+  /* The shared shader clock, needed from the reflection pass on (rain on
+     the glass, flames, shafts, motes). Frozen time pins them for the A/B
+     tests. The weather eases in at the pace of its sound — computed here,
+     before the first pass that shows it, so the pane and its reflection in
+     the floor stream under the same sky. */
+  const shaderT = frozenT !== null ? frozenT : (performance.now() % 300000) / 1000;
+  const rainTarget = rainActive() ? 1 : 0;
+  rainVis = rainPin !== null ? rainPin
+          : Math.abs(rainTarget - rainVis) < 0.004 ? rainTarget
+          : rainVis + (rainTarget - rainVis) * Math.min(1, dt * 1.1);
+  sunDim = 1 - 0.55 * rainVis;
   if (reflecting()){
     gl.enable(gl.BLEND);
     gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
@@ -2504,6 +2698,8 @@ function frame(t){
     gl.uniformMatrix4fv(uPaint.uP, false, M_P);
     gl.uniform1f(uPaint.uSigma, sigCur);
     gl.uniform1i(uPaint.uTex, 0);
+    gl.uniform1i(uPaint.uWinA, 4); gl.uniform1i(uPaint.uWinB, 5); gl.uniform1i(uPaint.uWinC, 6);
+    gl.uniform1f(uPaint.uWin, 0);
     gl.uniform1f(uPaint.uAT, 0);
     gl.bindVertexArray(quadVAO);
     for (let ri = 0; ri < midRooms.length; ri++){
@@ -2539,9 +2735,18 @@ function frame(t){
       if (WIN.on && r.windows.length){
         gl.uniform1i(uPaint.uNL, 0);
         gl.uniform1f(uPaint.uFade, 0.85);
-        gl.uniform1f(uPaint.uEm, 1.65);
+        /* Overcast steals sky light here too — the reflection used to stay
+           bright and dry while the pane above it streamed. */
+        gl.uniform1f(uPaint.uEm, 1.25 * (1 - 0.30 * rainVis));
         gl.uniform1f(uPaint.uGlaze, 0);
-        gl.bindTexture(gl.TEXTURE_2D, ensureSkyTex());
+        gl.uniform1f(uPaint.uRain, rainVis);
+        gl.uniform1f(uPaint.uTime, shaderT);
+        gl.uniform1f(uPaint.uWin, 1);
+        const skr = ensureSkyTex();
+        gl.activeTexture(gl.TEXTURE4); gl.bindTexture(gl.TEXTURE_2D, skr[0]);
+        gl.activeTexture(gl.TEXTURE5); gl.bindTexture(gl.TEXTURE_2D, skr[1]);
+        gl.activeTexture(gl.TEXTURE6); gl.bindTexture(gl.TEXTURE_2D, skr[2]);
+        gl.activeTexture(gl.TEXTURE0);
         const IN2r = HS - WT;
         for (const wn of r.windows){
           const sign = (wn.wall==='e'||wn.wall==='n') ? 1 : -1;
@@ -2550,18 +2755,23 @@ function frame(t){
           const u0 = flip > 0 ? wn.u - wn.w/2 : wn.u + wn.w/2;
           const wc = sign * (IN2r - 0.012);
           const y0 = wn.cy - wn.h/2;
+          gl.uniform2f(uPaint.uWinUV, windowSlice(r, wn, flip), SKY_SLICE);
           if (horiz){
             gl.uniform3f(uPaint.uO, wc, -y0, u0);
             gl.uniform3f(uPaint.uU, 0, 0, flip*wn.w);
             gl.uniform3f(uPaint.uN, -sign*M_V[0], -sign*M_V[1], -sign*M_V[2]);
+            gl.uniform3f(uPaint.uWinT, flip*M_V[8], flip*M_V[9], flip*M_V[10]);
           } else {
             gl.uniform3f(uPaint.uO, u0, -y0, wc);
             gl.uniform3f(uPaint.uU, flip*wn.w, 0, 0);
             gl.uniform3f(uPaint.uN, -sign*M_V[8], -sign*M_V[9], -sign*M_V[10]);
+            gl.uniform3f(uPaint.uWinT, flip*M_V[0], flip*M_V[1], flip*M_V[2]);
           }
           gl.uniform3f(uPaint.uV, 0, -wn.h, 0);
           gl.drawArrays(gl.TRIANGLES, 0, 6);
         }
+        gl.uniform1f(uPaint.uWin, 0);
+        gl.uniform1f(uPaint.uRain, 0);        // the next room's paintings are dry
       }
     }
     /* candle flames, mirrored, dimmed */
@@ -2569,8 +2779,9 @@ function frame(t){
       gl.blendFunc(gl.ONE, gl.ONE);
       gl.useProgram(progFlame);
       gl.uniformMatrix4fv(uFlame.uP, false, M_P);
-      gl.uniform1f(uFlame.uTime, frozenT !== null ? frozenT : (performance.now() % 300000)/1000);
+      gl.uniform1f(uFlame.uTime, shaderT);
       gl.uniform1f(uFlame.uMY, 1);
+      gl.uniform1f(uFlame.uEyeY, camY);
       gl.uniform3f(uFlame.uCol, 0.34, 0.21, 0.09);
       for (let ri = 0; ri < midRooms.length; ri++){
         const { r, ox, oz, visR } = midRooms[ri];
@@ -2604,16 +2815,6 @@ function frame(t){
   gl.uniform1f(uArch.alpha, 1);
   gl.disable(gl.BLEND);
 
-  /* The shared shader clock, needed from pass 2 on (rain on the glass,
-     flames, shafts, motes). Frozen time pins them all for the A/B tests. */
-  const shaderT = frozenT !== null ? frozenT : (performance.now() % 300000) / 1000;
-  /* The weather eases in at the pace of its sound. */
-  const rainTarget = rainActive() ? 1 : 0;
-  rainVis = rainPin !== null ? rainPin
-          : Math.abs(rainTarget - rainVis) < 0.004 ? rainTarget
-          : rainVis + (rainTarget - rainVis) * Math.min(1, dt * 1.1);
-  sunDim = 1 - 0.55 * rainVis;
-
   /* pass 2: pigment — textured paintings + placards, blended over the
      dark placeholder canvases so each work can fade into being */
   gl.useProgram(progPaint);
@@ -2621,7 +2822,9 @@ function frame(t){
   gl.uniform1f(uPaint.uSigma, sigCur);
   gl.uniform1f(uPaint.uTime, shaderT);
   gl.uniform1f(uPaint.uRain, 0);
+  gl.uniform1f(uPaint.uWin, 0);
   gl.uniform1i(uPaint.uTex, 0);
+  gl.uniform1i(uPaint.uWinA, 4); gl.uniform1i(uPaint.uWinB, 5); gl.uniform1i(uPaint.uWinC, 6);
   gl.activeTexture(gl.TEXTURE0);
   gl.enable(gl.BLEND);
   gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
@@ -2774,11 +2977,17 @@ function frame(t){
         gl.uniform1i(uPaint.uNL, 0);
         gl.uniform1f(uPaint.uFade, 1);
         /* Overcast steals some of the sky's own light before the shader
-           greys what remains — two small steps that read as one weather. */
-        gl.uniform1f(uPaint.uEm, 1.65 * (1 - 0.30 * rainVis));
+           greys what remains — two small steps that read as one weather.
+           1.25, not the old 1.65: the town was bleaching into the bloom. */
+        gl.uniform1f(uPaint.uEm, 1.25 * (1 - 0.30 * rainVis));
         gl.uniform1f(uPaint.uGlaze, 0);
         gl.uniform1f(uPaint.uRain, rainVis);
-        gl.bindTexture(gl.TEXTURE_2D, ensureSkyTex());
+        gl.uniform1f(uPaint.uWin, 1);
+        const sk = ensureSkyTex();
+        gl.activeTexture(gl.TEXTURE4); gl.bindTexture(gl.TEXTURE_2D, sk[0]);
+        gl.activeTexture(gl.TEXTURE5); gl.bindTexture(gl.TEXTURE_2D, sk[1]);
+        gl.activeTexture(gl.TEXTURE6); gl.bindTexture(gl.TEXTURE_2D, sk[2]);
+        gl.activeTexture(gl.TEXTURE0);
         const IN2 = HS - WT;
         for (const wn of r.windows){
           const sign = (wn.wall==='e'||wn.wall==='n') ? 1 : -1;
@@ -2787,18 +2996,22 @@ function frame(t){
           const u0 = flip > 0 ? wn.u - wn.w/2 : wn.u + wn.w/2;
           const wc = sign * (IN2 - 0.012);
           const y0 = wn.cy - wn.h/2;
+          gl.uniform2f(uPaint.uWinUV, windowSlice(r, wn, flip), SKY_SLICE);
           if (horiz){
             gl.uniform3f(uPaint.uO, wc, y0, u0);
             gl.uniform3f(uPaint.uU, 0, 0, flip*wn.w);
             gl.uniform3f(uPaint.uN, -sign*M_V[0], -sign*M_V[1], -sign*M_V[2]);
+            gl.uniform3f(uPaint.uWinT, flip*M_V[8], flip*M_V[9], flip*M_V[10]);
           } else {
             gl.uniform3f(uPaint.uO, u0, y0, wc);
             gl.uniform3f(uPaint.uU, flip*wn.w, 0, 0);
             gl.uniform3f(uPaint.uN, -sign*M_V[8], -sign*M_V[9], -sign*M_V[10]);
+            gl.uniform3f(uPaint.uWinT, flip*M_V[0], flip*M_V[1], flip*M_V[2]);
           }
           gl.uniform3f(uPaint.uV, 0, wn.h, 0);
           gl.drawArrays(gl.TRIANGLES, 0, 6);
         }
+        gl.uniform1f(uPaint.uWin, 0);
         gl.uniform1f(uPaint.uRain, 0);        // the next room's paintings are dry
       }
     }
@@ -2818,6 +3031,7 @@ function frame(t){
       gl.uniformMatrix4fv(uFlame.uMV, false, M_MV);
       gl.uniform1f(uFlame.uTime, shaderT);
       gl.uniform1f(uFlame.uMY, 0);
+      gl.uniform1f(uFlame.uEyeY, camY);
       gl.uniform3f(uFlame.uCol, 1.25, 0.80, 0.36);
       gl.bindVertexArray(r.flameVAO);
       gl.drawArrays(gl.POINTS, 0, r.nFlames);
@@ -3005,8 +3219,20 @@ if (DBG_FULL) Object.assign(window.DBG, {
     goToRoom(gx, gz, yaw);
     return `room (${player.gx},${player.gz}) yaw=${yaw}`;
   },
-  /** Register a placement without a backend, so guest arrival is testable. */
+  /** Register a placement without a backend, so guest arrival is testable.
+   *  Deliberately raw — no one-wall rule here, so a test can fabricate any
+   *  state, including the duplicates the UI refuses to make. */
   placeForTest(k, uploadId){ curator.placements.set(k, uploadId); return curator.placements.size; },
+  /** Hang through the same gate the H key uses, so the one-wall rule and the
+   *  wing sizer are testable without a pointer. */
+  hangForTest(k, uploadId){
+    const pk = placementElsewhere(uploadId, k);
+    if (pk) return { blocked: pk };
+    curator.placements.set(k, uploadId);
+    return { placed: k };
+  },
+  wingSizeForTest(extra){ wingExtra = Math.min(39, Math.max(0, extra | 0)); return wingExtra; },
+  gatherForTest(){ return gatherIntoWing(); },
   /** Pin the weather's visual strength while frames step (null lets it ease
    *  again) — the ramp is time-based, so a test cannot simply wait for it. */
   rainVisForTest(v){
@@ -3072,7 +3298,8 @@ if (DBG_FULL) Object.assign(window.DBG, {
   room(gx, gz){
     const r = getRoom(gx, gz);
     return { special: r.special, bench: r.bench || null, pedestal: r.pedestal || null,
-             shaft: r.shaft || null, works: r.artworks.length };
+             shaft: r.shaft || null, plants: r.plants ? r.plants.length : 0,
+             works: r.artworks.length };
   },
   lightsInfo(){
     const r = rooms.get(roomKey(player.gx, player.gz));
@@ -3212,6 +3439,8 @@ if (DBG_FULL) Object.assign(window.DBG, {
   },
   /** The route a wing would take for n works, without hanging anything. */
   wingRoute(n = 12){ return wingRoute(n).map(({gx, gz}) => [gx, gz]); },
+  /** The same walk the next gather would take: kept-empty rooms included. */
+  wingRouteSized(n = 12){ return wingRoute(n, wingExtra).map(({gx, gz}) => [gx, gz]); },
   /** Lay the collection out along one walkable route. Returns what it hung. */
   gather(){ return gatherIntoWing(); },
   /** Whether the distant murmur is running, and how loud it sits. */

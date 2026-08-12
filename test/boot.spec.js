@@ -29,4 +29,43 @@ test.describe('boot', () => {
     });
     expect(dupes).toEqual([]);
   });
+
+  test('the visitor’s guide opens from its button and closes again', async ({ page }) => {
+    await boot(page);
+    await expect(page.locator('#help')).toBeHidden();
+    await page.evaluate(() => document.getElementById('help-btn').click());
+    await expect(page.locator('#help')).toBeVisible();
+    await page.evaluate(() => document.getElementById('help-close').click());
+    await expect(page.locator('#help')).toBeHidden();
+  });
+
+  test('a work hangs on one wall at a time', async ({ page }) => {
+    await boot(page);
+    const r = await page.evaluate(() => {
+      const out = {};
+      window.DBG.placeForTest('0,0:0', 'u1');
+      out.second = window.DBG.hangForTest('0,0:1', 'u1');   // refused: u1 already hangs
+      out.other  = window.DBG.hangForTest('0,0:1', 'u2');   // a different work is fine
+      out.rehang = window.DBG.hangForTest('0,0:0', 'u1');   // its own frame is a rehang
+      return out;
+    });
+    expect(r.second).toEqual({ blocked: '0,0:0' });
+    expect(r.other).toEqual({ placed: '0,0:1' });
+    expect(r.rehang).toEqual({ placed: '0,0:0' });
+  });
+
+  test('the wing sizer clamps and the route grows by whole rooms', async ({ page }) => {
+    await boot(page);
+    const r = await page.evaluate(() => ({
+      neg: window.DBG.wingSizeForTest(-3),
+      big: window.DBG.wingSizeForTest(99),
+      base: window.DBG.wingRoute(12).length,
+      grown: (window.DBG.wingSizeForTest(2), window.DBG.wingRouteSized(12).length),
+      reset: window.DBG.wingSizeForTest(0),
+    }));
+    expect(r.neg).toBe(0);
+    expect(r.big).toBe(39);
+    expect(r.grown).toBeGreaterThan(r.base);
+    expect(r.reset).toBe(0);
+  });
 });

@@ -53,18 +53,22 @@ Edge, or Firefox.
 | key | action |
 |---|---|
 | `W A S D` | walk (`Shift` — stroll faster) |
-| drag / pointer-lock mouse | look — works while walking |
+| mouse | look — the cursor locks on entry, so moving the mouse looks while you walk, run and jump; `Esc` frees it, a click takes it back, and drag-look works whenever the cursor is free |
 | `Space` | jump · press again quickly mid-air for the double jump |
 | `F` or right-click | inspect the work you face (glides the camera up to it, and prints its title and description) |
 | `V` or `E` | view larger — re-renders the work at 1024² beside its title and description, with an opt-in PNG |
 | `L` | the lamps — on/off (also a wall switch, bottom right) |
 | `O` | the shutters — open them and sunlight pours through the windows |
 | `T` | cycle the gallery theme |
-| `?` | show or hide the controls |
+| `?` | the visitor's guide — every key and switch, also behind the `? help` button top-centre |
 | `Esc` | leave inspect |
 | `C` | the Curator's Office |
+| `H` / `U` | hang the chosen work on the frame you face / take it down (one wall per work) |
 | `M` | sound on/off |
 | `N` | the music — four programmes and silence |
+
+The wall switches at the lower right — lights, shutters, music, rain, curator —
+answer to touch as well as keys.
 
 ## Themes
 

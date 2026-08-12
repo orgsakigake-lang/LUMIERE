@@ -307,6 +307,41 @@ export function buildRoomMesh(r, daylight){
     box(x-0.27, 1.08, z-0.27, x+0.27, 1.13, z+0.27, PL);
     r.colliders.push({ cx:x, cz:z, hx:0.28, hz:0.28 });
   }
+  /* Potted plants: a thrown pot (one revolved profile, soil disc included),
+     and a fan of arcing two-quad leaves. ~120 triangles a plant, part of the
+     room's one VAO — decor at the price of a picture frame. */
+  if (r.plants){
+    const POT = [0.235, 0.150, 0.105], SOIL = [0.060, 0.045, 0.035];
+    const LEAF = [0.110, 0.185, 0.095], LEAF_D = [0.075, 0.135, 0.075];
+    for (const pl of r.plants){
+      const { x, z, s, leaves, ph } = pl;
+      revolveY(x, z, [
+        [0.115*s, 0], [0.150*s, 0.30*s], [0.165*s, 0.42*s],
+        [0.150*s, 0.44*s], [0.120*s, 0.44*s],
+      ], 10, POT);
+      revolveY(x, z, [[0.118*s, 0.405*s], [0.001, 0.405*s]], 10, SOIL);
+      const y0 = 0.41 * s;
+      for (let i = 0; i < leaves; i++){
+        const a = ph + (i / leaves) * Math.PI * 2 + (i % 3) * 0.21;
+        const ca = Math.cos(a), sa = Math.sin(a);
+        const t = (i * 0.618) % 1;
+        const L = (0.55 + 0.35 * t) * s;
+        const bx = x + ca * 0.05 * s, bz = z + sa * 0.05 * s;
+        const mx = bx + ca * 0.16 * L, my = y0 + 0.58 * L, mz = bz + sa * 0.16 * L;
+        const tx = bx + ca * 0.42 * L, ty = y0 + 0.94 * L, tz = bz + sa * 0.42 * L;
+        const w0 = 0.055 * s, w1 = 0.035 * s;
+        const px2 = -sa, pz2 = ca;
+        const col = (i % 2) ? LEAF : LEAF_D;
+        quad(bx - px2*w0, y0, bz - pz2*w0,  bx + px2*w0, y0, bz + pz2*w0,
+             mx + px2*w1, my, mz + pz2*w1,  mx - px2*w1, my, mz - pz2*w1,
+             ca*0.85, 0.30, sa*0.85, col, 0.1, 0.1);
+        quad(mx - px2*w1, my, mz - pz2*w1,  mx + px2*w1, my, mz + pz2*w1,
+             tx, ty, tz,  tx, ty, tz,
+             ca*0.70, 0.55, sa*0.70, col, 0.1, 0.1);
+      }
+      r.colliders.push({ cx: x, cz: z, hx: 0.18*s, hz: 0.18*s });
+    }
+  }
 
   /* ——— the ceiling: rosette + chandelier ——— */
   r.flames = [];

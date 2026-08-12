@@ -135,63 +135,103 @@ export function makeSurfaceTextures(){
   }
 }
 
-/* daylight — a single procedural sky, shared by every window */
+/* daylight — one town in three painted strips, shared by every window.
+   Each strip is a 1024-wide panorama a pane samples a slice of: the sky, a
+   far skyline, and a nearer row of roofs. The paint shader continues the
+   view ray through the glass to each strip's depth, so the layers slide
+   against each other and against the mullions as the visitor walks — which
+   is all a real window does. The strips wrap in u (REPEAT), so a slice may
+   start anywhere; the sun is painted once into the sky strip, and only the
+   panes whose slice faces it get it. Seeded, so every gallery shows the
+   same town — variety comes from which slice each wall sees. */
 export let skyTex = null;
 export function ensureSkyTex(){
   if (skyTex) return skyTex;
-  const c = document.createElement('canvas'); c.width = 256; c.height = 384;
-  const g = c.getContext('2d');
-  const grad = g.createLinearGradient(0, 0, 0, 384);
-  grad.addColorStop(0, '#FDF6E3'); grad.addColorStop(0.55, '#FBE9C4'); grad.addColorStop(1, '#F2D49B');
-  g.fillStyle = grad; g.fillRect(0, 0, 256, 384);
-  const sun = g.createRadialGradient(176, 118, 6, 176, 118, 130);
-  sun.addColorStop(0, 'rgba(255,253,244,0.95)'); sun.addColorStop(0.25, 'rgba(255,244,214,0.45)');
-  sun.addColorStop(1, 'rgba(255,244,214,0)');
-  g.fillStyle = sun; g.fillRect(0, 0, 256, 384);
-
-  /* Beyond the glass: a far town under the light — two rows of rooftops
-     dissolved in haze, a chimney here, one spire. Deliberately faint and
-     low in the pane: the point is that there is a world out there, not that
-     anyone should look at it instead of the art. Seeded, so every window in
-     every gallery shows the same town. */
   const rnd = (s => () => ((s = (s * 1664525 + 1013904223) >>> 0), s / 4294967296))(0xC17F);
-  const hz = g.createLinearGradient(0, 240, 0, 384);
-  hz.addColorStop(0, 'rgba(233,205,160,0)');
-  hz.addColorStop(0.55, 'rgba(226,196,152,0.5)');
-  hz.addColorStop(1, 'rgba(219,188,146,0.75)');
-  g.fillStyle = hz; g.fillRect(0, 240, 256, 144);
-  const roofrow = (base, amp, col) => {
-    g.fillStyle = col;
+  const W = 1024, H = 256;
+  const strip = (paint) => {
+    const c = document.createElement('canvas'); c.width = W; c.height = H;
+    const g = c.getContext('2d');
+    paint(g);
+    const tex = gl.createTexture();
+    gl.bindTexture(gl.TEXTURE_2D, tex);
+    gl.texStorage2D(gl.TEXTURE_2D, 8, gl.SRGB8_ALPHA8, W, H);   // sky is colour
+    gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, gl.RGBA, gl.UNSIGNED_BYTE, c);
+    gl.generateMipmap(gl.TEXTURE_2D);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR_MIPMAP_LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.REPEAT);         // a panorama has no ends
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+    return tex;
+  };
+  /* A row of buildings across the whole panorama. Draws from the shared rnd
+     stream — order matters, so the strips are painted in a fixed sequence. */
+  const roofrow = (g, base, amp, col, lit) => {
     let x = -6 + rnd()*4;
-    while (x < 260){
+    while (x < W + 4){
       const w = 14 + rnd()*26, h = amp * (0.5 + rnd());
-      g.fillRect(x, base - h, w, h + 60);
+      g.fillStyle = col;
+      g.fillRect(x, base - h, w, h + (H - base) + 4);
       if (rnd() < 0.3) g.fillRect(x + w*0.28, base - h - 7, 3, 8);       // a chimney
-      if (rnd() < 0.1){                                                  // a spire
+      if (rnd() < 0.08){                                                 // a spire
         const cx = x + w/2;
         g.beginPath(); g.moveTo(cx - 3.5, base - h);
         g.lineTo(cx, base - h - 15); g.lineTo(cx + 3.5, base - h);
         g.closePath(); g.fill();
       }
+      if (lit && rnd() < 0.38){          // a few windows with lamps behind them
+        const rows = 1 + (rnd()*2 | 0), cols = 1 + (rnd()*3 | 0);
+        g.fillStyle = 'rgba(255,216,150,0.92)';
+        for (let ry = 0; ry < rows; ry++)
+          for (let cx2 = 0; cx2 < cols; cx2++)
+            if (rnd() < 0.7)
+              g.fillRect(x + 3 + cx2*((w-6)/Math.max(cols,1)) + rnd()*2,
+                         base - h + 6 + ry*9 + rnd()*2, 2.5, 4);
+      }
       x += w + 2 + rnd()*8;
     }
   };
-  /* Checked at gallery distance, not at the canvas: the glass is emissive,
-     and at 0.42/0.55 the town bleached into it and read as a smudge. */
-  roofrow(304, 16, 'rgba(172,152,146,0.58)');   // far: half-dissolved
-  roofrow(330, 26, 'rgba(138,120,120,0.74)');   // nearer: still only a silhouette
-  const gnd = g.createLinearGradient(0, 318, 0, 384);
-  gnd.addColorStop(0, 'rgba(0,0,0,0)'); gnd.addColorStop(1, 'rgba(210,178,138,0.9)');
-  g.fillStyle = gnd; g.fillRect(0, 318, 256, 66);
-
-  skyTex = gl.createTexture();
-  gl.bindTexture(gl.TEXTURE_2D, skyTex);
-  gl.texStorage2D(gl.TEXTURE_2D, 8, gl.SRGB8_ALPHA8, 256, 384);   // sky is colour
-  gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, gl.RGBA, gl.UNSIGNED_BYTE, c);
-  gl.generateMipmap(gl.TEXTURE_2D);
-  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR_MIPMAP_LINEAR);
-  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
-  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+  const sky = strip((g) => {
+    /* A step deeper than the old #FDF6E3 top: through the emissive and the
+       bloom, near-white paint saturated to a flat glare and the clouds
+       vanished into it. */
+    const grad = g.createLinearGradient(0, 0, 0, H);
+    grad.addColorStop(0, '#F3E4C2'); grad.addColorStop(0.55, '#F2DCAC'); grad.addColorStop(1, '#EBCB8E');
+    g.fillStyle = grad; g.fillRect(0, 0, W, H);
+    const sun = g.createRadialGradient(672, 74, 6, 672, 74, 110);
+    sun.addColorStop(0, 'rgba(255,253,244,0.95)'); sun.addColorStop(0.25, 'rgba(255,244,214,0.45)');
+    sun.addColorStop(1, 'rgba(255,244,214,0)');
+    g.fillStyle = sun; g.fillRect(0, 0, W, H);
+    /* Soft cloud banks — without them a sliding sky slides invisibly. Each
+       is drawn at x and x±W so a bank straddling the seam wraps cleanly. */
+    const bank = (cx, cy, cw) => {
+      const cl = g.createRadialGradient(cx, cy, 2, cx, cy, cw);
+      cl.addColorStop(0, 'rgba(255,250,236,0.34)'); cl.addColorStop(1, 'rgba(255,250,236,0)');
+      g.save(); g.translate(cx, cy); g.scale(1, 0.32); g.translate(-cx, -cy);
+      g.fillStyle = cl; g.fillRect(cx - cw, cy - cw, cw*2, cw*2); g.restore();
+    };
+    for (let i = 0; i < 9; i++){
+      const cx = rnd()*W, cy = 26 + rnd()*95, cw = 60 + rnd()*130;
+      bank(cx, cy, cw); bank(cx - W, cy, cw); bank(cx + W, cy, cw);
+    }
+    const hz = g.createLinearGradient(0, H*0.62, 0, H);
+    hz.addColorStop(0, 'rgba(233,205,160,0)');
+    hz.addColorStop(1, 'rgba(224,194,150,0.6)');
+    g.fillStyle = hz; g.fillRect(0, H*0.62, W, H*0.38);
+  });
+  const town = strip((g) => {          // far: half-dissolved in the haze
+    roofrow(g, 168, 18, 'rgba(176,155,148,0.72)', false);
+    const hz = g.createLinearGradient(0, 130, 0, H);
+    hz.addColorStop(0, 'rgba(233,205,160,0)');
+    hz.addColorStop(1, 'rgba(226,196,152,0.55)');
+    g.fillStyle = hz; g.fillRect(0, 130, W, H - 130);
+  });
+  const roofs = strip((g) => {         // nearer: darker, and a few lamps lit
+    roofrow(g, 196, 42, 'rgba(124,106,104,0.88)', true);
+    const gnd = g.createLinearGradient(0, H - 52, 0, H);
+    gnd.addColorStop(0, 'rgba(0,0,0,0)'); gnd.addColorStop(1, 'rgba(210,178,138,0.92)');
+    g.fillStyle = gnd; g.fillRect(0, H - 52, W, 52);
+  });
+  skyTex = [sky, town, roofs];
   return skyTex;
 }
 

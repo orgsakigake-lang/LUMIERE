@@ -416,23 +416,29 @@ function startRain(){
     for (let i = 0; i < len; i++) d[i] = nr()*2 - 1;
   }
 
-  const layer = (cut, gain) => {
+  const layer = (cut, gain, offset) => {
     const src = ctx.createBufferSource(); src.buffer = noise; src.loop = true;
+    /* Two poles in cascade, not one: a single 12 dB/oct lowpass left the
+       3–8 kHz shelf of the white source in the mix, which is the band the
+       ear calls static rather than water. */
     const f = ctx.createBiquadFilter(); f.type = 'lowpass';
     f.frequency.value = cut; f.Q.value = 0.5;
+    const f2 = ctx.createBiquadFilter(); f2.type = 'lowpass';
+    f2.frequency.value = cut * 1.4; f2.Q.value = 0.5;
     const g = ctx.createGain(); g.gain.value = gain;
-    src.connect(f); f.connect(g); g.connect(bus);
-    src.start();
-    return { src, f, g };
+    src.connect(f); f.connect(f2); f2.connect(g); g.connect(bus);
+    /* Both layers loop the same buffer; started in phase they summed to a
+       single correlated hiss. An offset start decorrelates them. */
+    src.start(0, offset || 0);
+    return { src, f, f2, g };
   };
-  /* Measured, not guessed (DBG.audioLevel): 0.14/0.085 put the rain at RMS
-     0.016 against the music's ~0.023 — rain billed as heavy, arriving lighter
-     than a bell programme — and 0.22/0.135 only reached parity. These land it
-     at 0.026–0.034 depending on where the swell is breathing, a third to a
-     half over the music, peaks ~0.17: unmistakably a downpour, nowhere near
-     the rails. */
-  const body = layer(420, 0.30);       // the weight of a downpour
-  const hiss = layer(2600, 0.18);      // the texture of it
+  /* Gains rebalanced by ear after the second pole (the old measured pair
+     0.30/0.18 was set against 12 dB/oct — see DBG.audioLevel to re-check):
+     the layers lose top-end energy, so each comes up a step to keep the
+     downpour's weight without the sizzle. The hiss now sits at 1.4 kHz —
+     rain on a roof, not a detuned radio. */
+  const body = layer(420, 0.34, 0);          // the weight of a downpour
+  const hiss = layer(1400, 0.24, 1.73);      // the texture of it
 
   /* Sheets of rain: the hiss breathes on a period slow enough that you feel
      the swell without ever catching the cycle. */
@@ -453,7 +459,8 @@ function stopRain(){
   R.bus.gain.setTargetAtTime(0, ctx.currentTime, 0.5);
   setTimeout(() => {
     for (const n of [R.body.src, R.hiss.src, R.lfo]){ try { n.stop(); } catch(e){} }
-    for (const n of [R.bus, R.send, R.body.f, R.body.g, R.hiss.f, R.hiss.g, R.lg]){
+    for (const n of [R.bus, R.send, R.body.f, R.body.f2, R.body.g,
+                     R.hiss.f, R.hiss.f2, R.hiss.g, R.lg]){
       try { n.disconnect(); } catch(e){}
     }
   }, 2500);
@@ -469,23 +476,25 @@ function rainScheduler(){
     return;
   }
   /* Drops: dense enough to read as a downpour, each one quiet enough to
-     stay under the wash — patter, not percussion. */
+     stay under the wash — patter, not percussion. Kept low and round: a
+     resonant bandpass anywhere up to 4.5 kHz with a 4 ms attack read as
+     ticking crackle, not water landing on anything. */
   while (nextDrop < ctx.currentTime + 0.35){
     const t = Math.max(nextDrop, ctx.currentTime + 0.02);
     const src = ctx.createBufferSource(); src.buffer = audio.scuffBuf;
-    src.playbackRate.value = 0.8 + r()*1.6;
+    src.playbackRate.value = 0.7 + r()*1.1;
     const bp = ctx.createBiquadFilter(); bp.type = 'bandpass';
-    bp.frequency.value = 700 + r()*3800; bp.Q.value = 2.2;
+    bp.frequency.value = 500 + r()*1500; bp.Q.value = 1.1;
     const g = ctx.createGain();
-    const peak = 0.008 + r()*0.022;
+    const peak = 0.006 + r()*0.016;
     g.gain.setValueAtTime(0, t);
-    g.gain.linearRampToValueAtTime(peak, t + 0.004);
-    g.gain.exponentialRampToValueAtTime(0.0001, t + 0.03 + r()*0.05);
+    g.gain.linearRampToValueAtTime(peak, t + 0.010);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + 0.05 + r()*0.07);
     const pan = ctx.createStereoPanner(); pan.pan.value = r()*2 - 1;
     src.connect(bp); bp.connect(g); g.connect(pan); pan.connect(rainNodes.bus);
-    src.start(t); src.stop(t + 0.12);
-    reap(src, [src, bp, g, pan], 0.2);
-    nextDrop = t + 0.02 + r()*0.07;
+    src.start(t); src.stop(t + 0.16);
+    reap(src, [src, bp, g, pan], 0.25);
+    nextDrop = t + 0.03 + r()*0.09;
   }
   /* Thunder: far away, low, and rare — a slow swell that darkens as it
      fades, the way distance eats the highs first. */
@@ -495,13 +504,17 @@ function rainScheduler(){
     const f = ctx.createBiquadFilter(); f.type = 'lowpass'; f.Q.value = 0.8;
     f.frequency.setValueAtTime(110, t);
     f.frequency.linearRampToValueAtTime(60, t + 4.5);
+    /* A second pole: at 12 dB/oct the "distant" thunder leaked broadband
+       hiss over what should be pure low end. */
+    const f2 = ctx.createBiquadFilter(); f2.type = 'lowpass';
+    f2.frequency.value = 220; f2.Q.value = 0.5;
     const g = ctx.createGain();
     g.gain.setValueAtTime(0.0001, t);
     g.gain.exponentialRampToValueAtTime(0.12 + r()*0.12, t + 0.9 + r()*0.8);
     g.gain.exponentialRampToValueAtTime(0.0001, t + 4.0 + r()*2.0);
-    src.connect(f); f.connect(g); g.connect(rainNodes.bus);
+    src.connect(f); f.connect(f2); f2.connect(g); g.connect(rainNodes.bus);
     src.start(t); src.stop(t + 7);
-    reap(src, [src, f, g], 7);
+    reap(src, [src, f, f2, g], 7);
     nextThunder = t + 35 + r()*70;
   }
 }
