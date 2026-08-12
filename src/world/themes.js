@@ -49,6 +49,9 @@ export const THEMES = {
     grade: { exposure: 1.35, grain: 0.014, vignette: 0.34,
              shadowTint: [0.965, 0.99, 1.065], lightTint: [1.045, 1.0, 0.945] },
     mount: { face:'#EDE7DA', bevel:'#FBF7EE', undercut:'rgba(90,80,64,0.34)' },
+    /* The plants live in the corners, where each theme's light goes first —
+       so their albedo is the theme's to choose, like everything else. */
+    plant: { pot:[0.235,0.150,0.105], leaf:[0.110,0.185,0.095], leafD:[0.075,0.135,0.075] },
   },
 
   /* ————— for monochrome work on paper: pencil, charcoal, ink —————
@@ -86,6 +89,10 @@ export const THEMES = {
     grade: { exposure: 1.28, grain: 0.008, vignette: 0.40,
              shadowTint: [0.995, 0.998, 1.006], lightTint: [1.004, 1.0, 0.994] },
     mount: { face:'#F0F0EE', bevel:'#FBFBFA', undercut:'rgba(70,72,78,0.34)' },
+    /* Presence by value, not chroma: against these dark grey walls the salon's
+       leaves vanish, so they lighten a stop while the green stays restrained —
+       a saturated plant would be the loudest thing in a monochrome hall. */
+    plant: { pot:[0.195,0.168,0.150], leaf:[0.160,0.198,0.155], leafD:[0.112,0.148,0.114] },
   },
 
   /* ————— for digital and contemporary work —————
@@ -123,6 +130,8 @@ export const THEMES = {
     grade: { exposure: 1.06, grain: 0.006, vignette: 0.16,
              shadowTint: [0.998, 1.0, 1.004], lightTint: [1.002, 1.0, 0.998] },
     mount: { face:'#F4F4F3', bevel:'#FCFCFB', undercut:'rgba(64,66,70,0.30)' },
+    /* A touch deeper than the salon's: against 60% walls a pale leaf washes out. */
+    plant: { pot:[0.225,0.148,0.108], leaf:[0.098,0.168,0.086], leafD:[0.066,0.122,0.066] },
   },
 };
 

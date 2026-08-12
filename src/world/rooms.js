@@ -75,10 +75,19 @@ export function getRoom(gx, gz){
     const horiz = (A.wall==='e'||A.wall==='w');
     const back = sign * (HS - WT - 3.4);
     r.bench = horiz ? { x: back, z: A.u, alongZ: true } : { x: A.u, z: back, alongZ: false };
-  } else if (!r.special){
+  } else if (!r.special && !(gx === 0 && gz === 0)){
+    /* The entrance hall keeps its floor clear — a visitor materialises at its
+       centre, and nothing should be standing in that exact spot. */
     const b1 = ar(), b2 = ar(), b3 = ar(), b4 = ar();
-    if (b1 < 0.30) r.bench = { x: (b2-.5)*2.2, z: (b3-.5)*2.2, alongZ: b4 < 0.5 };
-    else if (b2 < 0.13) r.pedestal = { x: (b3-.5)*3, z: (b4-.5)*3 };
+    if (b1 < 0.36) r.bench = { x: (b2-.5)*2.2, z: (b3-.5)*2.2, alongZ: b4 < 0.5 };
+    else if (b2 < 0.20){
+      /* Its own stream, so the sculpture's shape cannot lean on draws the
+         bench question already spent. */
+      const sr = mulberry32(h2(gx, gz, 0x5C17 ^ WORLD_SEED));
+      r.pedestal = { x: (b3-.5)*3, z: (b4-.5)*3,
+                     kind: (sr()*3) | 0, tone: (sr()*3) | 0,
+                     form: [sr(), sr(), sr()] };
+    }
   }
   if (r.special === SPECIAL.VERMILION || r.special === SPECIAL.ARCHIVE){
     r.shaft = { x: (ar()<.5?-1:1)*(1.6+ar()*1.5), z: (ar()<.5?-1:1)*(1.6+ar()*1.5) };
@@ -116,13 +125,29 @@ export function getRoom(gx, gz){
     const dr = mulberry32(h2(gx, gz, 0xDEC0 ^ WORLD_SEED));
     r.plants = [];
     for (const [sx, sz] of [[1,1],[1,-1],[-1,1],[-1,-1]]){
-      if (dr() < 0.22){
+      if (dr() < 0.28){
         r.plants.push({
           x: sx * (HS - 1.0 - dr()*0.5),
           z: sz * (HS - 1.0 - dr()*0.5),
           s: 0.8 + dr()*0.5,               // overall scale
           leaves: 6 + (dr()*4 | 0),
           ph: dr()*Math.PI*2,              // where the first leaf points
+        });
+      }
+    }
+    /* The 3×3 around the entrance is every visit's first impression, and
+       under the default seed most of it rolled bare — an infinite museum
+       that opened on an empty room. A bare ring room borrows two opposite
+       corners; same stream, so it stays deterministic. */
+    if (Math.abs(gx) <= 1 && Math.abs(gz) <= 1
+        && !r.plants.length && !r.bench && !r.pedestal){
+      for (const [sx, sz] of [[1,1],[-1,-1]]){
+        r.plants.push({
+          x: sx * (HS - 1.0 - dr()*0.5),
+          z: sz * (HS - 1.0 - dr()*0.5),
+          s: 0.8 + dr()*0.5,
+          leaves: 6 + (dr()*4 | 0),
+          ph: dr()*Math.PI*2,
         });
       }
     }

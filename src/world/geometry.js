@@ -301,18 +301,61 @@ export function buildRoomMesh(r, daylight){
     r.colliders.push({ cx:x, cz:z, hx, hz });
   }
   if (r.pedestal){
-    const { x, z } = r.pedestal;
+    const { x, z, kind = 0, tone = 0, form = [0.5, 0.5, 0.5] } = r.pedestal;
     const PL = [0.400, 0.385, 0.355];
     box(x-0.23, 0, z-0.23, x+0.23, 1.08, z+0.23, PL);
     box(x-0.27, 1.08, z-0.27, x+0.27, 1.13, z+0.27, PL);
     r.colliders.push({ cx:x, cz:z, hx:0.28, hz:0.28 });
+    /* Something to stand for: these were empty plinths for a whole version —
+       furniture waiting for a sculptor. A small turned form from the
+       pedestal's own seeded parameters, in one of three materials. */
+    const TONES = [[0.105, 0.082, 0.056],    // dark bronze
+                   [0.245, 0.158, 0.112],    // terracotta
+                   [0.460, 0.442, 0.410]];   // alabaster
+    const col = TONES[tone % 3];
+    const y0 = 1.13, h = 0.42 + form[0]*0.25;
+    if (kind === 0){
+      /* an amphora — foot, belly, shoulder, neck, lip */
+      const rb = 0.13 + form[1]*0.06, rn = 0.045 + form[2]*0.02;
+      revolveY(x, z, [
+        [0.070, y0], [0.095, y0+0.02], [rb*0.75, y0+h*0.22],
+        [rb, y0+h*0.45], [rb*0.72, y0+h*0.72], [rn, y0+h*0.88],
+        [rn+0.012, y0+h*0.97], [rn+0.020, y0+h], [0.001, y0+h],
+      ], 12, col);
+    } else if (kind === 1){
+      /* a cairn of three worn stones, each resting on the last */
+      let cy = y0, rr = 0.115 + form[1]*0.045;
+      for (let i = 0; i < 3; i++){
+        const hh = rr*1.35;
+        revolveY(x, z, [
+          [0.001, cy], [rr*0.82, cy+hh*0.18], [rr, cy+hh*0.5],
+          [rr*0.78, cy+hh*0.84], [0.001, cy+hh],
+        ], 10, col);
+        cy += hh*0.88; rr *= 0.68 + form[2]*0.1;
+      }
+    } else {
+      /* a slender spire with a sphere at rest on its tip */
+      const rs = 0.055 + form[1]*0.025;
+      revolveY(x, z, [
+        [0.085, y0], [0.070, y0+0.03], [0.028, y0+h*0.85], [0.022, y0+h],
+      ], 10, col);
+      const cy = y0 + h + rs*0.8;
+      revolveY(x, z, [
+        [0.001, cy-rs], [rs*0.71, cy-rs*0.71], [rs, cy],
+        [rs*0.71, cy+rs*0.71], [0.001, cy+rs],
+      ], 12, col);
+    }
   }
   /* Potted plants: a thrown pot (one revolved profile, soil disc included),
      and a fan of arcing two-quad leaves. ~120 triangles a plant, part of the
      room's one VAO — decor at the price of a picture frame. */
   if (r.plants){
-    const POT = [0.235, 0.150, 0.105], SOIL = [0.060, 0.045, 0.035];
-    const LEAF = [0.110, 0.185, 0.095], LEAF_D = [0.075, 0.135, 0.075];
+    /* Albedo from the theme — Graphite lightens the leaves a stop so they
+       hold their own against its dark grey walls; meshes rebuild on every
+       theme switch, so reading the live theme here is safe. */
+    const TP = theme().plant || {};
+    const POT = TP.pot || [0.235, 0.150, 0.105], SOIL = [0.060, 0.045, 0.035];
+    const LEAF = TP.leaf || [0.110, 0.185, 0.095], LEAF_D = TP.leafD || [0.075, 0.135, 0.075];
     for (const pl of r.plants){
       const { x, z, s, leaves, ph } = pl;
       revolveY(x, z, [
