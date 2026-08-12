@@ -85,8 +85,15 @@ export function getRoom(gx, gz){
          bench question already spent. */
       const sr = mulberry32(h2(gx, gz, 0x5C17 ^ WORLD_SEED));
       r.pedestal = { x: (b3-.5)*3, z: (b4-.5)*3,
-                     kind: (sr()*3) | 0, tone: (sr()*3) | 0,
+                     kind: (sr()*4) | 0, tone: (sr()*3) | 0,
                      form: [sr(), sr(), sr()] };
+    } else if (b3 < 0.18){
+      /* A standing figure on the floor — position from its own stream too,
+         because b2 arrives here conditioned on being ≥ 0.20 and would pull
+         every statue toward one side of its hall. */
+      const sr = mulberry32(h2(gx, gz, 0x57A7 ^ WORLD_SEED));
+      r.statue = { x: (sr()-.5)*3, z: (sr()-.5)*3,
+                   tone: (sr()*3) | 0, form: [sr(), sr(), sr(), sr()] };
     }
   }
   if (r.special === SPECIAL.VERMILION || r.special === SPECIAL.ARCHIVE){
@@ -140,7 +147,7 @@ export function getRoom(gx, gz){
        that opened on an empty room. A bare ring room borrows two opposite
        corners; same stream, so it stays deterministic. */
     if (Math.abs(gx) <= 1 && Math.abs(gz) <= 1
-        && !r.plants.length && !r.bench && !r.pedestal){
+        && !r.plants.length && !r.bench && !r.pedestal && !r.statue){
       for (const [sx, sz] of [[1,1],[-1,-1]]){
         r.plants.push({
           x: sx * (HS - 1.0 - dr()*0.5),

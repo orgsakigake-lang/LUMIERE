@@ -287,6 +287,13 @@ export function buildRoomMesh(r, daylight){
     quad(x1,y0,z0, x1,y0,z1, x1,y1,z1, x1,y1,z0, 1,0,0,  col, (z1-z0)/2, (y1-y0)/2);
   }
   const WOOD = [0.190, 0.140, 0.095], WOOD_D = [0.115, 0.085, 0.058];
+  /* The sculpture materials, shared by whatever stands on plinth or floor. */
+  /* Alabaster sits under the chandelier's pool at head height, where 0.46
+     albedo bloomed into a halo that ate the silhouette — 0.41 still reads
+     as pale stone and keeps its edges. */
+  const STONE = [[0.105, 0.082, 0.056],    // dark bronze
+                 [0.245, 0.158, 0.112],    // terracotta
+                 [0.415, 0.398, 0.370]];   // alabaster
   if (r.bench){
     const { x, z, alongZ } = r.bench;
     const hx = alongZ ? 0.24 : 0.90, hz = alongZ ? 0.90 : 0.24;
@@ -307,12 +314,9 @@ export function buildRoomMesh(r, daylight){
     box(x-0.27, 1.08, z-0.27, x+0.27, 1.13, z+0.27, PL);
     r.colliders.push({ cx:x, cz:z, hx:0.28, hz:0.28 });
     /* Something to stand for: these were empty plinths for a whole version —
-       furniture waiting for a sculptor. A small turned form from the
-       pedestal's own seeded parameters, in one of three materials. */
-    const TONES = [[0.105, 0.082, 0.056],    // dark bronze
-                   [0.245, 0.158, 0.112],    // terracotta
-                   [0.460, 0.442, 0.410]];   // alabaster
-    const col = TONES[tone % 3];
+       furniture waiting for a sculptor. A small form from the pedestal's own
+       seeded parameters, in one of three materials. */
+    const col = STONE[tone % 3];
     const y0 = 1.13, h = 0.42 + form[0]*0.25;
     if (kind === 0){
       /* an amphora — foot, belly, shoulder, neck, lip */
@@ -333,7 +337,7 @@ export function buildRoomMesh(r, daylight){
         ], 10, col);
         cy += hh*0.88; rr *= 0.68 + form[2]*0.1;
       }
-    } else {
+    } else if (kind === 2){
       /* a slender spire with a sphere at rest on its tip */
       const rs = 0.055 + form[1]*0.025;
       revolveY(x, z, [
@@ -344,7 +348,60 @@ export function buildRoomMesh(r, daylight){
         [0.001, cy-rs], [rs*0.71, cy-rs*0.71], [rs, cy],
         [rs*0.71, cy+rs*0.71], [0.001, cy+rs],
       ], 12, col);
+    } else {
+      /* a bust — Cycladic economy: shoulders, a neck, an egg of a head, and
+         one ridge of a nose, which at this scale is the entire face. Boxes
+         are axis-aligned, so it gazes down whichever axis points it nearest
+         the middle of its hall. */
+      const fx = Math.abs(x) > Math.abs(z) ? -Math.sign(x) : 0;
+      const fz = fx === 0 ? (-Math.sign(z) || 1) : 0;
+      /* Shoulders as a trapezoid prism, not stacked boxes — boxes read as more
+         plinth. `u` runs along the shoulder line, `w` along the gaze. */
+      const P = (u, y, w) => fx ? [x + w*fx, y, z + u] : [x + u, y, z + w*fz];
+      const sw = 0.17 + form[1]*0.03, tw = 0.06;         // half-span at base, at neck
+      const d = 0.095, yT = y0 + 0.27;                   // chest depth, shoulder top
+      const T = (a, b, c, e, n) => quad(...P(...a), ...P(...b), ...P(...c), ...P(...e), ...n, col, 0.1, 0.1);
+      const gaze = fx ? [fx, 0, 0] : [0, 0, fz];
+      T([-sw, y0,  d], [ sw, y0,  d], [ tw, yT,  d], [-tw, yT,  d], gaze);
+      T([-sw, y0, -d], [ sw, y0, -d], [ tw, yT, -d], [-tw, yT, -d], gaze.map(v => -v));
+      { const sl = Math.hypot(yT - y0, sw - tw), nu = (yT - y0)/sl, ny = (sw - tw)/sl;
+        const N = (s) => fx ? [0, ny, s*nu] : [s*nu, ny, 0];
+        T([ sw, y0,  d], [ sw, y0, -d], [ tw, yT, -d], [ tw, yT,  d], N(1));
+        T([-sw, y0,  d], [-sw, y0, -d], [-tw, yT, -d], [-tw, yT,  d], N(-1)); }
+      revolveY(x, z, [[0.052, y0+0.24], [0.044, y0+0.34]], 8, col);
+      const hy = y0 + 0.34, hr = 0.070 + form[2]*0.012;
+      revolveY(x, z, [
+        [0.001, hy], [hr*0.80, hy+0.020], [hr, hy+0.075], [hr*0.96, hy+0.125],
+        [hr*0.70, hy+0.180], [0.001, hy+0.215],
+      ], 10, col);
+      const nx = x + fx*hr*0.92, nz = z + fz*hr*0.92;
+      box(nx - (fx ? 0.020 : 0.011), hy+0.060, nz - (fz ? 0.020 : 0.011),
+          nx + (fx ? 0.020 : 0.011), hy+0.115, nz + (fz ? 0.020 : 0.011), col);
     }
+  }
+  if (r.statue){
+    /* A standing figure on the floor, robed — drape is what a lathe can
+       carve, and a lathe is the one sculptor this renderer employs. Hem,
+       waist, a swell of shoulder, and the same egg of a head as the busts;
+       an archaic kore at about two-thirds life size. ~350 triangles. */
+    const { x, z, tone = 0, form = [0.5, 0.5, 0.5, 0.5] } = r.statue;
+    const col = STONE[tone % 3];
+    revolveY(x, z, [[0.34, 0], [0.30, 0.07], [0.001, 0.07]], 12, [0.400, 0.385, 0.355]);
+    const h = 1.34 + form[0]*0.24;
+    const hem = 0.20 + form[1]*0.05;
+    const waist = hem*(0.52 + form[2]*0.16);
+    const sh = waist + 0.05;
+    const y1 = 0.07;
+    revolveY(x, z, [
+      [hem, y1], [hem*0.92, y1 + h*0.06], [waist, y1 + h*0.55],
+      [sh, y1 + h*0.72], [sh*0.85, y1 + h*0.80], [0.045, y1 + h*0.84],
+    ], 12, col);
+    const hy = y1 + h*0.84, hr = 0.075;
+    revolveY(x, z, [
+      [0.001, hy], [hr*0.82, hy+0.02], [hr, hy+0.08], [hr*0.94, hy+0.13],
+      [hr*0.66, hy+0.185], [0.001, hy+0.22],
+    ], 10, col);
+    r.colliders.push({ cx: x, cz: z, hx: 0.36, hz: 0.36 });
   }
   /* Potted plants: a thrown pot (one revolved profile, soil disc included),
      and a fan of arcing two-quad leaves. ~120 triangles a plant, part of the

@@ -3323,6 +3323,7 @@ if (DBG_FULL) Object.assign(window.DBG, {
   room(gx, gz){
     const r = getRoom(gx, gz);
     return { special: r.special, bench: r.bench || null, pedestal: r.pedestal || null,
+             statue: r.statue || null,
              shaft: r.shaft || null, plants: r.plants ? r.plants.length : 0,
              works: r.artworks.length };
   },
