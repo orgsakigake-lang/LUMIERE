@@ -544,3 +544,7 @@ export function toggleMute(){
 
 /** The visitor has entered (or left); gates audio resume on tab focus. */
 export function setAudioActive(v){ audio.active = !!v; }
+
+/** Stepping back out to the entrance — the hall falls silent until the next
+    entry, when initAudio's resume picks everything up where it left off. */
+export function suspendAudio(){ if (audio.ctx) audio.ctx.suspend().catch(()=>{}); }

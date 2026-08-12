@@ -17,7 +17,7 @@ import { ALGO_NAMES, ALGOS, makeTitle, finishArt, resetGrain,
 import { mat4, perspective, mulM, mulT, viewMatrix, extractPlanes, boxVisible } from './render/mat4.js';
 import { storageOK, persist, savePersist } from './persist.js';
 import { flashHint, toggleLegend } from './ui/hint.js';
-import { audio, initAudio, footstep, toggleMute, setAudioActive,
+import { audio, initAudio, footstep, toggleMute, setAudioActive, suspendAudio,
          cycleMusic, musicName, setMusic, randomMusic, PIECES,
          setRain, rainActive, rainSounding } from './audio.js';
 import { SPECIAL, rooms, roomKey, getRoom, spotAt, specialAt, RIG } from './world/rooms.js';
@@ -515,8 +515,15 @@ let entered = false, locked = false, dragging = false, lastMX = 0, lastMY = 0;
 function releaseInput(){ keys.clear(); dragging = false; }
 
 addEventListener('keydown', (e)=>{
-  if (!entered || e.repeat) return;
+  if (e.repeat) return;
   if (e.metaKey || e.ctrlKey || e.altKey) return;
+  if (!entered){
+    /* The guide answers at the door too — the ? badge is visible there. */
+    if (!document.getElementById('help').hidden){
+      if (e.key === 'Escape' || e.key === '?' || e.code === 'Slash') helpToggle(false);
+    } else if (e.key === '?' || e.code === 'Slash') helpToggle(true);
+    return;
+  }
   if (['Space','ArrowUp','ArrowDown','ArrowLeft','ArrowRight'].includes(e.code)) e.preventDefault();
   const modal = document.getElementById('modal');
   if (!modal.hidden){
@@ -3608,6 +3615,19 @@ document.getElementById('enter').addEventListener('click', ()=>{
   canvas.focus();
   tryPointerLock();          // inside the gesture; drag-look if it declines
   setTimeout(() => toggleLegend(false), 11000);   // ? brings it back
+});
+/* The ← beside the ? — back out to the entrance. The world stays warm behind
+   the plate; entering again resumes exactly where the visitor stood. */
+document.getElementById('back-btn').addEventListener('click', ()=>{
+  if (!entered) return;
+  if (document.pointerLockElement) document.exitPointerLock();
+  releaseInput();
+  if (inspect.on) inspectOff();
+  entered = false; setAudioActive(false); suspendAudio();
+  document.body.classList.remove('entered');
+  document.getElementById('intro-note').textContent = 'the halls remain as you left them';
+  introEl.hidden = false;
+  requestAnimationFrame(()=>{ introEl.style.opacity = '1'; });
 });
 
 if (gl){

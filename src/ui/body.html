@@ -1,10 +1,17 @@
 <canvas id="gl" tabindex="-1"></canvas>
 <div id="aim"></div>
 
+<!-- Outside #hud on purpose: #hud fades in only after entering, and the guide
+     must answer at the door too. The arrow appears once there is a gallery to
+     come back from. -->
+<div id="corner-nav">
+  <button id="help-btn" type="button" title="the visitor’s guide — ?">?</button>
+  <button id="back-btn" type="button" title="return to the entrance">←</button>
+</div>
+
 <div id="hud">
   <div class="hud-corner" id="hud-loc">Wing 0 · Hall 0</div>
   <div class="hud-corner" id="hud-stat">1 room</div>
-  <button id="help-btn" type="button" title="?"><b>?</b> help</button>
   <div class="hud-corner" id="hud-toast"></div>
   <div id="hud-legend" class="show">
     <b>W A S D</b> walk<span>·</span><b>mouse</b> look<span>·</span><b>Space</b> jump<span>·</span><b>F</b> inspect<span>·</span><b>V</b>/<b>E</b> view larger<br>
@@ -100,8 +107,13 @@
 <div class="plate" id="help" hidden>
   <div class="panel">
     <h2>Visitor’s Guide</h2>
-    <div class="sub">every key and switch in the gallery</div>
+    <div class="sub">what this place is, and every key and switch in it</div>
     <hr class="rule">
+    <p class="help-about">LUMIÈRE is an endless gallery. Its halls are laid as you walk,
+      and every artwork is painted into being the moment you approach it — seeded,
+      singular, shown to you alone. There is no goal and no far wall: wander, inspect
+      what stops you, and save what you would keep. The Curator’s Office hangs your
+      own works among the rest.</p>
     <div class="help-cols">
       <div>
         <div class="help-h">Moving</div>
@@ -137,7 +149,8 @@
       </div>
     </div>
     <div class="cur-note">The switches at the lower right — lights, shutters, music, rain, curator —
-      answer to touch as well as keys.</div>
+      answer to touch as well as keys. The <b class="key">?</b> at the upper left opens this
+      guide from anywhere; the <b class="key">←</b> beside it returns you to the entrance.</div>
     <div class="row"><button class="btn" id="help-close">Return to the gallery</button></div>
   </div>
 </div>
