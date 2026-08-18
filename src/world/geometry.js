@@ -7,7 +7,7 @@
    window geometry is baked into the mesh, so the caller owns that choice.
    ═══════════════════════════════════════════════════════════════════ */
 import { S, HS, H, WT, DOORW, DOORH } from '../config.js';
-import { SPECIAL, spotAt, getRoom, RIG } from './rooms.js';
+import { SPECIAL, spotAt, getRoom, RIG, sealedWall } from './rooms.js';
 import { theme } from './themes.js';
 
 /* 0 ordinary · 1 vermilion · 2 archive · 3 dark room. The live values; a theme
@@ -63,7 +63,7 @@ export function buildRoomMesh(r, daylight){
   /* Wall on one edge. Axis-generic via a tiny frame:
      u = along-wall coord (−HS..HS), face at distance IN from centre.
      mapU(u,y,off) → room-local (x,y,z).  n = inward normal.        */
-  function wall(axis /*'e','w','n','s'*/, open){
+  function wall(axis /*'e','w','n','s'*/, open, seal){
     const sign = (axis==='e'||axis==='n') ? 1 : -1;
     const horiz = (axis==='e'||axis==='w');       // wall plane ⊥ x
     // p(u, y, depth) — depth 0 at interior face, +WT at border
@@ -101,6 +101,26 @@ export function buildRoomMesh(r, daylight){
       quad(a[0],a[1],a[2], b[0],b[1],b[2], c[0],c[1],c[2], dd[0],dd[1],dd[2],
            0,-1,0, COL.ceil, DOORW/2, WT/2);
     }
+    if (seal){
+      /* The gallery ends here: the doorway stays a doorway — jambs, lintel,
+         the same opening the artwork segments were laid around — but a pair
+         of closed doors stands in it. Recessed half the tunnel so the reveal
+         reads as depth, with a hairline seam where the leaves meet. */
+      const DOOR = [0.112, 0.089, 0.068], SEAM = [0.045, 0.037, 0.030];
+      const prevMat = curMat; curMat = 2;          // wood, not plaster
+      const dd0 = WT * 0.5;
+      const a=p(-DW,0,dd0), b=p(DW,0,dd0), c=p(DW,DOORH,dd0), e=p(-DW,DOORH,dd0);
+      quad(a[0],a[1],a[2], b[0],b[1],b[2], c[0],c[1],c[2], e[0],e[1],e[2],
+           n[0],n[1],n[2], DOOR, DOORW/2, DOORH/2);
+      const s0=p(-0.015,0,dd0-0.004), s1=p(0.015,0,dd0-0.004),
+            s2=p(0.015,DOORH,dd0-0.004), s3=p(-0.015,DOORH,dd0-0.004);
+      quad(s0[0],s0[1],s0[2], s1[0],s1[1],s1[2], s2[0],s2[1],s2[2], s3[0],s3[1],s3[2],
+           n[0],n[1],n[2], SEAM, 0.02, DOORH/2);
+      curMat = prevMat;
+      r.colliders.push(horiz ? {cx:sign*(IN+WT/2), cz:0, hx:WT/2, hz:HS}
+                             : {cx:0, cz:sign*(IN+WT/2), hx:HS, hz:WT/2});
+      return;
+    }
     const jc = (DW + HS)/2, jh = (HS - DW)/2;
     if (horiz){
       r.colliders.push({cx:sign*(IN+WT/2), cz:-jc, hx:WT/2, hz:jh},
@@ -110,7 +130,13 @@ export function buildRoomMesh(r, daylight){
                        {cx: jc, cz:sign*(IN+WT/2), hx:jh, hz:WT/2});
     }
   }
-  wall('e', d.e); wall('w', d.w); wall('n', d.n); wall('s', d.s);
+  /* Which of this room's open doorways are built shut is remembered on the
+     record — collision response and the autopilot both need the answer
+     without re-deriving it. */
+  r.sealed = { e: sealedWall(r, 'e'), w: sealedWall(r, 'w'),
+               n: sealedWall(r, 'n'), s: sealedWall(r, 's') };
+  wall('e', d.e, r.sealed.e); wall('w', d.w, r.sealed.w);
+  wall('n', d.n, r.sealed.n); wall('s', d.s, r.sealed.s);
 
   /* ——— wall-anchored details: trim, frames, placards ———
      wp(wall,u,y,δ): point at along-wall u, height y, δ into the room
@@ -555,6 +581,7 @@ export function assembleLights(r, daylight){
   const cand = [];
   for (const [wall, dx, dz, dc] of doorDefs){
     if (!r.doors[wall]) continue;
+    if (sealedWall(r, wall)) continue;      // no lamplight leaks under a closed door
     const nb = getRoom(r.gx + dx, r.gz + dz);
     for (const nl of nb.ownLights){
       const px = nl.p[0] + dx*S, pz = nl.p[2] + dz*S;

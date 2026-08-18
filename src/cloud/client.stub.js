@@ -42,6 +42,7 @@ export const cloudOAuth = unreachable;
 export function takeHashSession(){ return false; }
 export async function cloudSetPlacement(){ return { ok: false }; }
 export async function cloudDelPlacement(){ return { ok: false }; }
+export async function cloudSetTheme(){ return { ok: false }; }
 
 export async function cloudLoadMine(){ return null; }
 export async function cloudLoadGallery(){ return null; }

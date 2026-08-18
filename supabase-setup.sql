@@ -50,6 +50,13 @@ alter table public.placements enable row level security;
 alter table public.profiles
   add column if not exists published boolean not null default false;
 
+-- The gallery theme travels with the profile, so a guest at the shared link
+-- stands in the light the works were curated under. The client tolerates the
+-- column being absent (it reads select=* and skips a refused write), so
+-- galleries created before this simply gain it on the next re-run.
+alter table public.profiles
+  add column if not exists theme text check (theme is null or theme ~ '^[a-z]{2,24}$');
+
 -- ————— what a work is called, and what it says —————
 -- A drawing arrives named after whatever the file was called, which is rarely
 -- what the artist would have written on the wall. `name` is the title on the

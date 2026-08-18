@@ -141,6 +141,22 @@ The gallery accepts *private loans* — your own images:
   lights works on paper — beside the warm tungsten on the paintings. A *private
   loan* placard hangs with it. **U** takes it down and the seeded work returns.
 
+### The boundary
+
+A museum without end is the point — until you hang your own work in it, at
+which point *your gallery* wants a far wall. So once anything hangs, the
+gallery **ends at the wing**: doorways that would lead into unwritten halls are
+built shut as closed double doors, nothing beyond them is generated, meshed or
+lit, and walking into one asks — on a plate, with a real question — whether a
+new room should exist there. Saying yes adds exactly that room and nothing
+else. The office's **Boundary** switch reopens the endless museum whenever you
+would rather wander; the wing's **+** button asks the same question before it
+creates its room.
+
+**Guests are always walled in.** A shared link opens onto exactly the rooms
+the curator hung — no new rooms can be laid by walking, and the visit cannot
+drift off into seeded halls that were never part of the show.
+
 > **Galleries are private until you publish them.** In local mode nothing leaves
 > the machine. In cloud mode your collection is visible only to you until you
 > claim a name *and* turn on sharing — row-level security hides the rows, an
@@ -161,7 +177,10 @@ The gallery accepts *private loans* — your own images:
 With a free [Supabase](https://supabase.com) project behind it, the Curator's
 Office grows up: email sign-in (six-digit code, no passwords), a collection
 that follows you across devices, and a **share link** so anyone can walk your
-hanging read-only.
+hanging read-only. The gallery **theme travels with the account** too, so a
+guest stands in the same light the works were curated under — that column is
+new; **re-run `supabase-setup.sql` once** in the project's SQL editor to gain
+it (the client tolerates its absence in the meantime).
 
 **[docs/setup.md](docs/setup.md) walks the whole thing** — project, schema,
 config, publishing, hosting, and how to *prove* the privacy applied rather than

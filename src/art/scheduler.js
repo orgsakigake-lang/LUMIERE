@@ -7,7 +7,7 @@
    ═══════════════════════════════════════════════════════════════════ */
 import { S, HS, WT, trace } from '../config.js';
 import { h2, mulberry32, WORLD_SEED } from '../world/seed.js';
-import { rooms, roomKey } from '../world/rooms.js';
+import { rooms, roomKey, inBounds } from '../world/rooms.js';
 import { theme } from '../world/themes.js';
 import { buildRoomMesh, assembleLights } from '../world/geometry.js';
 import { jitterPal } from './palettes.js';
@@ -154,6 +154,9 @@ export function syncArtJobs(){
     for (let di=-1; di<=1; di++){
       const r = rooms.get(roomKey(player.gx + di, player.gz + dj));
       if (!r) continue;
+      /* A room beyond the boundary is never rendered, so painting for it is
+         pure waste — and in a bounded gallery that waste is most of the map. */
+      if (!inBounds(r.gx, r.gz) && !(di === 0 && dj === 0)) continue;
       const prio = Math.max(Math.abs(di), Math.abs(dj));
       r.artworks.forEach((A, i) => {
         const k = artJobKey(r, i);

@@ -256,6 +256,26 @@ A visitor's own image overrides a seeded work on a frame. The path is
 `r.ownLights`, so a runtime fixture swap survives a shutter toggle. Room
 eviction does discard it, but the loan is re-applied on return.
 
+## The boundary
+
+`rooms.js` owns a single `BOUNDS` set (`null` = endless). The one rule that
+keeps placements portable: **sealing happens at build time, never at
+generation time.** `r.doors`, artwork segments and every `"gx,gz:i"` key are
+derived with the doors open, so a bounded world hangs the same work on the
+same wall as the endless one — a sealed doorway is the same doorway with a
+closed double-door slab and a full-width collider dropped in at
+`buildRoomMesh`, and `r.sealed` records which. Everything downstream consults
+it: portal flood, `assembleLights` spill, autopilot, `syncArtJobs`, and
+`ensureBuilt`/`refreshNear` simply skip out-of-bounds rooms (the visitor's own
+room is always built, so a debug teleport degrades to an island, not a void).
+
+main.js computes the set in `refreshBounds`: placement rooms ∪ wing route ∪
+`boundExtra` (rooms the curator opened door-by-door via the confirm plate),
+connected to the origin by BFS through open doors. `applyBounds` diffs a
+signature so hanging a work inside the wall costs nothing. Guests
+(`?gallery=`) are always bounded; the curator's switch is `lumiere_bound` in
+localStorage, default closed once anything hangs.
+
 ## Extracting more from main.js
 
 Run the scope tool first, always:

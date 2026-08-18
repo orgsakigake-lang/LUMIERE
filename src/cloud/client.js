@@ -355,6 +355,20 @@ export async function cloudSetPublished(on){
   cloud.published = !!on;
 }
 
+/** The gallery theme travels with the profile, so a guest at the shared link
+ *  stands in the light the curator hung the work under. A project whose owner
+ *  has not re-run supabase-setup.sql has no `theme` column and PostgREST
+ *  refuses the whole write — that is a nicety missing, not a loss, so any
+ *  4xx is treated as sent rather than clogging the outbox forever. */
+export async function cloudSetTheme(name){
+  const rs = await cfetch('/rest/v1/profiles?id=eq.' + cloud.sess.uid, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json', Prefer: 'return=minimal' },
+    body: JSON.stringify({ theme: String(name || '') }),
+  });
+  return { ok: rs.ok || (rs.status >= 400 && rs.status < 500) };
+}
+
 export async function cloudClaimSlug(slug){
   const rs = await cfetch('/rest/v1/profiles', {
     method: 'POST',
@@ -396,13 +410,17 @@ export async function cloudLoadMine(){
     uploads: (await rowsOf(ur)).map(asUpload),
     placements: (await rowsOf(pr)).map((row) => [row.k, row.upload_id]),
     slug: cloud.slug, published: cloud.published,
+    theme: me ? me.theme || null : null,
   };
 }
 
 /** Somebody else's gallery, read-only. Returns null if no such name. */
 export async function cloudLoadGallery(slug){
+  /* select=* for the same schema-tolerance reason as everywhere else: `theme`
+     is newer than some projects, and naming an absent column fails the whole
+     request — which would read as "no such gallery". */
   const rows = await rowsOf(await cfetch(
-    '/rest/v1/profiles?slug=eq.' + encodeURIComponent(slug) + '&select=id'));
+    '/rest/v1/profiles?slug=eq.' + encodeURIComponent(slug) + '&select=*'));
   if (!rows[0]) return null;
   const owner = rows[0].id;
   const [ur, pr] = await Promise.all([
@@ -411,7 +429,7 @@ export async function cloudLoadGallery(slug){
   ]);
   cloud.viewing = { slug, owner };
   return {
-    slug, owner,
+    slug, owner, theme: rows[0].theme || null,
     uploads: (await rowsOf(ur)).map(asUpload),
     placements: (await rowsOf(pr)).map((row) => [row.k, row.upload_id]),
   };

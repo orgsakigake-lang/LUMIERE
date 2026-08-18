@@ -15,6 +15,31 @@ export const rooms = new Map();   // "gx,gz" → room record
 
 export function roomKey(gx, gz){ return gx + ',' + gz; }
 
+/* ————— the boundary —————
+   The museum is endless by nature, but a *gallery* — a curator's hanging,
+   shared under one name — wants a far wall. When BOUNDS is set, only the
+   rooms named in it exist as places: a doorway that would lead out of the
+   set is built shut, nothing beyond it is meshed, lit, or painted, and no
+   new rooms are laid. null means the old truth: halls without number.
+
+   This is deliberately not part of the seed layer. Door records, artwork
+   segments and every placement key are derived with the doors open, so a
+   work hung at "0,0:4" hangs on the same wall for the curator who placed
+   it and the guest who is walled in — sealing happens at build time, never
+   at generation time. */
+export let BOUNDS = null;         // Set of "gx,gz" | null = endless
+export function setBounds(s){ BOUNDS = s || null; }
+export function inBounds(gx, gz){ return !BOUNDS || BOUNDS.has(roomKey(gx, gz)); }
+const SEAL_DIRS = { e: [1, 0], w: [-1, 0], n: [0, 1], s: [0, -1] };
+/** Is this open doorway built shut? Only doors leading *out* of the set seal,
+ *  so a room reached by debug teleport still lets you walk back in. */
+export function sealedWall(r, wall){
+  if (!BOUNDS || !r.doors[wall]) return false;
+  if (!BOUNDS.has(roomKey(r.gx, r.gz))) return false;
+  const d = SEAL_DIRS[wall];
+  return !BOUNDS.has(roomKey(r.gx + d[0], r.gz + d[1]));
+}
+
 /** The odds, in one place. Three specials at 1/64 each; the spawn room is
  *  always ordinary. Anything that wants to know what a room is must go
  *  through here — a second copy of these thresholds silently disagrees the

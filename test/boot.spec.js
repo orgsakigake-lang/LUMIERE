@@ -69,6 +69,35 @@ test.describe('boot', () => {
     expect(r.rehang).toEqual({ placed: '0,0:0' });
   });
 
+  test('a shared gallery is walled in, and a shut door can be asked to open', async ({ page }) => {
+    await boot(page);
+    const r = await page.evaluate(() => {
+      const D = window.DBG;
+      const out = {};
+      out.endless = D.boundary();                      // nothing hangs yet
+      D.placeForTest('0,0:0', 'u1');
+      out.guest = D.guestWorldForTest(true);           // the shared-link visit
+      out.sealedOrigin = D.sealed(0, 0);               // every door out is shut
+      out.farRoom = D.inBounds(5, 5);
+      /* Back to being the curator: rooms opened by hand count again —
+         a guest's world ignores them, which is the point of the wall. */
+      D.guestWorldForTest(false);
+      out.opened = D.openRoomForTest(1, 0);            // the plate's yes
+      out.eastNow = D.sealed(0, 0);
+      /* And the switch reopens the endless museum. */
+      out.off = D.boundary(false);
+      return out;
+    });
+    expect(r.endless.rooms).toBe(null);                // no hanging → no wall
+    expect(r.guest.rooms).toBeGreaterThanOrEqual(1);
+    expect(r.sealedOrigin).toEqual({ e: true, w: true, n: true, s: true });
+    expect(r.farRoom).toBe(false);
+    expect(r.opened).toBe(true);
+    expect(r.eastNow.e).toBe(false);                   // the new room's door stands open
+    expect(r.eastNow.n).toBe(true);
+    expect(r.off.rooms).toBe(null);
+  });
+
   test('the wing sizer clamps and the route grows by whole rooms', async ({ page }) => {
     await boot(page);
     const r = await page.evaluate(() => ({

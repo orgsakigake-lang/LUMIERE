@@ -20,14 +20,16 @@ import { flashHint, toggleLegend } from './ui/hint.js';
 import { audio, initAudio, footstep, toggleMute, setAudioActive, suspendAudio,
          cycleMusic, musicName, setMusic, randomMusic, PIECES,
          setRain, rainActive, rainSounding } from './audio.js';
-import { SPECIAL, rooms, roomKey, getRoom, spotAt, specialAt, RIG } from './world/rooms.js';
+import { SPECIAL, rooms, roomKey, getRoom, spotAt, specialAt, RIG,
+         BOUNDS, setBounds, inBounds, sealedWall } from './world/rooms.js';
 import { THEMES, THEME_ORDER, DEFAULT_THEME, theme, themeName, setThemeName,
          nextThemeName } from './world/themes.js';
 import { cloud, setFetch, cloudSaveSess, cloudSendCode, cloudVerify, cloudPublicURL,
          cloudPassword, cloudSignUp, cloudAuthSettings, setAuthLost, cloudOAuth,
          cloudUploadBlob, cloudDeleteUpload, cloudUpdateUpload, cloudReplaceBlob,
          cloudSetPlacement, cloudDelPlacement,
-         cloudClaimSlug, cloudSetPublished, cloudLoadMine, cloudLoadGallery, cloudBoot } from './cloud/client.js';
+         cloudClaimSlug, cloudSetPublished, cloudSetTheme,
+         cloudLoadMine, cloudLoadGallery, cloudBoot } from './cloud/client.js';
 import { SCHEMES, applyScheme, buildRoomMesh, assembleLights, MAX_LIGHTS } from './world/geometry.js';
 import { canvas, gl, compile, program } from './render/gl.js';
 import { PERF, dprCap } from './render/perf.js';
@@ -327,6 +329,7 @@ function refreshNear(){
     for (let di=-BUILD_R; di<=BUILD_R; di++){
       const r = rooms.get(roomKey(player.gx + di, player.gz + dj));
       if (!r) continue;
+      if (!r.vao) continue;      // out-of-bounds data rooms never reach the frame
       const e = { r, ox: di*S, oz: dj*S };
       nearRooms.push(e);
       if (Math.abs(di) <= 1 && Math.abs(dj) <= 1) midRooms.push(e);
@@ -446,6 +449,7 @@ function gatherIntoWing(){
   if (cloud.sess && !cloud.viewing)
     for (const [k, id] of curator.placements)
       enqueue('setPlacement', k, [k, id]);
+  applyBounds(false);                    // the wall moves with the wing; the rebuild below cuts it
   rebuildWorld();
   goToRoom(WING_ORIGIN[0], WING_ORIGIN[1], 0);
   const rooms2 = route.length;
@@ -453,6 +457,98 @@ function gatherIntoWing(){
   flashHint(`${n} work${n===1?'':'s'} hung across ${rooms2} room${rooms2===1?'':'s'} — this is the wing`
     + (kept ? ` · ${kept} kept ${kept===1?'its wall':'their walls'} elsewhere` : ''));
   return { hung: n, rooms: rooms2, left: toHang.length - n };
+}
+
+/* ————— the boundary —————
+   The user-facing half of what rooms.js enforces. Two people meet it:
+
+   A guest, following a shared link, is walled in *always* — a gallery
+   somebody chose to show them has a far wall, they cannot lay new halls by
+   walking, and everything beyond the hanging simply is not built. That is
+   most of what makes a shared link feel like a place rather than a maze:
+   every room they can reach is a room the curator meant.
+
+   The curator holds a switch. Closed (the default once anything hangs),
+   the gallery ends at the wing and a shut door asks — through a plate, not
+   silently — whether a new room should exist at all. Open, the museum is
+   endless again, exactly as it always was. */
+let boundOn = true;                 // the curator's switch
+let guestWorld = false;             // a ?gallery visit — bounded, no exceptions
+const boundExtra = new Set();       // rooms opened by hand, door by door
+function loadBoundPrefs(){
+  if (!storageOK) return;
+  try {
+    boundOn = localStorage.getItem('lumiere_bound') !== '0';
+    for (const k of JSON.parse(localStorage.getItem('lumiere_bound_rooms') || '[]'))
+      if (/^-?\d+,-?\d+$/.test(k)) boundExtra.add(k);
+  } catch(e){}
+}
+function saveBoundPrefs(){
+  if (!storageOK) return;
+  try {
+    localStorage.setItem('lumiere_bound', boundOn ? '1' : '0');
+    localStorage.setItem('lumiere_bound_rooms', JSON.stringify([...boundExtra]));
+  } catch(e){}
+}
+loadBoundPrefs();
+/** Grow `placed` into one walkable set: BFS through open doors from the wing
+ *  origin until every named room is reached, then keep only the corridors
+ *  that actually lead somewhere. A room the flood cannot reach within the cap
+ *  is kept as an island — unreachable is better than crashing, and the owner
+ *  can always Gather it home. */
+function connectRooms(placed){
+  const DIRS = [['e',1,0], ['n',0,1], ['w',-1,0], ['s',0,-1]];
+  const startK = roomKey(WING_ORIGIN[0], WING_ORIGIN[1]);
+  const parent = new Map([[startK, null]]);
+  const q = [WING_ORIGIN];
+  const found = new Set(placed.has(startK) ? [startK] : []);
+  while (q.length && found.size < placed.size && parent.size < 1200){
+    const [gx, gz] = q.shift();
+    const r = getRoom(gx, gz);
+    for (const [wall, dx, dz] of DIRS){
+      if (!r.doors[wall]) continue;
+      const nk = roomKey(gx + dx, gz + dz);
+      if (parent.has(nk)) continue;
+      parent.set(nk, roomKey(gx, gz));
+      q.push([gx + dx, gz + dz]);
+      if (placed.has(nk)) found.add(nk);
+    }
+  }
+  const out = new Set([startK]);
+  for (const fk of found)
+    for (let k = fk; k && !out.has(k); k = parent.get(k)) out.add(k);
+  for (const pk of placed) out.add(pk);   // unreached islands survive as data
+  return out;
+}
+function refreshBounds(){
+  if (!guestWorld && !boundOn){ setBounds(null); return; }
+  const placed = new Set();
+  for (const k of curator.placements.keys()){
+    const m = /^(-?\d+),(-?\d+):/.exec(k);
+    if (m) placed.add(m[1] + ',' + m[2]);
+  }
+  if (!guestWorld){
+    /* A hanging is what defines a gallery. Until one exists the museum
+       stays endless — walling a first-time visitor into one empty room
+       would be answering a question nobody asked. */
+    if (!placed.size && !boundExtra.size){ setBounds(null); return; }
+    for (const { gx, gz } of wingRoute(curator.uploads.size, wingExtra))
+      placed.add(roomKey(gx, gz));
+    for (const k of boundExtra) placed.add(k);
+  }
+  placed.add(roomKey(WING_ORIGIN[0], WING_ORIGIN[1]));
+  setBounds(connectRooms(placed));
+}
+/* Rebuild only when the wall actually moved — hanging a work inside the
+   bounds must not cost a world rebuild. */
+let boundsSig = 'unset';
+function applyBounds(rebuild = true){
+  refreshBounds();
+  const sig = BOUNDS ? [...BOUNDS].sort().join(';') : '∞';
+  if (sig === boundsSig) return false;
+  boundsSig = sig;
+  if (rebuild){ rebuildRooms(); syncArtJobs(); }
+  return true;
 }
 
 function spawnAtCollection(placements){
@@ -491,6 +587,10 @@ function onRoomChanged(){
 function ensureBuilt(){
   for (let dj=-BUILD_R; dj<=BUILD_R; dj++)
     for (let di=-BUILD_R; di<=BUILD_R; di++){
+      /* Beyond the boundary nothing is meshed — the sealed door is the far
+         wall. The visitor's own room is always built, so a stray teleport
+         out of bounds degrades to an island instead of a void. */
+      if (!inBounds(player.gx + di, player.gz + dj) && !(di === 0 && dj === 0)) continue;
       const r = getRoom(player.gx + di, player.gz + dj);
       if (!r.vao) makeRoomVAO(r, WIN.on);
     }
@@ -530,6 +630,11 @@ addEventListener('keydown', (e)=>{
     if (e.code === 'KeyE' || e.code === 'KeyV' || e.code === 'KeyF'
         || e.code === 'Space' || e.key === 'Escape') modal.click();
     return;
+  }
+  if (!document.getElementById('confirm').hidden){
+    if (e.key === 'Escape') confirmAnswer(false);
+    else if (e.key === 'Enter') confirmAnswer(true);
+    return;                              // a question is open — the gallery holds still
   }
   if (!document.getElementById('help').hidden){
     if (e.key === 'Escape' || e.key === '?' || e.code === 'Slash') helpToggle(false);
@@ -688,16 +793,94 @@ function collide(){
   }
 }
 
+/* ————— asking before a room exists —————
+   One small plate with one question on it. It frees the cursor, waits for an
+   answer, and hands the pointer back to the gallery either way. */
+let confirmCb = null;
+function confirmPlate(title, text, yesLabel, cb){
+  const el = document.getElementById('confirm');
+  if (!el || !el.hidden) return;
+  document.getElementById('confirm-title').textContent = title;
+  document.getElementById('confirm-text').textContent = text;
+  document.getElementById('confirm-yes').textContent = yesLabel;
+  confirmCb = cb;
+  releaseInput();
+  if (document.pointerLockElement) document.exitPointerLock();
+  el.hidden = false;
+}
+function confirmAnswer(yes){
+  const el = document.getElementById('confirm');
+  if (!el || el.hidden) return;
+  el.hidden = true;
+  const cb = confirmCb; confirmCb = null;
+  if (entered) tryPointerLock();
+  if (cb) cb(!!yes);
+}
+
+/* Walking into a shut boundary door is the one place a visitor meets the
+   edge of a bounded gallery, so it is where the edge explains itself: a
+   guest is told this is all of it, and the curator is asked — once, not on
+   every shove — whether a room should exist on the other side. */
+const bump = { key: '', t: 0 };
+const BUMP_DIRS = { e: [1, 0], w: [-1, 0], n: [0, 1], s: [0, -1] };
+function checkSealedBump(){
+  const r = rooms.get(roomKey(player.gx, player.gz));
+  if (!r || !r.sealed) return;
+  const IN = HS - WT;
+  for (const wall of ['e', 'w', 'n', 's']){
+    if (!r.sealed[wall]) continue;
+    const horiz = (wall === 'e' || wall === 'w');
+    const sign = (wall === 'e' || wall === 'n') ? 1 : -1;
+    const along = horiz ? player.z : player.x;
+    if (Math.abs(along) > DOORW/2 + 0.3) continue;          // not at the doorway
+    const toward = sign * (horiz ? player.x : player.z);
+    if (toward < IN - PR - 0.30) continue;                  // not against it
+    const v = sign * (horiz ? player.vx : player.vz);
+    if (v < 0.3) continue;                                  // not pushing into it
+    sealedBump(r, wall);
+    return;
+  }
+}
+function sealedBump(r, wall){
+  const key = roomKey(r.gx, r.gz) + ':' + wall;
+  const now = performance.now();
+  if (bump.key === key && now - bump.t < 5000) return;
+  if (!document.getElementById('confirm').hidden) return;
+  bump.key = key; bump.t = now;
+  if (cloud.viewing){
+    flashHint('the gallery ends here — every room beyond this door is unwritten');
+    return;
+  }
+  if (guestWorld){ flashHint('the gallery ends here'); return; }
+  if (!(cloud.sess || curator.unlocked)){
+    flashHint('the gallery ends at the wing — its curator decides where new rooms go (<b>C</b>)');
+    return;
+  }
+  const d = BUMP_DIRS[wall];
+  const ngx = r.gx + d[0], ngz = r.gz + d[1];
+  confirmPlate('The gallery ends here',
+    'Nothing is built beyond this door. Create a new room and add it to your gallery? '
+    + 'It will be part of the walk from now on — for you and for anyone you share the link with once something hangs in it.',
+    'Create the room', (yes) => {
+      if (!yes) return;
+      boundExtra.add(roomKey(ngx, ngz));
+      saveBoundPrefs();
+      applyBounds();
+      flashHint('a new hall opens — choose a work in the office (<b>C</b>) and press <b>H</b> at a frame');
+    });
+}
+
 /* autopilot: drift from room centre to room centre through open doors */
 const auto = { on: false, rnd: mulberry32(0xA070), wp: null, lastDx: 0, lastDz: 0, stallT: 0 };
 function autoPick(){
   const r = rooms.get(roomKey(player.gx, player.gz));
   if (!r) return;
   const opts = [];
-  if (r.doors.e) opts.push([ 1, 0]);
-  if (r.doors.w) opts.push([-1, 0]);
-  if (r.doors.n) opts.push([ 0, 1]);
-  if (r.doors.s) opts.push([ 0,-1]);
+  const s = r.sealed || {};
+  if (r.doors.e && !s.e) opts.push([ 1, 0]);
+  if (r.doors.w && !s.w) opts.push([-1, 0]);
+  if (r.doors.n && !s.n) opts.push([ 0, 1]);
+  if (r.doors.s && !s.s) opts.push([ 0,-1]);
   let pick = opts[Math.floor(auto.rnd()*opts.length)] || [0, 0];
   if (opts.length > 1 && pick[0] === -auto.lastDx && pick[1] === -auto.lastDz && auto.rnd() < 0.75){
     pick = opts[Math.floor(auto.rnd()*opts.length)];
@@ -754,6 +937,7 @@ function step(dt){
     remaining -= h;
     audio.stride += sp * h;
   }
+  if (BOUNDS && mlen > 0 && !auto.on) checkSealedBump();
   /* vertical: gravity, landing, ceiling clamp */
   if (player.py > 0 || player.vy !== 0){
     player.vy -= 12.5 * dt;
@@ -1067,6 +1251,8 @@ async function curatorBoot(){
       }
     } catch(e){}
   }
+  /* Whatever placements this browser holds, the boundary now knows about. */
+  applyBounds();
   if (curator.db){
     const tx = curator.db.transaction('images', 'readonly');
     tx.objectStore('images').getAll().onsuccess = (ev) => {
@@ -1482,6 +1668,7 @@ function curatorClearPlacement(k){
     curator.overrides.delete(k);
   }
   savePlacements();
+  applyBounds();                                  // the wall may pull in behind it
   syncArtJobs();                                  // regenerate the seeded work if needed
 }
 /* ————— themes —————
@@ -1540,10 +1727,16 @@ function themeUI(){
     box.append(b);
   }
 }
-function applyTheme(name, quiet){
+function applyTheme(name, quiet, fromCloud){
   setThemeName(name);
   applyThemeConstants();
-  persist.theme = themeName(); savePersist();
+  /* A guest stands in the host's theme for the visit; it must not follow
+     them home into their own museum. */
+  if (!cloud.viewing){ persist.theme = themeName(); savePersist(); }
+  /* The theme is part of the hanging, so it travels with the account — a
+     guest at the shared link sees the gallery the way it was curated. */
+  if (!fromCloud && cloud.sess && !cloud.viewing)
+    enqueue('setTheme', 'theme', [themeName()]);
   rebuildWorld();
   themeUI();
   if (!quiet) flashHint(`<b>${theme().label}</b> — ${theme().forWhat}`);
@@ -1617,7 +1810,13 @@ async function applyPlacement(r, A, i){
   if (!rec || curator.applying.has(k) || A.override) return;
   curator.applying.add(k);
   try {
-    if (!rec.blob && rec.url) rec.blob = await (await fetch(rec.url)).blob();
+    if (!rec.blob && rec.url){
+      /* fetch resolves on HTTP errors, and an error body cached as the blob
+         poisons every later attempt — the frame stays empty with no clue. */
+      const rs = await fetch(rec.url);
+      if (!rs.ok) throw new Error('image fetch failed: ' + rs.status);
+      rec.blob = await rs.blob();
+    }
     const bmp = rec.bmp || (rec.bmp = await createImageBitmap(rec.blob));
     const [tw, th] = LOAN_SIZES[A.asp];
     const cc = document.createElement('canvas'); cc.width = tw; cc.height = th;
@@ -1685,6 +1884,7 @@ function curatorHang(){
   savePlacements();
   if (cloud.sess && !cloud.viewing)
     enqueue('setPlacement', k, [k, curator.sel]);
+  applyBounds();                 // a first hanging is what raises the boundary at all
   applyPlacement(t.r, t.A, i);
   flashHint('hung — a private loan to the endless gallery');
 }
@@ -1701,10 +1901,24 @@ function wingUI(){
   const row = document.getElementById('cur-wing');
   if (!row) return;
   row.hidden = !curator.uploads.size || !!cloud.viewing;
-  if (row.hidden) return;
-  const t = wingRoute(curator.uploads.size, wingExtra).length;
-  document.getElementById('cur-wing-n').textContent =
-    `${t} room${t === 1 ? '' : 's'}${wingExtra ? ` · ${wingExtra} kept empty` : ''}`;
+  if (!row.hidden){
+    const t = wingRoute(curator.uploads.size, wingExtra).length;
+    const placed = new Set(curator.placements.values());
+    let unhung = 0;
+    for (const id of curator.uploads.keys()) if (!placed.has(id)) unhung++;
+    document.getElementById('cur-wing-n').textContent =
+      `${t} room${t === 1 ? '' : 's'}${wingExtra ? ` · ${wingExtra} kept empty` : ''}`
+      + (unhung ? ` · ${unhung} work${unhung === 1 ? ' has' : 's have'} no wall yet — Gather hangs everything` : '');
+  }
+  /* The boundary switch appears once there is a gallery to bound. */
+  const brow = document.getElementById('cur-bound-row');
+  if (!brow) return;
+  brow.hidden = row.hidden && !curator.placements.size;
+  if (brow.hidden) return;
+  const b = document.getElementById('cur-bound');
+  b.classList.toggle('on', boundOn);
+  b.textContent = boundOn ? 'closed — the gallery ends at the wing'
+                          : 'open — endless halls beyond';
 }
 function curatorGrid(){
   wingUI();
@@ -1832,10 +2046,22 @@ function curatorRefresh(){
       pub.classList.toggle('on', !!cloud.published);
       pub.textContent = cloud.published ? 'anyone with the link can walk it'
                                         : 'private — only you can see it';
-      document.getElementById('cur-share-link').textContent =
-        !cloud.slug ? 'claim a name, then decide who can see it'
-        : cloud.published ? 'share: ' + location.origin + location.pathname + '?gallery=' + cloud.slug
-        : 'not published yet — the link will not open for anyone else';
+      const linkEl = document.getElementById('cur-share-link');
+      if (!cloud.slug){
+        linkEl.textContent = 'claim a name, then decide who can see it';
+      } else if (cloud.published){
+        const link = location.origin + location.pathname + '?gallery=' + cloud.slug;
+        linkEl.textContent = 'share: ' + link + ' — click to copy';
+        linkEl.style.cursor = 'pointer';
+        linkEl.onclick = () => {
+          navigator.clipboard && navigator.clipboard.writeText(link)
+            .then(() => flashHint('the link is copied — hand it to anyone'))
+            .catch(() => {});
+        };
+      } else {
+        linkEl.textContent = 'not published yet — the link will not open for anyone else';
+        linkEl.style.cursor = ''; linkEl.onclick = null;
+      }
       let hasLocal = false;
       for (const rec of curator.uploads.values()) if (!rec.cloudRec && rec.blob){ hasLocal = true; break; }
       document.getElementById('cur-migrate').hidden = !hasLocal;
@@ -1935,11 +2161,18 @@ document.getElementById('curator').addEventListener('keydown', (e) => {
     if (grown.length <= wingRoute(works, wingExtra).length){
       flashHint('the wing cannot reach further'); return;
     }
-    wingExtra++; saveWingPrefs(); wingUI();
+    /* A room is a real thing to add to a gallery — asked, never assumed. */
     curatorToggle();
-    const last = grown[grown.length - 1];
-    goToRoom(last.gx, last.gz, 0);
-    flashHint('a new room joins the wing — choose a work (<b>C</b>) and press <b>H</b> at any frame');
+    confirmPlate('A new room for the wing',
+      'One more room, empty, joins the walk of your wing — ready for new work. Create it?',
+      'Create the room', (yes) => {
+        if (!yes){ curatorToggle(); return; }
+        wingExtra++; saveWingPrefs(); wingUI();
+        applyBounds();
+        const last = grown[grown.length - 1];
+        goToRoom(last.gx, last.gz, 0);
+        flashHint('a new room joins the wing — choose a work (<b>C</b>) and press <b>H</b> at any frame');
+      });
   });
   document.getElementById('cur-wing-minus').addEventListener('click', () => {
     if (!curatorCanEdit()) return;
@@ -1948,7 +2181,26 @@ document.getElementById('curator').addEventListener('keydown', (e) => {
       return;
     }
     wingExtra--; saveWingPrefs(); wingUI();
+    applyBounds();
     if (wingPrev && gatherIntoWing()) curatorToggle();
+  });
+  /* The boundary switch: closed, the gallery ends at the wing and a shut
+     door asks before any room is created; open, the museum is endless. */
+  document.getElementById('cur-bound').addEventListener('click', () => {
+    if (!curatorCanEdit()) return;
+    boundOn = !boundOn; saveBoundPrefs();
+    applyBounds();
+    wingUI();
+    if (boundOn && BOUNDS && !inBounds(player.gx, player.gz))
+      goToRoom(WING_ORIGIN[0], WING_ORIGIN[1], 0);
+    flashHint(boundOn
+      ? 'the boundary is closed — your gallery ends at the wing, and a shut door asks before a room is born'
+      : 'the boundary is open — the museum lays new halls as you walk, without asking');
+  });
+  document.getElementById('confirm-yes').addEventListener('click', () => confirmAnswer(true));
+  document.getElementById('confirm-no').addEventListener('click', () => confirmAnswer(false));
+  document.getElementById('confirm').addEventListener('click', (e) => {
+    if (e.target === document.getElementById('confirm')) confirmAnswer(false);
   });
   document.getElementById('cur-file').addEventListener('change', (e) => {
     if (e.target.files && e.target.files.length) curatorAddFiles([...e.target.files]);
@@ -2172,6 +2424,7 @@ const OUTBOX_SEND = {
   setPlacement: ([k, id]) => cloudSetPlacement(k, id),
   delPlacement: ([k])     => cloudDelPlacement(k),
   setPublished: ([on])    => cloudSetPublished(on),
+  setTheme:     ([name])  => cloudSetTheme(name),
   claimSlug:    ([slug])  => cloudClaimSlug(slug),
   deleteUpload: ([rec])   => cloudDeleteUpload(rec),
   updateUpload: ([id, patch]) => cloudUpdateUpload(id, patch),
@@ -2281,17 +2534,29 @@ async function bootCloud(){
      visit that ended before the network came back. */
   if (cloud.sess) outboxFlush();
   if (mode === 'guest'){
+    guestWorld = true;                     // a shared gallery has a far wall
     curator.placements.clear();            // a guest sees only their host's hanging
     applyCloudUploads(data.uploads);
     applyCloudPlacements(data.placements);
+    /* The host curated in a theme; the guest should stand in it. Quiet, and
+       never persisted — cloud.viewing keeps it out of this browser's own
+       museum. */
+    if (data.theme && THEMES[data.theme] && data.theme !== themeName())
+      applyTheme(data.theme, true);
+    applyBounds();
     updateHudStat();
     /* Stand them in front of the work rather than at the origin. */
     const placed = spawnAtCollection(curator.placements);
+    const halls = new Set([...curator.placements.keys()].map((k) => k.split(':')[0])).size;
+    const n = curator.placements.size;
     flashHint(placed
-      ? 'you are walking <b>' + data.slug + '</b>’s gallery — their first work hangs before you'
+      ? 'you are walking <b>' + data.slug + '</b>’s gallery — ' + n + ' work' + (n===1?'':'s')
+        + ' across ' + halls + ' hall' + (halls===1?'':'s') + ', and the doors end where the hanging does'
       : '<b>' + data.slug + '</b> has not hung anything yet');
     syncArtJobs();
   } else if (mode === 'missing'){
+    guestWorld = true;                     // a dead link still is not an invitation to roam
+    applyBounds();
     flashHint('no gallery answers to that name');
   } else if (mode === 'unreachable'){
     /* Not the same as 'missing'. The seeded museum is entirely local, so this
@@ -2300,6 +2565,14 @@ async function bootCloud(){
   } else if (mode === 'mine' && data){
     applyCloudUploads(data.uploads);
     applyCloudPlacements(data.placements);
+    /* The theme travels with the account now, so the gallery looks the same
+       from every machine its curator opens it on. */
+    if (data.theme && THEMES[data.theme] && data.theme !== themeName())
+      applyTheme(data.theme, true, true);
+    applyBounds();
+    /* The wall can rise a beat after boot; never leave the curator outside it. */
+    if (BOUNDS && !inBounds(player.gx, player.gz))
+      goToRoom(WING_ORIGIN[0], WING_ORIGIN[1], 0);
     syncArtJobs();
   }
   curatorRefresh();
@@ -2408,6 +2681,7 @@ function computeVisibility(){
     for (let d = 0; d < 4; d++){
       const [wall, dx, dz] = DOOR_DIRS[d];
       if (!e.r.doors[wall]) continue;
+      if (e.r.sealed && e.r.sealed[wall]) continue;     // a shut door lets nothing through
       const nb = VIS_BY_KEY.get(roomKey(e.r.gx + dx, e.r.gz + dz));
       if (!nb) continue;
       const p = portalRect(e.ox, e.oz, wall);
@@ -3258,6 +3532,28 @@ if (DBG_FULL) Object.assign(window.DBG, {
   },
   wingSizeForTest(extra){ wingExtra = Math.min(39, Math.max(0, extra | 0)); return wingExtra; },
   gatherForTest(){ return gatherIntoWing(); },
+  /** The boundary, inspectable and settable. No argument reads; true/false
+   *  flips the curator's switch exactly as the office button would. */
+  boundary(on){
+    if (on !== undefined){ boundOn = !!on; saveBoundPrefs(); applyBounds(); }
+    return { on: boundOn, guest: guestWorld,
+             rooms: BOUNDS ? BOUNDS.size : null,
+             extra: [...boundExtra] };
+  },
+  /** Pretend this is a shared-link visit, so guest walls are testable
+   *  without a backend. */
+  guestWorldForTest(on){ guestWorld = !!on; applyBounds(); return DBG.boundary(); },
+  inBounds(gx, gz){ return inBounds(gx, gz); },
+  /** Which of a room's open doorways are built shut. */
+  sealed(gx, gz){
+    const r = rooms.get(roomKey(gx, gz));
+    return r && r.sealed ? { ...r.sealed } : null;
+  },
+  /** What the sealed-door plate would do when the answer is yes. */
+  openRoomForTest(gx, gz){
+    boundExtra.add(roomKey(gx, gz)); saveBoundPrefs(); applyBounds();
+    return inBounds(gx, gz);
+  },
   /** Pin the weather's visual strength while frames step (null lets it ease
    *  again) — the ramp is time-based, so a test cannot simply wait for it. */
   rainVisForTest(v){

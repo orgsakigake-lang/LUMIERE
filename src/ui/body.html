@@ -86,6 +86,11 @@
         <span class="sub" id="cur-wing-n"></span>
         <button class="btn" id="cur-wing-plus" type="button" title="one more room, empty, ready for new work">+</button>
       </div>
+      <div class="row" id="cur-bound-row" hidden>
+        <span class="sub">The boundary ·</span>
+        <button class="sw" id="cur-bound" type="button"
+          title="closed, your gallery ends at the wing and a shut door asks before any new room is created — guests are always walled in either way"></button>
+      </div>
       <div class="row">
         <label class="btn" for="cur-file">Add works…</label>
         <input type="file" id="cur-file" accept="image/*" multiple hidden>
@@ -149,6 +154,12 @@
         <div class="help-row"><span>Your gallery is <b class="key">private</b> until you say otherwise:
           sign in in the office, claim a name, and switch on
           <b class="key">anyone with the link</b> — switch it off to make it yours alone again.</span></div>
+        <div class="help-h">The boundary</div>
+        <div class="help-row"><span>Once something hangs, your gallery <b class="key">ends at the wing</b>:
+          shut doors stand where it stops, and walking into one asks whether a new room
+          should exist. Guests at your link are always walled in — they walk exactly the
+          rooms you curated, and nothing multiplies behind their backs. The office switch
+          reopens the endless museum whenever you want to wander.</span></div>
       </div>
     </div>
     <div class="cur-note">The switches at the lower right — lights, shutters, music, rain, curator —
@@ -183,6 +194,19 @@
   <div class="m"></div>
   <div class="d" hidden></div>
   <div class="k">V / E — view larger &nbsp;·&nbsp; F — step back</div>
+</div>
+
+<!-- One question, two answers. Used wherever a room is about to exist:
+     the shut boundary door, and the wing's + button. -->
+<div class="plate" id="confirm" hidden>
+  <div class="panel">
+    <h2 id="confirm-title">A new room</h2>
+    <div class="sub" id="confirm-text"></div>
+    <div class="row">
+      <button class="btn" id="confirm-yes" type="button">Create the room</button>
+      <button class="btn" id="confirm-no" type="button">Not now</button>
+    </div>
+  </div>
 </div>
 
 <div class="plate" id="modal" hidden>

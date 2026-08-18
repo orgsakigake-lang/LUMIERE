@@ -194,6 +194,17 @@
   .sw:focus-visible{outline:none; color:var(--bone);
                     box-shadow:0 -2px 0 0 var(--brass-faint) inset;}
 
+  /* ——— the one-question plate ——— */
+  #confirm{z-index:18; cursor:default;}
+  #confirm .panel{width:min(88vw, 30rem); background:#14110D;
+                  border:1px solid rgba(201,169,106,.28);
+                  padding:2rem 2.2rem; box-shadow:0 30px 80px rgba(0,0,0,.8);}
+  #confirm h2{font-weight:400; font-size:1rem; letter-spacing:.3em; text-transform:uppercase;
+              color:var(--bone); margin:0 0 .8rem;}
+  #confirm .sub{font-size:.78rem; letter-spacing:normal; text-transform:none;
+                color:var(--bone-dim); line-height:1.65; text-wrap:pretty;}
+  #confirm .row{display:flex; gap:.8rem; align-items:center; flex-wrap:wrap; margin-top:1.4rem;}
+
   /* ——— curator panel ——— */
   #curator{z-index:15; cursor:default;}
   #curator .panel{width:min(88vw, 46rem); max-height:82vh; overflow-y:auto;
