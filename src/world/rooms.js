@@ -105,13 +105,19 @@ function stairTop(st){ return st.u1 + st.dir * STAIR_LANDING; }
  *  below, which is exactly what it is. */
 export function stairWell(st){
   if (!st) return null;
+  /* Cached on the plan. The walk loop asks for this several times a frame —
+     the ground under the feet, whether a rise is possible, whether the ceiling
+     is there to bump into — and a plan never changes once its room is built,
+     so allocating a fresh rectangle for each question was pure churn in the
+     one loop this codebase keeps quiet for the garbage collector. */
+  if (st._well) return st._well;
   const uw = st.u0 + (st.u1 - st.u0) * STAIR_WELL_FRAC;
   const ue = stairTop(st);
   const ua = Math.min(uw, ue), ub = Math.max(uw, ue);
   const va = st.across - STAIR_W / 2 - STAIR_WELL_PAD;
   const vb = st.across + STAIR_W / 2 + STAIR_WELL_PAD;
-  return st.axis === 'x' ? { x0: ua, x1: ub, z0: va, z1: vb }
-                         : { x0: va, x1: vb, z0: ua, z1: ub };
+  return (st._well = st.axis === 'x' ? { x0: ua, x1: ub, z0: va, z1: vb }
+                                     : { x0: va, x1: vb, z0: ua, z1: ub });
 }
 export { stairTop };
 /** Is (x,z) over the opening in this room's floor? */

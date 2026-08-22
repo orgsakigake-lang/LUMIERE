@@ -271,10 +271,76 @@ room is always built, so a debug teleport degrades to an island, not a void).
 
 main.js computes the set in `refreshBounds`: placement rooms ∪ wing route ∪
 `boundExtra` (rooms the curator opened door-by-door via the confirm plate),
-connected to the origin by BFS through open doors. `applyBounds` diffs a
-signature so hanging a work inside the wall costs nothing. Guests
-(`?gallery=`) are always bounded; the curator's switch is `lumiere_bound` in
-localStorage, default closed once anything hangs.
+connected to the origin by BFS through open doors **and stairs**. `applyBounds`
+diffs a signature so hanging a work inside the wall costs nothing.
+
+Two rules, both learned the hard way:
+
+**Only live placements count.** `livePlacements()` filters to rows whose upload
+still exists. A row outlives its work easily — removed on another device,
+IndexedDB cleared — and the wall is drawn around the hanging, so one orphan row
+at the origin was a wing of one room, which is a room with all four doorways
+built shut. The filter is non-destructive: the collection may simply not have
+finished loading, so every load asks again rather than deleting rows.
+
+**The wall is for guests.** `?gallery=` visits are bounded always. The
+curator's switch (`lumiere_bound`, default **open**) exists so they can stand
+in the same walls a visitor does. It defaulted closed and that was the bug
+above with a second lock on it: the switch lived inside the signed-in half of
+the office, the local passphrase gate is hidden whenever a cloud project is
+configured, and the shut door's "create a room" plate was itself gated on a
+session — so the only three ways out of a sealed wing all required an account
+the visitor might never have made. The switch now sits outside `#cur-open`
+(which halls exist is a property of the browser, not of an account) and the
+plate asks anyone who is not a guest.
+
+## Floors
+
+`gy` is the third axis of the floating origin. Reaching the next floor's plane
+re-anchors a storey upward exactly as crossing `±HS` re-anchors sideways —
+which is the whole design, and why a staircase needed no second coordinate
+system, no vertical special case in the six render passes, and imposes no limit
+on the museum's height.
+
+- **Keys.** `roomKey(gx,gz,gy)` returns `"gx,gz"` at `gy = 0` and `"gx,gz@gy"`
+  otherwise. Non-negotiable: a frame key is `"<roomKey>:<i>"`, and that string
+  is what every stored placement, every share link and a database CHECK
+  constraint are written against. Only floors that did not previously exist
+  carry a suffix. `parseRoomKey` reads both.
+- **Determinism.** Every seed stream is offset by `floorSalt(base, gy)`, which
+  is the identity at `gy = 0`. The ground floor is hash-for-hash the museum it
+  was; the storeys above it are genuinely different buildings rather than
+  copies.
+- **The stair.** `stairUpAt(gx,gz,gy)` is a vertical edge hash owned by the
+  *lower* room, so both floors agree about the opening without consulting each
+  other. `stairPlan` is keyed to the lower room's coordinates for the same
+  reason: the run of treads and the well cut in the floor above must be the
+  same rectangle. The entrance column is forced open upward on every floor and
+  closed downward at the ground, so there is one grand stairwell over the door
+  and the spawn room's floor is whole.
+- **Collision is one constant.** The flight has no colliders — it is walkable
+  surface. `STEP_UP` (0.46 m) refuses any rise taller than a stride, which is
+  simultaneously what lets the bottom tread be stepped onto and what stops
+  anyone strolling through the side of the stringer. Getting this wrong is
+  cheap to spot and expensive to debug: the first version gathered the *floor
+  above's* balustrade into the collider set and every climb stopped dead at
+  1.4 m against a bannister on another storey.
+- **The landing is load-bearing, not decorative.** Without it the top of the
+  rise and the end of the run arrive in the same substep, the ground under the
+  climber drops from a full storey to nothing, and they fall the height they
+  just climbed — every time. `stairHeight` returns `STOREY` for a stretch past
+  the top tread, and the well is cut to include it, so the landing *is* the
+  floor above seen from below.
+- **`STOREY = H + FLOOR_SLAB`, not `H`.** Stacked flush, a ceiling and the
+  floor over it are the same plane; both draw, both win the depth test in
+  patches, and the entrance hall fills with the shimmering fan that coplanar
+  surfaces always make. Six centimetres of slab removes the class of problem by
+  construction. A fascia closes the slab's edge around the well.
+- **Rendering.** `refreshNear` adds at most two entries with `oy = ±STOREY` —
+  the rooms the visitor's own stair joins — and every pass takes `oy` through
+  `mulT` and `packLights`. The portal flood cannot reach them (its clip
+  rectangles describe apertures in *walls*), so they are marked visible by a
+  frustum test against their own box a storey up.
 
 ## Extracting more from main.js
 

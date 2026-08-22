@@ -80,7 +80,9 @@ test.describe('boot', () => {
       const D = window.DBG;
       const out = {};
       out.curatorDefault = D.boundary();               // endless, out of the box
-      D.placeForTest('0,0:0', 'u1');
+      /* A real work, not a bare placement row: a placement whose upload does
+         not exist is not a hanging and deliberately draws no wall. */
+      D.loanForTest('u1', 'A drawing', '', '0,0:0');
       out.stillEndless = D.boundary();                 // and a hanging does not wall them in
       out.guest = D.guestWorldForTest(true);           // the shared-link visit
       out.sealedOrigin = D.sealed(0, 0);               // every door out is shut
@@ -105,6 +107,71 @@ test.describe('boot', () => {
     expect(r.eastNow.e).toBe(false);                   // the new room's door stands open
     expect(r.eastNow.n).toBe(true);                    // the others are still shut
     expect(r.off.rooms).toBe(null);
+  });
+
+  /* The specific shape of the trap that shipped: a placement row outliving the
+     work it names — an upload removed elsewhere, IndexedDB cleared — and the
+     wall being drawn around it anyway. One such row at the origin was a wing
+     of one room, which is a room with all four doorways built shut. */
+  test('a placement whose work is gone does not draw a wall', async ({ page }) => {
+    await boot(page);
+    const r = await page.evaluate(() => {
+      const D = window.DBG;
+      D.boundary(true);                                // the curator asks for walls
+      D.placeForTest('0,0:0', 'a-work-that-is-gone');  // a row, and nothing behind it
+      const ghost = D.boundary();
+      D.loanForTest('a-work-that-is-gone', 'found again', '');   // the work turns up
+      D.boundary(true);
+      const real = D.boundary();
+      return { ghost, real };
+    });
+    expect(r.ghost.rooms).toBe(null);       // nothing hangs, so nothing is sealed
+    expect(r.real.rooms).toBeGreaterThanOrEqual(1);   // now it does, and now it is
+  });
+
+  /* A shared link is read-only, and "read-only" has to mean the controls are
+     not there — not that they are there and refuse. It also has to mean the
+     office is worth opening at all: it used to render an entirely blank panel
+     for a guest, every section of it gated on a sign-in they do not have. */
+  test('a guest gets the collection and none of the levers', async ({ page }) => {
+    await boot(page);
+    const r = await page.evaluate(() => {
+      const D = window.DBG;
+      D.loanForTest('u1', 'A drawing', '', '0,0:0');
+      D.viewingForTest('somebody');
+      const vis = (id) => {
+        const el = document.getElementById(id);
+        return !!el && !el.hidden;
+      };
+      document.getElementById('sw-curator').click();
+      const out = {
+        state: document.getElementById('cur-state').textContent,
+        openPanel: vis('cur-open'),
+        note: document.getElementById('cur-guest-note').textContent,
+        works: document.querySelectorAll('#cur-grid .cur-item').length,
+        removeButtons: document.querySelectorAll('#cur-grid .rm').length,
+        canAdd: vis('cur-add-row'),
+        canGather: vis('cur-gather'),
+        canSize: vis('cur-wing'),
+        canFloors: vis('cur-floors'),
+        canBound: vis('cur-bound-row'),
+        canShare: vis('cur-share'),
+      };
+      document.getElementById('cur-close').click();
+      D.viewingForTest(null);
+      return out;
+    });
+    expect(r.state).toContain('guest');
+    expect(r.openPanel).toBe(true);           // there is something to look at
+    expect(r.works).toBe(1);                  // and it is the hanging they came for
+    expect(r.note).toContain('somebody');
+    expect(r.removeButtons).toBe(0);          // withheld, not disabled
+    expect(r.canAdd).toBe(false);
+    expect(r.canGather).toBe(false);
+    expect(r.canSize).toBe(false);
+    expect(r.canFloors).toBe(false);
+    expect(r.canBound).toBe(false);
+    expect(r.canShare).toBe(false);
   });
 
   /* ————— floors —————
@@ -162,6 +229,43 @@ test.describe('boot', () => {
     expect(r.ground).toBe('3,-4:2');
     expect(r.upstairs).toBe('3,-4@2:2');
     expect(r.basement).toBe('3,-4@-1:2');
+  });
+
+  /* The two halves of the ask, together: a share link that is read-only and
+     hard-walled, over a gallery that grows upward. A guest must be able to
+     climb to a work hung on the first floor and must not be able to carry on
+     to a second floor nobody hung anything on. */
+  test('a guest can climb to a work upstairs and no further', async ({ page }) => {
+    await boot(page);
+    const r = await page.evaluate(() => {
+      const D = window.DBG;
+      D.loanForTest('w1', 'Ground work', '', '0,0:0');
+      D.loanForTest('w2', 'Upstairs work', '', '0,0@1:1');
+      D.viewingForTest('somebody');
+      const out = {
+        rooms: D.boundary().rooms,
+        ground: D.inBounds(0, 0, 0),
+        firstFloor: D.inBounds(0, 0, 1),
+        secondFloor: D.inBounds(0, 0, 2),
+        nextHall: D.inBounds(1, 0, 0),
+        nextHallUpstairs: D.inBounds(1, 0, 1),
+        sealedGround: D.sealed(0, 0, 0),
+      };
+      const c = D.climb(true, 10);
+      out.climbedFrom = c.from; out.climbedTo = c.to;
+      out.sealedUpstairs = D.sealed(0, 0, 1);
+      D.viewingForTest(null);
+      return out;
+    });
+    expect(r.rooms).toBe(2);                 // exactly the two rooms that hold work
+    expect(r.ground).toBe(true);
+    expect(r.firstFloor).toBe(true);         // the stair is part of the gallery
+    expect(r.secondFloor).toBe(false);       // and stops where the hanging does
+    expect(r.nextHall).toBe(false);
+    expect(r.nextHallUpstairs).toBe(false);
+    expect(r.sealedGround).toEqual({ e: true, w: true, n: true, s: true });
+    expect(r.climbedTo).toBe(r.climbedFrom + 1);      // they got up there
+    expect(r.sealedUpstairs).toEqual({ e: true, w: true, n: true, s: true });
   });
 
   test('a wing can be asked to go upward instead of outward', async ({ page }) => {

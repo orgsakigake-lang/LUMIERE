@@ -87,11 +87,23 @@ test.describe('the renderer', () => {
   });
 
   test('the painter pool leaves the renderer a core to run on', async ({ page }) => {
-    /* Two painters with a two-core reserve was written on a sixteen-core
-       machine. On the four-core laptop this was reported from, it handed half
-       the machine to art generation — and a work costs 359 ms there against
-       68 ms here, so those cores stayed pegged for the entire walk. */
-    for (const [cores, want] of [[4, 1], [8, 2], [2, 1], [16, 2]]){
+    /* The reserve has moved once in each direction, and both times for a
+       measured reason.
+
+       It began at two cores with two painters, written on a sixteen-core
+       machine, where that is indistinguishable from correct. On the four-core
+       laptop this was reported from it handed half the machine to art
+       generation while a frame still cost 2.3 ms.
+
+       It then went to three, which on four cores means a single painter — and
+       once portal culling took the steady state to about 1 ms, six per cent of
+       a frame budget, that reserved core sat idle while the visitor watched
+       empty canvases. Measured on that same laptop: the wall you are facing
+       filled in 1.7 s with one painter and 0.4 s with two.
+
+       So: reserve two, cap three. The invariant underneath both moves is the
+       one asserted last — the pool never takes the whole machine. */
+    for (const [cores, want] of [[4, 2], [8, 3], [2, 1], [16, 3]]){
       await page.addInitScript((n) => {
         Object.defineProperty(navigator, 'hardwareConcurrency', { get: () => n, configurable: true });
       }, cores);
@@ -103,7 +115,7 @@ test.describe('the renderer', () => {
       if (n !== null){
         expect(n, `${cores} cores`).toBe(want);
         expect(n, 'the pool must never take the whole machine')
-          .toBeLessThanOrEqual(Math.max(1, cores - 3));
+          .toBeLessThanOrEqual(Math.max(1, cores - 1));
       }
     }
   });

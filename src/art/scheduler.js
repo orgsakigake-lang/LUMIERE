@@ -147,6 +147,20 @@ export function preemptArtJobs(){
 }
 export function artJobKey(r, i){ return r.gx + ',' + r.gz + ':' + i; }
 
+/** Roughly, is this work in front of the visitor? The frame's centre against
+ *  the look direction — near enough for an ordering, and it must stay cheap
+ *  because it runs for every work in the neighbourhood on every room change. */
+function facesPlayer(A, di, dj){
+  const IN = HS - WT;
+  const horiz = (A.wall === 'e' || A.wall === 'w');
+  const sign = (A.wall === 'e' || A.wall === 'n') ? 1 : -1;
+  const ax = (horiz ? sign * IN : A.u) + di * S - player.x;
+  const az = (horiz ? A.u : sign * IN) + dj * S - player.z;
+  const d = Math.hypot(ax, az) || 1;
+  /* Forward is (sin yaw, −cos yaw), the same convention the walk uses. */
+  return (ax * Math.sin(player.yaw) - az * Math.cos(player.yaw)) / d > 0.15;
+}
+
 export function syncArtJobs(){
   releaseOutside();
   const want = new Set();
@@ -157,10 +171,19 @@ export function syncArtJobs(){
       /* A room beyond the boundary is never rendered, so painting for it is
          pure waste — and in a bounded gallery that waste is most of the map. */
       if (!inBounds(r.gx, r.gz) && !(di === 0 && dj === 0)) continue;
-      const prio = Math.max(Math.abs(di), Math.abs(dj));
+      const ring = Math.max(Math.abs(di), Math.abs(dj));
       r.artworks.forEach((A, i) => {
         const k = artJobKey(r, i);
         want.add(k);
+        /* ————— paint what is being looked at —————
+           Ring distance alone treats the six works in the room you are
+           standing in as equals, so which of them arrives first is the order
+           the generator happened to lay them in — and three of the six are on
+           the wall behind you. Facing splits each ring in two, which costs a
+           dot product per work on a room change and is most of what "the
+           gallery loads slowly" actually was: the wait is not for all the art,
+           it is for the piece in front of you. */
+        const prio = ring * 2 + (facesPlayer(A, di, dj) ? 0 : 1);
         if (loans && loans.apply(r, A, i, k)) return;   // a private loan hangs here
         /* A solo theme shows only what its curator hung: no seeded work is
            generated, which also means none of the generation cost. */
@@ -227,7 +250,17 @@ function initWorkers(){
        neighbourhood far faster than the main thread ever did; anything
        larger gets two, as before. The renderer is the thing being protected,
        and it needs a core to be protected *with*. */
-    const n = Math.max(1, Math.min(2, (navigator.hardwareConcurrency || 4) - 3));
+    /* Reserve two, not three, and allow three painters rather than two.
+       Three was reserved back when a frame cost 2.3 ms and the renderer was
+       the thing under pressure. Portal culling took the steady state to about
+       1 ms on the four-core Intel laptop this was tuned against — six per cent
+       of a sixteen-millisecond budget — so the core being held back for the
+       renderer was idle while the visitor watched empty frames. A work costs
+       roughly 300 ms there, and a room holds six: one painter is nearly two
+       seconds of blank canvas, two is under one. The frame loop is measured
+       either way, and the quality dial drops a tier if this turns out to be
+       wrong on a machine slower than the one it was measured on. */
+    const n = Math.max(1, Math.min(3, (navigator.hardwareConcurrency || 4) - 2));
     for (let i = 0; i < n; i++){
       const w = new Worker(url);
       w.onmessage = onPainted;

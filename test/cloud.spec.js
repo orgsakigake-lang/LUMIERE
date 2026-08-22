@@ -170,6 +170,9 @@ test.describe('the cloud layer', () => {
     await page.goto('/?q=0#access_token=' + tok('user-from-google')
                     + '&refresh_token=r-tok&expires_in=3600&token_type=bearer');
     await page.waitForFunction(() => typeof window.DBG?.stats === 'function', null, { timeout: 60_000 });
+    /* DBG lands synchronously; the session arrives from the async boot chain
+       behind it. Reading straight away is a race that startup cost decides. */
+    await page.evaluate(() => window.DBG.cloudReady());
 
     const r = await page.evaluate(() => ({
       signedIn: window.DBG.cloudState().signedIn,

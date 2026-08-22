@@ -718,6 +718,7 @@ function onRoomChanged(){
     : ` · ${ordinal(-player.gy)} basement`;
   hudLoc.textContent = `Wing ${f(player.gx)} · Hall ${f(player.gz)}${storey}`;
   updateHudStat();
+  lastSyncYaw = player.yaw;
   ensureBuilt(); evict(); syncArtJobs(); markSeen(); refreshNear();
 }
 function ensureBuilt(){
@@ -1108,10 +1109,11 @@ function step(dt){
     if (g - Math.max(wasG, player.py) > STEP_UP){
       player.x = wasX; player.z = wasZ;
       player.vx = 0; player.vz = 0;
-    } else if (player.py <= wasG + 1e-4 && g > player.py){
-      player.py = g;                       // walking up: the feet follow
+      player.ground = wasG;                // back where they were, on what they were on
+    } else {
+      if (player.py <= wasG + 1e-4 && g > player.py) player.py = g;   // walking up
+      player.ground = g;
     }
-    player.ground = groundAt(player.x, player.z);
     remaining -= h;
     audio.stride += sp * h;
   }
@@ -2196,11 +2198,18 @@ function curatorGrid(){
                 + (placed.has(rec.id) ? ' hung' : '');
     const im = document.createElement('img'); im.src = rec.url; im.alt = rec.name;
     const nm = document.createElement('div'); nm.className = 'nm'; nm.textContent = rec.name;
-    const rm = document.createElement('button'); rm.className = 'rm'; rm.type = 'button';
-    rm.setAttribute('aria-label', `Remove ${rec.name} from the collection`);
-    rm.addEventListener('click', (e) => { e.stopPropagation(); curatorRemove(rec.id); });
-    d.addEventListener('click', () => { curator.sel = rec.id; curatorGrid(); });
-    d.append(im, nm, rm);
+    d.append(im, nm);
+    /* A guest is browsing somebody else's collection: no cross to remove a
+       work with, and no selection, since selecting is only ever the first half
+       of hanging. Withheld rather than disabled — a control that is visible
+       and refuses is worse than one that was never offered. */
+    if (!cloud.viewing){
+      const rm = document.createElement('button'); rm.className = 'rm'; rm.type = 'button';
+      rm.setAttribute('aria-label', `Remove ${rec.name} from the collection`);
+      rm.addEventListener('click', (e) => { e.stopPropagation(); curatorRemove(rec.id); });
+      d.addEventListener('click', () => { curator.sel = rec.id; curatorGrid(); });
+      d.append(rm);
+    }
     grid.append(d);
   }
   if (!curator.uploads.size){
@@ -2214,8 +2223,9 @@ function curatorGrid(){
   const editBtn = document.getElementById('cur-edit');
   if (editBtn) editBtn.hidden = !curator.uploads.size || !!cloud.viewing;
   document.getElementById('cur-store').textContent =
-    curator.mode === 'idb' ? 'collection kept in this browser · placements remembered'
-                           : 'this embedding cannot keep files — loans last for this visit only';
+    cloud.viewing ? ''
+    : curator.mode === 'idb' ? 'collection kept in this browser · placements remembered'
+                             : 'this embedding cannot keep files — loans last for this visit only';
 }
 /* ————— saying what actually went wrong —————
    Supabase's auth errors are written for whoever wired the project up, not for
@@ -2279,6 +2289,37 @@ async function warnAboutConfirmation(){
     + 'involved.';
 }
 
+/** The office, as a visitor at somebody's link sees it: what hangs here, who
+ *  hung it, and no lever that could move any of it. */
+function showGuestOffice(){
+  /* `cur-hint` is the line telling you to press H to hang and U to take down
+     and where the removal cross is — three things a guest cannot do, printed
+     under a collection that is not theirs. `cur-themes` is the light the works
+     were curated under: the curator chose it and it travels with the hanging,
+     so offering a visitor a switch to overrule it is offering to show them the
+     wrong gallery. */
+  for (const id of ['cur-acct', 'cur-share', 'cur-wing', 'cur-floors',
+                    'cur-bound-row', 'cur-review', 'cur-add-row', 'cur-themes',
+                    'cur-hint', 'cur-edit', 'cur-gather', 'cur-migrate',
+                    'cur-rekey', 'cur-outbox']){
+    const el = document.getElementById(id);
+    if (el) el.hidden = true;
+  }
+  const note = document.getElementById('cur-guest-note');
+  if (note){
+    const live = livePlacements();
+    const halls = new Set([...live.keys()].map((k) => k.slice(0, k.lastIndexOf(':')))).size;
+    const n = live.size;
+    note.hidden = false;
+    note.textContent =
+      `You are walking ${cloud.viewing.slug}’s gallery — ${n} work${n === 1 ? '' : 's'} `
+      + `across ${halls} hall${halls === 1 ? '' : 's'}, and the doors end where the `
+      + `hanging does. Nothing here is yours to move. Open the gallery without the `
+      + `link to walk a museum of your own.`;
+  }
+  curatorGrid();
+}
+
 function curatorRefresh(){
   const guest = !!cloud.viewing;
   const open = !guest && (cloud.on ? !!cloud.sess : curator.unlocked);
@@ -2287,7 +2328,21 @@ function curatorRefresh(){
   document.getElementById('cur-cloud-lock').hidden = !showCloudLock;
   /* Ask the project what it will do before the visitor finds out by waiting. */
   if (showCloudLock) warnAboutConfirmation();
-  document.getElementById('cur-open').hidden = !open;
+  /* ————— what a guest sees —————
+     Nothing, until now. Every section of the office is gated on being signed
+     in, so somebody following a shared link opened the Curator's Office onto a
+     blank panel that said "guest of somebody" and gave them no reason to have
+     opened it. A visitor gets the collection — the list of what they are
+     walking through, which is the one thing in here that is genuinely for
+     them — and every control that could change it is withheld rather than
+     merely disabled. */
+  document.getElementById('cur-open').hidden = !open && !guest;
+  if (guest) showGuestOffice();
+  /* And the way back. The guest view withholds these; an owner's office must
+     put them back, or a session that has been both in one page load — which
+     is exactly what the harness does — keeps a curator's own controls hidden. */
+  else for (const id of ['cur-themes', 'cur-hint', 'cur-add-row', 'cur-gather'])
+    { const el = document.getElementById(id); if (el) el.hidden = false; }
   document.getElementById('cur-state').textContent =
     guest ? 'guest of ' + cloud.viewing.slug
     : open ? (cloud.sess ? 'signed in · loans open everywhere' : 'unlocked · loans open')
@@ -2902,6 +2957,8 @@ let stalled = false, badRuns = 0, goodRuns = 0;
 const tierBlock   = [0, 0, 0];
 const tierPenalty = [30_000, 30_000, 30_000];
 let lastFaced = null, aimEl = null;
+/* The yaw the paint queue was last ordered against. */
+let lastSyncYaw = 0;
 let shadowsOn = true;
 let probeRequest = null, rafId = 0, forceDt = null;
 const probeBuf = new Uint8Array(32*32*4);
@@ -3170,6 +3227,16 @@ function frame(t){
      tick and written only when the answer changes, because the frame loop is
      not allowed to touch the DOM every frame and does not need to: this is a
      state transition like any other. */
+  /* Turning round changes which works are in front of you, and the paint
+     queue is ordered by exactly that. Re-ask when the view has genuinely
+     moved — about fifty degrees — and only while there is still something
+     waiting to be painted, so an idle gallery pays nothing for it. */
+  if (entered && artState.queue.length > 1
+      && Math.abs(player.yaw - lastSyncYaw) > 0.9){
+    lastSyncYaw = player.yaw;
+    syncArtJobs();
+  }
+
   if (entered && (frameCount & 7) === 0){
     const faced = inspect.on ? null : facedArtwork();
     const now = faced ? faced.A : null;
@@ -3919,16 +3986,27 @@ if (DBG_FULL) Object.assign(window.DBG, {
   /** Pretend this is a shared-link visit, so guest walls are testable
    *  without a backend. */
   guestWorldForTest(on){ guestWorld = !!on; applyBounds(); return DBG.boundary(); },
-  inBounds(gx, gz){ return inBounds(gx, gz); },
+  /** The other half of being a guest: `cloud.viewing` is what every read-only
+   *  gate in the office actually consults, and it is set deep inside a network
+   *  call. Settable, so what a visitor at somebody's link can and cannot reach
+   *  is testable without a live project. */
+  viewingForTest(slug){
+    cloud.viewing = slug ? { slug, owner: 'test-owner' } : null;
+    guestWorld = !!slug;
+    applyBounds();
+    curatorRefresh();
+    return { viewing: cloud.viewing, guest: guestWorld };
+  },
+  inBounds(gx, gz, gy = 0){ return inBounds(gx, gz, gy); },
   /** Which of a room's open doorways are built shut. */
-  sealed(gx, gz){
-    const r = rooms.get(roomKey(gx, gz));
+  sealed(gx, gz, gy = 0){
+    const r = rooms.get(roomKey(gx, gz, gy));
     return r && r.sealed ? { ...r.sealed } : null;
   },
   /** What the sealed-door plate would do when the answer is yes. */
-  openRoomForTest(gx, gz){
-    boundExtra.add(roomKey(gx, gz)); saveBoundPrefs(); applyBounds();
-    return inBounds(gx, gz);
+  openRoomForTest(gx, gz, gy = 0){
+    boundExtra.add(roomKey(gx, gz, gy)); saveBoundPrefs(); applyBounds();
+    return inBounds(gx, gz, gy);
   },
   /** Pin the weather's visual strength while frames step (null lets it ease
    *  again) — the ramp is time-based, so a test cannot simply wait for it. */
@@ -4250,6 +4328,18 @@ if (DBG_FULL) Object.assign(window.DBG, {
   },
 });
 
+/* ————— when the cloud has finished having its say —————
+   `window.DBG` is installed synchronously at the end of this script, but the
+   session, the collection and a guest's walls all arrive from an async boot
+   chain some way behind it. A harness that waits for DBG and then reads
+   cloud state is therefore racing, and it wins or loses on how much work
+   startup happens to be doing — which is a test that passes until somebody
+   adds a room to the neighbourhood builder, and then fails for a reason
+   entirely unrelated to what it is testing. This is the settled signal. */
+let cloudSettled = () => {};
+const cloudReadyPromise = new Promise((res) => { cloudSettled = res; });
+window.DBG.cloudReady = () => cloudReadyPromise;
+
 /* The browser telling us the network is back is a better trigger than any
    timer, and costs nothing while it is not. */
 addEventListener('online', () => outboxFlush());
@@ -4352,7 +4442,8 @@ if (gl){
     .catch((e) => {
       console.warn('[boot] cloud unreachable — the seeded gallery is unaffected', e);
       curatorRefresh();
-    });
+    })
+    .finally(() => { cloudSettled(); });
   requestAnimationFrame((t)=>{ lastT = t; requestAnimationFrame(frame); });
 }
 document.getElementById('sw-lights').addEventListener('click', () => setLights(!lightsOn));

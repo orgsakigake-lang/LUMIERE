@@ -59,10 +59,17 @@ network — you are finished. Skip to *Hanging your drawings well* at the bottom
    Run.** It is idempotent; running it twice is safe.
 
    > **Already have a gallery? Re-run it.** The file gains columns and policies
-   > as the gallery does — most recently `uploads.note`, which holds the
-   > description shown beside a work, and an **UPDATE policy on `uploads`**,
-   > without which nobody can retitle a work, the owner included. Every change
-   > is idempotent, so re-running costs nothing and touches no data.
+   > as the gallery does — most recently the **frame-key shape**, which now
+   > accepts a floor (`3,-4@2:2`) so that works hung above the ground floor can
+   > be saved at all; before `uploads.note`, which holds the description shown
+   > beside a work; and an **UPDATE policy on `uploads`**, without which nobody
+   > can retitle a work, the owner included. Every change is idempotent, so
+   > re-running costs nothing and touches no data.
+   >
+   > Ground-floor keys are unchanged by the floors work, so nothing already
+   > hung is affected — but until this is re-run, hanging a work upstairs is
+   > refused by the database with a bare 403 and the change waits in the
+   > outbox.
    >
    > That missing policy is worth knowing about, because of *how* it failed.
    > With row-level security on and no UPDATE policy, a write does not error —
@@ -350,6 +357,8 @@ disk on a keypress.
 | no sign-in code arrives | Email provider disabled in Authentication → Sign In / Up |
 | project stopped responding after a week | free Supabase pauses on inactivity — arm the keepalive workflow |
 | empty frames three rooms away | expected today; art is generated for the 3×3 around you, architecture for 5×5 |
+| a work hung upstairs never saves | `supabase-setup.sql` has not been re-run — the frame key carries a floor now, and the old CHECK constraint rejects it |
+| walled into one room with every door shut | fixed: the boundary is open for the curator by default. If an older browser still has `lumiere_bound` set, the office's **Boundary** switch reopens it — and walking into a shut door now offers to open it whether or not you are signed in |
 
 Nothing in this file is secret. The only value you should never put in the repo
 is the `service_role` key.

@@ -55,6 +55,7 @@ Edge, or Firefox.
 | `W A S D` | walk (`Shift` — stroll faster) |
 | mouse | look — the cursor locks on entry, so moving the mouse looks while you walk, run and jump; `Esc` frees it, a click takes it back, and drag-look works whenever the cursor is free |
 | `Space` | jump · press again quickly mid-air for the double jump |
+| stairs | no key — walk up them. Roughly one room in seven has a flight; the entrance hall always does, on every floor |
 | `F` or right-click | inspect the work you face (glides the camera up to it, and prints its title and description) |
 | `V` or `E` | view larger — re-renders the work at 1024² beside its title and description, with an opt-in PNG |
 | `L` | the lamps — on/off (also a wall switch, bottom right) |
@@ -143,19 +144,49 @@ The gallery accepts *private loans* — your own images:
 
 ### The boundary
 
-A museum without end is the point — until you hang your own work in it, at
-which point *your gallery* wants a far wall. So once anything hangs, the
-gallery **ends at the wing**: doorways that would lead into unwritten halls are
-built shut as closed double doors, nothing beyond them is generated, meshed or
-lit, and walking into one asks — on a plate, with a real question — whether a
-new room should exist there. Saying yes adds exactly that room and nothing
-else. The office's **Boundary** switch reopens the endless museum whenever you
-would rather wander; the wing's **+** button asks the same question before it
-creates its room.
+A museum without end is the point — for you. **Guests are always walled in:** a
+shared link opens onto exactly the rooms the curator hung, doorways that would
+lead into unwritten halls are built shut as closed double doors, nothing beyond
+them is generated, meshed or lit, and the visit cannot drift off into seeded
+halls that were never part of the show.
 
-**Guests are always walled in.** A shared link opens onto exactly the rooms
-the curator hung — no new rooms can be laid by walking, and the visit cannot
-drift off into seeded halls that were never part of the show.
+**The curator is not**, and that is a correction. A wing is sized to hold the
+works and a room holds six frames, so a collection of three works makes a wing
+of exactly one room — and closing the boundary around one room builds all four
+of its doorways shut. Defaulting it closed sealed the gallery's owner inside a
+box with five empty frames in it, on every visit after the first, with the
+switch that reopens it hidden behind a sign-in they may never have used. So the
+boundary is **open unless you ask for it**. Close it in the office to walk the
+gallery exactly as a visitor at your link does; a shut door then asks — on a
+plate, with a real question — whether a new room should exist there, and saying
+yes adds exactly that room and nothing else.
+
+A placement whose work no longer exists is not a hanging and draws no wall.
+
+### Floors
+
+Halls run outward; **stairs run up.** A flight of stone treads on a solid
+stringer climbs through a well cut in the ceiling to a landing on the floor
+above, with a rail around the opening. Roughly one room in seven has one, and
+the entrance hall always does — on every storey, so there is one grand
+stairwell rising the full height of the museum directly above the door. Walk
+up; there is no key for it.
+
+Vertically the world works exactly as it does horizontally. `gy` joins the
+floating origin: reaching the next floor's plane re-anchors a storey upward the
+same way walking past a wall re-anchors sideways, so a stair needs no second
+coordinate system and the building has no height limit. The HUD names the
+storey once you have left the ground.
+
+In the Curator's Office, **The floors · − N +** lays your collection across
+several storeys instead of one, shared out evenly and joined by the stair, so
+three floors is three floors of gallery rather than two full ones and an attic
+with a single drawing in it.
+
+> Works hung above the ground floor need the schema re-run: their frame keys
+> carry a floor (`3,-4@2:2`) and the database's CHECK constraint has to be
+> widened to accept it. **Re-run `supabase-setup.sql`.** Ground-floor keys are
+> unchanged, so nothing already hung is affected either way.
 
 > **Galleries are private until you publish them.** In local mode nothing leaves
 > the machine. In cloud mode your collection is visible only to you until you
@@ -227,8 +258,18 @@ appear where the walking is long; the occasional empty pedestal reads
 
 ## Engineering notes
 
-- Floating origin (jitter-free at Wing ±100000) · budgeted generator scheduling
-  (3.5 ms/frame, one texture upload/frame, pooled textures) · bright-pass bloom,
+- **Floating origin in three axes** (jitter-free at Wing ±100000, and at any
+  storey): climbing past a ceiling re-anchors upward exactly as walking past a
+  wall re-anchors sideways, which is why a staircase needed no second
+  coordinate system and the museum has no height limit. Storeys stack at the
+  ceiling height *plus a slab* — stacked flush, a ceiling and the floor above
+  it are the same plane and the room fills with the shimmer that coplanar
+  surfaces always make.
+- Budgeted generator scheduling
+  (3.5 ms/frame, one texture upload/frame, pooled textures) · the paint queue is
+  ordered by what you are *facing*, not merely by which room it is in, because
+  the wait that reads as "slow loading" is the wait for the piece in front of
+  you rather than for all of the art · bright-pass bloom,
   ACES tonemap, vignette, grain · WebGL context loss rebuilds everything from
   seeds · storage and pointer lock degrade gracefully in sandboxed embeds.
 - **Adaptive where it is safe to be, fixed where it is not.** Painter count,

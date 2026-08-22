@@ -93,7 +93,9 @@
         <span class="sub" id="cur-floor-n"></span>
         <button class="btn" id="cur-floor-plus" type="button" title="one storey more — the works are shared out over the floors, joined by the stair">+</button>
       </div>
-      <div class="row">
+      <!-- Shown only to somebody following a shared link. -->
+      <div class="sub" id="cur-guest-note" hidden></div>
+      <div class="row" id="cur-add-row">
         <label class="btn" for="cur-file">Add works…</label>
         <input type="file" id="cur-file" accept="image/*" multiple hidden>
         <button class="btn" id="cur-edit" hidden>Edit works…</button>
@@ -104,7 +106,7 @@
       </div>
       <div class="sub" id="cur-outbox" hidden></div>
       <div id="cur-grid"></div>
-      <div class="cur-note">
+      <div class="cur-note" id="cur-hint">
         Select a work above, walk to any frame, and press <b class="key">H</b> to hang it ·
         <b class="key">U</b> takes it down · the cross removes it from the collection ·
         a work hangs on one wall at a time<br>
