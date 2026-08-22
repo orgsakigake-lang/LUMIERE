@@ -6,7 +6,7 @@
    ═══════════════════════════════════════════════════════════════════ */
 
 import { S, HS, H, WT, DOORW, DOORH, EYE, PR, DOOR_P, FOG_SIGMA, DAY_SIGMA,
-         setSigma, FOG,
+         setSigma, FOG, STAIR_W, STEP_UP, STOREY,
          BUILD_R, EVICT_R, DPR_CAP, REDUCED, DEV, trace,
          CLOUD_URL, CLOUD_KEY } from './config.js';
 import { h2, mulberry32, SALT_EX, SALT_EY, SALT_ROOM, SALT_ART, SALT_WIN,
@@ -20,8 +20,9 @@ import { flashHint, toggleLegend } from './ui/hint.js';
 import { audio, initAudio, footstep, toggleMute, setAudioActive, suspendAudio,
          cycleMusic, musicName, setMusic, randomMusic, PIECES,
          setRain, rainActive, rainSounding } from './audio.js';
-import { SPECIAL, rooms, roomKey, getRoom, spotAt, specialAt, RIG,
-         BOUNDS, setBounds, inBounds, sealedWall } from './world/rooms.js';
+import { SPECIAL, rooms, roomKey, parseRoomKey, getRoom, spotAt, specialAt, RIG,
+         BOUNDS, setBounds, inBounds, sealedWall, sealedStair,
+         stairHeight, stairWell, overWell } from './world/rooms.js';
 import { THEMES, THEME_ORDER, DEFAULT_THEME, theme, themeName, setThemeName,
          nextThemeName } from './world/themes.js';
 import { cloud, setFetch, cloudSaveSess, cloudSendCode, cloudVerify, cloudPublicURL,
@@ -194,7 +195,7 @@ let packSerial = 1;
    pace of the audible fade, so the glass and the sound arrive together.
    `rainPin` lets a test hold it at an exact value while frames step. */
 let rainVis = 0, rainPin = null, sunDim = 1;
-function packLights(r, ox, oz, force){
+function packLights(r, ox, oy, oz, force){
   if (!force && r.packSerial === packSerial) return r.packN;
   if (!r.lpos){
     r.lpos = new Float32Array(MAX_LIGHTS*4);
@@ -223,7 +224,7 @@ function packLights(r, ox, oz, force){
     if (tier <= 0) break;                      // slots only get farther down the list
     const dim = !lightsOn && l.fill;
     const b = n*4;
-    const px = l.p[0]+ox, py = l.p[1], pz = l.p[2]+oz;
+    const px = l.p[0]+ox, py = l.p[1]+oy, pz = l.p[2]+oz;
     LPOS[b]   = M_V[0]*px + M_V[4]*py + M_V[8]*pz  + M_V[12];
     LPOS[b+1] = M_V[1]*px + M_V[5]*py + M_V[9]*pz  + M_V[13];
     LPOS[b+2] = M_V[2]*px + M_V[6]*py + M_V[10]*pz + M_V[14];
@@ -327,25 +328,55 @@ function refreshNear(){
   nearRooms.length = 0; midRooms.length = 0;
   for (let dj=-BUILD_R; dj<=BUILD_R; dj++)
     for (let di=-BUILD_R; di<=BUILD_R; di++){
-      const r = rooms.get(roomKey(player.gx + di, player.gz + dj));
+      const r = rooms.get(roomKey(player.gx + di, player.gz + dj, player.gy));
       if (!r) continue;
       if (!r.vao) continue;      // out-of-bounds data rooms never reach the frame
-      const e = { r, ox: di*S, oz: dj*S };
+      const e = { r, ox: di*S, oy: 0, oz: dj*S };
       nearRooms.push(e);
       if (Math.abs(di) <= 1 && Math.abs(dj) <= 1) midRooms.push(e);
     }
+  /* ————— the floor above, and the one below —————
+     Only ever the two rooms the visitor's own stair joins, and only when it
+     joins them. Standing at the foot of a flight you are looking up through
+     the well into the next storey, so that room has to be in the frame or the
+     opening is a black hole in the ceiling; the same in reverse looking down.
+     Two rooms, offset a storey, drawn by the identical passes — which is the
+     whole return on making the vertical offset a property of the entry rather
+     than a special case in six loops. */
+  const here = rooms.get(roomKey(player.gx, player.gz, player.gy));
+  if (!here) return;
+  for (const [has, dgy] of [[here.hasStairUp, 1], [here.hasStairDown, -1]]){
+    if (!has) continue;
+    const nb = rooms.get(roomKey(player.gx, player.gz, player.gy + dgy));
+    if (!nb || !nb.vao) continue;
+    const e = { r: nb, ox: 0, oy: dgy * STOREY, oz: 0, vertical: true };
+    nearRooms.push(e); midRooms.push(e);
+  }
 }
 /** Put the visitor at the centre of a room, facing `yaw`, and rebuild around them. */
-function goToRoom(gx, gz, yaw = 0){
-  player.gx = gx | 0; player.gz = gz | 0;
+function goToRoom(gx, gz, yaw = 0, gy = 0){
+  player.gx = gx | 0; player.gz = gz | 0; player.gy = gy | 0;
   player.x = 0; player.z = 0; player.yaw = yaw; player.pitch = 0;
   player.vx = player.vz = 0;
+  player.py = 0; player.vy = 0; player.jumps = 0;
   onRoomChanged();
+  /* The centre of a room is floor unless a stair happens to cross it; ask,
+     rather than assume, or a teleport can leave the visitor standing inside
+     a flight of steps. */
+  player.ground = groundAt(player.x, player.z);
+  if (player.py < player.ground) player.py = player.ground;
 }
 
 /* Which way to look to face a given wall from the middle of a room.
    Forward is (sin yaw, −cos yaw), so south — the −z wall — is yaw 0. */
 const YAW_FACING = { s: 0, n: Math.PI, e: Math.PI / 2, w: -Math.PI / 2 };
+
+/* "1st", "2nd", "3rd", "4th" — for naming a storey. The teens are the whole
+   reason this is a function and not `n + 'th'`. */
+function ordinal(n){
+  const t = n % 100, u = n % 10;
+  return n + (t >= 11 && t <= 13 ? 'th' : u === 1 ? 'st' : u === 2 ? 'nd' : u === 3 ? 'rd' : 'th');
+}
 
 /** Drop the visitor in front of the nearest hung work. Returns false if the
  *  collection is empty.
@@ -366,10 +397,12 @@ const YAW_FACING = { s: 0, n: Math.PI, e: Math.PI / 2, w: -Math.PI / 2 };
    steps to rooms the previous one actually opens onto: a wing you cannot walk
    without passing through a wall is not a wing. */
 const WING_ORIGIN = [0, 0];
-function wingRoute(need, extraRooms = 0){
-  const seen = new Set([roomKey(WING_ORIGIN[0], WING_ORIGIN[1])]);
-  const route = [{ gx: WING_ORIGIN[0], gz: WING_ORIGIN[1] }];
-  let capacity = getRoom(WING_ORIGIN[0], WING_ORIGIN[1]).artworks.length;
+/** One storey's worth of the walk: the ring spiral from the stairwell room
+ *  outward, stepping only through doorways that are actually open. */
+function floorRoute(gy, need, extraRooms){
+  const seen = new Set([roomKey(WING_ORIGIN[0], WING_ORIGIN[1], gy)]);
+  const route = [{ gx: WING_ORIGIN[0], gz: WING_ORIGIN[1], gy }];
+  let capacity = getRoom(WING_ORIGIN[0], WING_ORIGIN[1], gy).artworks.length;
   /* Rooms taken on past the point where the works already fit — the
      curator's kept-empty rooms. With extraRooms 0 this walk is exactly
      what it always was. */
@@ -377,33 +410,71 @@ function wingRoute(need, extraRooms = 0){
   const DIRS = [['e',1,0], ['n',0,1], ['w',-1,0], ['s',0,-1]];
   for (let i = 0; i < route.length && (capacity < need || past < extraRooms) && route.length < 40; i++){
     const { gx, gz } = route[i];
-    const r = getRoom(gx, gz);
+    const r = getRoom(gx, gz, gy);
     for (const [wall, dx, dz] of DIRS){
       if (capacity >= need && past >= extraRooms) break;
       if (!r.doors[wall]) continue;                 // must be walkable
-      const k = roomKey(gx + dx, gz + dz);
+      const k = roomKey(gx + dx, gz + dz, gy);
       if (seen.has(k)) continue;
       seen.add(k);
       if (capacity >= need) past++;
-      route.push({ gx: gx + dx, gz: gz + dz });
-      capacity += getRoom(gx + dx, gz + dz).artworks.length;
+      route.push({ gx: gx + dx, gz: gz + dz, gy });
+      capacity += getRoom(gx + dx, gz + dz, gy).artworks.length;
     }
   }
   return route;
 }
+/* ————— a wing that can go up —————
+   A collection laid along one floor is a corridor; laid over several it is a
+   building, and a building is what a museum is. The walk is the same walk on
+   each storey, and the storeys are joined because the room the walk starts
+   from — the entrance hall of that floor — always carries the stair.
+
+   The works are shared out evenly rather than filling one floor before
+   spilling onto the next: a curator who asks for three floors wants three
+   floors of gallery, not two full ones and an attic with a single drawing
+   in it. */
+function wingRoute(need, extraRooms = 0, floors = wingFloors){
+  const n = Math.max(1, floors | 0);
+  if (n === 1) return floorRoute(0, need, extraRooms);
+  const perFloor = Math.ceil(need / n);
+  const out = [];
+  for (let f = 0; f < n; f++)
+    for (const rm of floorRoute(f, perFloor, f === n - 1 ? extraRooms : 0)) out.push(rm);
+  return out;
+}
 /* The rooms a wing of nRooms rooms occupies — the same walk, sized by room
-   count alone. What a gather must sweep before it lays the works again. */
-const wingFootprint = (nRooms) => nRooms > 0 ? wingRoute(0, nRooms - 1) : [];
+   count alone. What a gather must sweep before it lays the works again.
+   Deliberately over-generous across storeys: it walks the full room count on
+   every floor rather than the share that floor actually held, because this is
+   a *sweep*. Clearing a frame that was never hung costs nothing; missing one
+   leaves a work hanging in a room the walk no longer visits, where only its
+   owner's next gather will ever find it. */
+function wingFootprint(nRooms, floors = wingFloors){
+  if (nRooms <= 0) return [];
+  const out = [];
+  for (let f = 0; f < Math.max(1, floors); f++)
+    for (const rm of floorRoute(f, 0, nRooms - 1)) out.push(rm);
+  return out;
+}
 /* How many rooms the curator keeps past what the works fill, and how far the
    last gather actually reached — the second is what a shrink must clean up.
    A browser preference, like the fills: the cloud already shows visitors a
    compact wing through the placements themselves. */
 let wingExtra = 0, wingPrev = 0;
+/* How many storeys the wing occupies, and how many the last gather actually
+   reached — the second is what a shrink has to clean up after. */
+let wingFloors = 1, wingPrevFloors = 1;
+const MAX_WING_FLOORS = 8;
 function loadWingPrefs(){
   if (!storageOK) return;
   try {
     wingExtra = Math.min(39, Math.max(0, JSON.parse(localStorage.getItem('lumiere_wing_extra') || '0') | 0));
     wingPrev  = Math.min(40, Math.max(0, JSON.parse(localStorage.getItem('lumiere_wing_prev') || '0') | 0));
+    wingFloors = Math.min(MAX_WING_FLOORS, Math.max(1,
+      JSON.parse(localStorage.getItem('lumiere_wing_floors') || '1') | 0));
+    wingPrevFloors = Math.min(MAX_WING_FLOORS, Math.max(1,
+      JSON.parse(localStorage.getItem('lumiere_wing_prev_floors') || '1') | 0));
   } catch(e){}
 }
 function saveWingPrefs(){
@@ -411,6 +482,8 @@ function saveWingPrefs(){
   try {
     localStorage.setItem('lumiere_wing_extra', JSON.stringify(wingExtra));
     localStorage.setItem('lumiere_wing_prev', JSON.stringify(wingPrev));
+    localStorage.setItem('lumiere_wing_floors', JSON.stringify(wingFloors));
+    localStorage.setItem('lumiere_wing_prev_floors', JSON.stringify(wingPrevFloors));
   } catch(e){}
 }
 loadWingPrefs();
@@ -423,8 +496,9 @@ function gatherIntoWing(){
      shrink must sweep the whole footprint it ever held, and tell the cloud,
      or stale placements keep hanging for visitors past the wing's end. A
      work hung deliberately in some far hall is still not swept up. */
-  for (const { gx, gz } of wingFootprint(Math.max(route.length, wingPrev))){
-    const r = getRoom(gx, gz);
+  for (const { gx, gz, gy } of wingFootprint(Math.max(route.length, wingPrev),
+                                             Math.max(wingFloors, wingPrevFloors))){
+    const r = getRoom(gx, gz, gy);
     for (let i = 0; i < r.artworks.length; i++){
       const k = artJobKey(r, i);
       if (!curator.placements.delete(k)) continue;
@@ -437,14 +511,14 @@ function gatherIntoWing(){
   const toHang = works.filter((id) => !elsewhere.has(id));
   let n = 0;
   outer:
-  for (const { gx, gz } of route){
-    const r = getRoom(gx, gz);
+  for (const { gx, gz, gy } of route){
+    const r = getRoom(gx, gz, gy);
     for (let i = 0; i < r.artworks.length; i++){
       if (n >= toHang.length) break outer;
       curator.placements.set(artJobKey(r, i), toHang[n++]);
     }
   }
-  wingPrev = route.length; saveWingPrefs();
+  wingPrev = route.length; wingPrevFloors = wingFloors; saveWingPrefs();
   savePlacements();
   if (cloud.sess && !cloud.viewing)
     for (const [k, id] of curator.placements)
@@ -472,13 +546,28 @@ function gatherIntoWing(){
    the gallery ends at the wing and a shut door asks — through a plate, not
    silently — whether a new room should exist at all. Open, the museum is
    endless again, exactly as it always was. */
-let boundOn = true;                 // the curator's switch
+/* Open by default, and that is a correction rather than a preference.
+
+   The wall exists so that a gallery somebody *shares* has an end — so a guest
+   walks the rooms that were curated and not into infinity. The curator is not
+   the person that protects. Defaulting it closed for them inverted the whole
+   idea, and the failure was not subtle: a wing is sized to hold the works, a
+   room holds six frames, so a collection of three works is a wing of exactly
+   one room — and closing the boundary around one room builds all four of its
+   doorways shut. The museum became a sealed box with five empty frames in it,
+   entered by walking in and impossible to leave, and every visit after the
+   first opened there.
+
+   So: guests are always walled in (guestWorld, below, admits no exception),
+   and the curator walks an endless museum unless they deliberately ask to see
+   what a visitor sees. */
+let boundOn = false;                // the curator's switch
 let guestWorld = false;             // a ?gallery visit — bounded, no exceptions
 const boundExtra = new Set();       // rooms opened by hand, door by door
 function loadBoundPrefs(){
   if (!storageOK) return;
   try {
-    boundOn = localStorage.getItem('lumiere_bound') !== '0';
+    boundOn = localStorage.getItem('lumiere_bound') === '1';
     for (const k of JSON.parse(localStorage.getItem('lumiere_bound_rooms') || '[]'))
       if (/^-?\d+,-?\d+$/.test(k)) boundExtra.add(k);
   } catch(e){}
@@ -498,21 +587,29 @@ loadBoundPrefs();
  *  can always Gather it home. */
 function connectRooms(placed){
   const DIRS = [['e',1,0], ['n',0,1], ['w',-1,0], ['s',0,-1]];
-  const startK = roomKey(WING_ORIGIN[0], WING_ORIGIN[1]);
+  const startK = roomKey(WING_ORIGIN[0], WING_ORIGIN[1], 0);
   const parent = new Map([[startK, null]]);
-  const q = [WING_ORIGIN];
+  const q = [[WING_ORIGIN[0], WING_ORIGIN[1], 0]];
   const found = new Set(placed.has(startK) ? [startK] : []);
   while (q.length && found.size < placed.size && parent.size < 1200){
-    const [gx, gz] = q.shift();
-    const r = getRoom(gx, gz);
+    const [gx, gz, gy] = q.shift();
+    const r = getRoom(gx, gz, gy);
+    const step = (ngx, ngz, ngy) => {
+      const nk = roomKey(ngx, ngz, ngy);
+      if (parent.has(nk)) return;
+      parent.set(nk, roomKey(gx, gz, gy));
+      q.push([ngx, ngz, ngy]);
+      if (placed.has(nk)) found.add(nk);
+    };
     for (const [wall, dx, dz] of DIRS){
       if (!r.doors[wall]) continue;
-      const nk = roomKey(gx + dx, gz + dz);
-      if (parent.has(nk)) continue;
-      parent.set(nk, roomKey(gx, gz));
-      q.push([gx + dx, gz + dz]);
-      if (placed.has(nk)) found.add(nk);
+      step(gx + dx, gz + dz, gy);
     }
+    /* A stair is a corridor that happens to go up. A work hung on the second
+       floor has to pull the flight that reaches it into the gallery, exactly
+       as a work down a hall pulls the rooms between. */
+    if (r.stairUp) step(gx, gz, gy + 1);
+    if (r.stairDown) step(gx, gz, gy - 1);
   }
   const out = new Set([startK]);
   for (const fk of found)
@@ -520,20 +617,49 @@ function connectRooms(placed){
   for (const pk of placed) out.add(pk);   // unreached islands survive as data
   return out;
 }
+/** The placements whose work still exists.
+ *
+ *  A placement row is a *hanging* only for as long as the work it names is
+ *  still in the collection. Rows outlive works easily — an upload removed on
+ *  another device, IndexedDB cleared by a browser cleaning up after itself, a
+ *  cloud row deleted while this tab was closed — and every one of those leaves
+ *  a key pointing at nothing.
+ *
+ *  That mattered far more than it looks, because the boundary is drawn around
+ *  the hanging. One stale row at the origin was enough to wall a curator into
+ *  a single room with all four doorways built shut and nothing on any of its
+ *  walls — a museum consisting of one sealed box, arrived at by walking into
+ *  it. This is the filter that stops a row nobody can see from being counted
+ *  as a reason to build a wall.
+ *
+ *  Deliberately non-destructive. A row may merely be waiting on a collection
+ *  that has not finished loading — IndexedDB and the cloud both answer well
+ *  after boot — so this reports what is true *now*, and every load asks again.
+ *  Deleting the rows instead would turn a slow network into data loss. */
+function livePlacements(){
+  const live = new Map();
+  for (const [k, id] of curator.placements)
+    if (curator.uploads.has(id)) live.set(k, id);
+  return live;
+}
+
 function refreshBounds(){
   if (!guestWorld && !boundOn){ setBounds(null); return; }
   const placed = new Set();
-  for (const k of curator.placements.keys()){
-    const m = /^(-?\d+),(-?\d+):/.exec(k);
-    if (m) placed.add(m[1] + ',' + m[2]);
+  for (const k of livePlacements().keys()){
+    /* Everything before the colon is the room, floor included. Parsing it by
+       hand with a two-number regex is what would quietly drop every work hung
+       above the ground floor out of the gallery it belongs to. */
+    const rk = k.slice(0, k.lastIndexOf(':'));
+    if (parseRoomKey(rk)) placed.add(rk);
   }
   if (!guestWorld){
     /* A hanging is what defines a gallery. Until one exists the museum
        stays endless — walling a first-time visitor into one empty room
        would be answering a question nobody asked. */
     if (!placed.size && !boundExtra.size){ setBounds(null); return; }
-    for (const { gx, gz } of wingRoute(curator.uploads.size, wingExtra))
-      placed.add(roomKey(gx, gz));
+    for (const { gx, gz, gy } of wingRoute(curator.uploads.size, wingExtra))
+      placed.add(roomKey(gx, gz, gy));
     for (const k of boundExtra) placed.add(k);
   }
   placed.add(roomKey(WING_ORIGIN[0], WING_ORIGIN[1]));
@@ -562,25 +688,35 @@ function spawnAtCollection(placements){
     }
   let best = null;
   for (const k of placements.keys()){
-    const m = /^(-?\d+),(-?\d+):(\d+)$/.exec(k);
-    if (!m) continue;
-    const gx = +m[1], gz = +m[2];
-    const d = Math.max(Math.abs(gx), Math.abs(gz));   // rooms walked, not metres
-    if (!best || d < best.d) best = { gx, gz, i: +m[3], d };
+    const ci = k.lastIndexOf(':');
+    const at = parseRoomKey(k.slice(0, ci));
+    if (!at) continue;
+    const i = +k.slice(ci + 1);
+    if (!Number.isFinite(i)) continue;
+    /* Rooms walked, not metres — and a storey is a walk of its own, weighted
+       so a work on this floor is preferred to one directly overhead. */
+    const d = Math.max(Math.abs(at.gx), Math.abs(at.gz)) + Math.abs(at.gy) * 2;
+    if (!best || d < best.d) best = { ...at, i, d };
   }
   if (!best) return false;
-  const A = getRoom(best.gx, best.gz).artworks[best.i];
-  goToRoom(best.gx, best.gz, A ? (YAW_FACING[A.wall] ?? 0) : 0);
+  const A = getRoom(best.gx, best.gz, best.gy).artworks[best.i];
+  goToRoom(best.gx, best.gz, A ? (YAW_FACING[A.wall] ?? 0) : 0, best.gy);
   return true;
 }
 
 function onRoomChanged(){
-  const k0 = roomKey(player.gx, player.gz);
+  const k0 = roomKey(player.gx, player.gz, player.gy);
   if (!visited.has(k0)){ persist.rooms = (persist.rooms|0) + 1; savePersist(); }
   visited.add(k0);
   const hudLoc = document.getElementById('hud-loc');
   const f = (n)=> (n < 0 ? '−' + (-n) : '' + n);
-  hudLoc.textContent = `Wing ${f(player.gx)} · Hall ${f(player.gz)}`;
+  /* The ground floor says nothing about itself — a museum that announces
+     "Floor 0" at the entrance is a car park. Only a storey you climbed to is
+     worth naming, and then it is named the way a building names it. */
+  const storey = player.gy === 0 ? ''
+    : player.gy > 0 ? ` · ${ordinal(player.gy)} floor`
+    : ` · ${ordinal(-player.gy)} basement`;
+  hudLoc.textContent = `Wing ${f(player.gx)} · Hall ${f(player.gz)}${storey}`;
   updateHudStat();
   ensureBuilt(); evict(); syncArtJobs(); markSeen(); refreshNear();
 }
@@ -590,14 +726,28 @@ function ensureBuilt(){
       /* Beyond the boundary nothing is meshed — the sealed door is the far
          wall. The visitor's own room is always built, so a stray teleport
          out of bounds degrades to an island instead of a void. */
-      if (!inBounds(player.gx + di, player.gz + dj) && !(di === 0 && dj === 0)) continue;
-      const r = getRoom(player.gx + di, player.gz + dj);
+      if (!inBounds(player.gx + di, player.gz + dj, player.gy) && !(di === 0 && dj === 0)) continue;
+      const r = getRoom(player.gx + di, player.gz + dj, player.gy);
       if (!r.vao) makeRoomVAO(r, WIN.on);
     }
+  /* The two rooms a stair joins to this one, so the well is never an opening
+     onto an unbuilt storey. Admitted on the same terms as a hall through a
+     doorway: only where the boundary allows that floor at all. */
+  const here = getRoom(player.gx, player.gz, player.gy);
+  for (const [has, dgy] of [[here.stairUp, 1], [here.stairDown, -1]]){
+    if (!has || !inBounds(player.gx, player.gz, player.gy + dgy)) continue;
+    const nb = getRoom(player.gx, player.gz, player.gy + dgy);
+    if (!nb.vao) makeRoomVAO(nb, WIN.on);
+  }
 }
 function evict(){
   for (const [k, r] of rooms){
-    if (Math.max(Math.abs(r.gx - player.gx), Math.abs(r.gz - player.gz)) > EVICT_R){
+    /* A storey away counts as far as several halls away — otherwise every
+       floor a visitor ever climbed stays resident for the whole visit, in the
+       one direction nothing was pruning. */
+    const dy = Math.abs((r.gy || 0) - player.gy);
+    if (dy > 1 ||
+        Math.max(Math.abs(r.gx - player.gx), Math.abs(r.gz - player.gz)) > (dy ? 1 : EVICT_R)){
       dropRoomGL(r);
       rooms.delete(k);
     }
@@ -758,7 +908,14 @@ let colN = 0;
 function gatherColliders(){
   colN = 0;
   for (let ri = 0; ri < midRooms.length; ri++){
-    const { r, ox, oz } = midRooms[ri];
+    const { r, ox, oz, vertical } = midRooms[ri];
+    /* A storey up is in the frame so the well is not a black hole, but its
+       furniture is not in this room. Its walls sit at the same x,z as ours and
+       are merely redundant — its *rail* is not: the rail guarding the opening
+       in the floor above stands directly over the middle of the flight below,
+       and gathering it stopped every climb dead at the third step, one metre
+       four off the ground, against a bannister on another floor. */
+    if (vertical) continue;
     const cs = r.colliders;
     for (let i = 0; i < cs.length; i++){
       if (colN >= 192) break;
@@ -824,7 +981,7 @@ function confirmAnswer(yes){
 const bump = { key: '', t: 0 };
 const BUMP_DIRS = { e: [1, 0], w: [-1, 0], n: [0, 1], s: [0, -1] };
 function checkSealedBump(){
-  const r = rooms.get(roomKey(player.gx, player.gz));
+  const r = rooms.get(roomKey(player.gx, player.gz, player.gy));
   if (!r || !r.sealed) return;
   const IN = HS - WT;
   for (const wall of ['e', 'w', 'n', 's']){
@@ -842,7 +999,7 @@ function checkSealedBump(){
   }
 }
 function sealedBump(r, wall){
-  const key = roomKey(r.gx, r.gz) + ':' + wall;
+  const key = roomKey(r.gx, r.gz, r.gy) + ':' + wall;
   const now = performance.now();
   if (bump.key === key && now - bump.t < 5000) return;
   if (!document.getElementById('confirm').hidden) return;
@@ -852,10 +1009,15 @@ function sealedBump(r, wall){
     return;
   }
   if (guestWorld){ flashHint('the gallery ends here'); return; }
-  if (!(cloud.sess || curator.unlocked)){
-    flashHint('the gallery ends at the wing — its curator decides where new rooms go (<b>C</b>)');
-    return;
-  }
+  /* No account is asked for here, and asking for one was a trap with no way
+     out of it. The boundary and the rooms opened by hand are *this browser's*
+     state — localStorage, not the cloud — so signing in has never had anything
+     to do with whether a door may open. But with a cloud project configured
+     the office shows a sign-in gate and hides its own boundary switch, so a
+     visitor who had never signed in met: a sealed door that refused to open,
+     a hint telling them to press C, and a panel behind C that only offered to
+     sign them in. Every route out of the room led back into it.
+     Walking into the door and saying yes is now always a way through. */
   const d = BUMP_DIRS[wall];
   const ngx = r.gx + d[0], ngz = r.gz + d[1];
   confirmPlate('The gallery ends here',
@@ -863,7 +1025,7 @@ function sealedBump(r, wall){
     + 'It will be part of the walk from now on — for you and for anyone you share the link with once something hangs in it.',
     'Create the room', (yes) => {
       if (!yes) return;
-      boundExtra.add(roomKey(ngx, ngz));
+      boundExtra.add(roomKey(ngx, ngz, r.gy));
       saveBoundPrefs();
       applyBounds();
       flashHint('a new hall opens — choose a work in the office (<b>C</b>) and press <b>H</b> at a frame');
@@ -873,7 +1035,7 @@ function sealedBump(r, wall){
 /* autopilot: drift from room centre to room centre through open doors */
 const auto = { on: false, rnd: mulberry32(0xA070), wp: null, lastDx: 0, lastDz: 0, stallT: 0 };
 function autoPick(){
-  const r = rooms.get(roomKey(player.gx, player.gz));
+  const r = rooms.get(roomKey(player.gx, player.gz, player.gy));
   if (!r) return;
   const opts = [];
   const s = r.sealed || {};
@@ -931,25 +1093,52 @@ function step(dt){
     const sp = Math.hypot(player.vx, player.vz);
     let h = remaining;
     if (sp > 1e-6) h = Math.min(remaining, MAXSTEP / sp);
+    const wasX = player.x, wasZ = player.z, wasG = player.ground;
     player.x += player.vx * h;
     player.z += player.vz * h;
     collide();
+    /* ————— what a leg can do —————
+       The flight of steps is walkable surface, not an obstacle, so nothing
+       stops a visitor strolling into the *side* of it — where the floor
+       would rise two metres between one substep and the next and stand them
+       on top of the bannister. One rule covers it: a rise taller than a step
+       is a wall. It is also what lets the bottom tread be stepped onto in the
+       first place, so the stair needs no colliders of its own at all. */
+    const g = groundAt(player.x, player.z);
+    if (g - Math.max(wasG, player.py) > STEP_UP){
+      player.x = wasX; player.z = wasZ;
+      player.vx = 0; player.vz = 0;
+    } else if (player.py <= wasG + 1e-4 && g > player.py){
+      player.py = g;                       // walking up: the feet follow
+    }
+    player.ground = groundAt(player.x, player.z);
     remaining -= h;
     audio.stride += sp * h;
   }
   if (BOUNDS && mlen > 0 && !auto.on) checkSealedBump();
-  /* vertical: gravity, landing, ceiling clamp */
-  if (player.py > 0 || player.vy !== 0){
+  /* ————— vertical: gravity, landing, and the ceiling that is not always there —————
+     The floor under the feet is `player.ground`, which is 0 in an ordinary
+     room, the height of the tread on a stair, and negative over the opening
+     in a floor — that last one is what makes walking off the top of a well
+     a fall rather than a stroll on air.
+
+     The head clamp only applies where there is a ceiling. Jumping under the
+     well used to be capped at the ceiling of the room you were in, which
+     would have stopped the stair from ever delivering anyone. */
+  const gnd = player.ground;
+  if (player.py > gnd || player.vy !== 0){
     player.vy -= 12.5 * dt;
     player.py += player.vy * dt;
-    const maxPy = H - EYE - 0.32;
-    if (player.py > maxPy){ player.py = maxPy; if (player.vy > 0) player.vy = 0; }
-    if (player.py <= 0){
-      player.py = 0; player.vy = 0;
+    if (!underWell()){
+      const maxPy = H - EYE - 0.32;
+      if (player.py > maxPy){ player.py = maxPy; if (player.vy > 0) player.vy = 0; }
+    }
+    if (player.py <= gnd){
+      player.py = gnd; player.vy = 0;
       if (player.jumps) footstep(2.0);
       player.jumps = 0;
     }
-  }
+  } else if (player.py < gnd) player.py = gnd;
   const spd = Math.hypot(player.vx, player.vz);
   if (spd < 0.2 || player.py > 0) audio.stride = 0;
   else {
@@ -972,7 +1161,60 @@ function step(dt){
   while (player.x < -HS){ player.x += S; player.gx--; moved = true; }
   while (player.z >  HS){ player.z -= S; player.gz++; moved = true; }
   while (player.z < -HS){ player.z += S; player.gz--; moved = true; }
-  if (moved) onRoomChanged();
+  /* The same re-anchoring, upward. Reaching the next floor's plane *is*
+     arriving on it: the anchor moves a storey and the local height drops by
+     one, so a visitor half way up a flight is simply someone whose `py` has
+     not reached H yet. Guarded on the opening actually existing, so a jump in
+     a room with no stair can never punch through its own ceiling. */
+  let floorsMoved = 0;
+  while (player.py >= STOREY && canRise()){ player.py -= STOREY; player.gy++; floorsMoved++; moved = true; }
+  while (player.py < 0 && canFall()){ player.py += STOREY; player.gy--; floorsMoved++; moved = true; }
+  if (player.py < 0 && !floorsMoved){ player.py = 0; player.vy = 0; }
+  if (moved){
+    onRoomChanged();
+    if (floorsMoved){ player.ground = groundAt(player.x, player.z); footstep(1.4); }
+  }
+}
+/** Is there a way up from where the visitor is standing? Only through the
+ *  well their own room's stair comes up through. */
+function canRise(){
+  const r = rooms.get(roomKey(player.gx, player.gz, player.gy));
+  return !!(r && r.hasStairUp && overWell(r.stairPlanUp, player.x, player.z));
+}
+/** And a way down: the opening in this floor, which is the same rectangle
+ *  seen from the other side. */
+function canFall(){
+  const r = rooms.get(roomKey(player.gx, player.gz, player.gy));
+  return !!(r && r.hasStairDown && overWell(r.stairPlanDown, player.x, player.z));
+}
+/** Standing under the opening, where the ceiling is missing and a jump must
+ *  not be clamped to a floor slab that is not there. */
+function underWell(){
+  const r = rooms.get(roomKey(player.gx, player.gz, player.gy));
+  return !!(r && r.hasStairUp && overWell(r.stairPlanUp, player.x, player.z));
+}
+/** The height of whatever a visitor is standing on, in this floor's frame.
+ *
+ *  Three answers, and the third is the one that makes a building out of a
+ *  plane: the tread of a stair climbing out of this room; a *negative* height
+ *  where this floor is open and the flight below comes up through it; and
+ *  zero — plain floor — everywhere else. */
+function groundAt(x, z){
+  const r = rooms.get(roomKey(player.gx, player.gz, player.gy));
+  if (!r) return 0;
+  if (r.hasStairUp){
+    const s = stairHeight(r.stairPlanUp, x, z);
+    if (s !== null) return s;
+  }
+  if (r.hasStairDown && overWell(r.stairPlanDown, x, z)){
+    const s = stairHeight(r.stairPlanDown, x, z);
+    /* The flight below, measured from this floor: its top tread is level with
+       this floor and everything before it is under one's feet. Off the treads
+       but still over the hole there is nothing at all — which is a fall, and
+       is exactly what the rail exists to prevent. */
+    return s !== null ? s - STOREY : -STOREY;
+  }
+  return 0;
 }
 
 /* ————— §10 Inspect & acquire ————— */
@@ -994,7 +1236,7 @@ function facedArtwork(){
   let best = null, bestCos = 0.955;
   for (let dj=-1; dj<=1; dj++)
     for (let di=-1; di<=1; di++){
-      const r = rooms.get(roomKey(player.gx + di, player.gz + dj));
+      const r = rooms.get(roomKey(player.gx + di, player.gz + dj, player.gy));
       if (!r) continue;
       for (const A of r.artworks){
         const c = paintingCenter(A, r);
@@ -1260,6 +1502,14 @@ async function curatorBoot(){
         rec.url = URL.createObjectURL(rec.blob);
         curator.uploads.set(rec.id, rec);
       }
+      /* The wall is drawn around the works, and until this callback the works
+         did not exist yet: applyBounds ran above against an empty collection,
+         so the wing was sized for nothing and every placement looked stale.
+         Ask again now that the collection is real. Cheap when the answer has
+         not changed — applyBounds diffs the room set and only rebuilds when
+         the wall actually moved. */
+      applyBounds();
+      curatorGrid();
       syncArtJobs();           // wake any placements now that images exist
     };
   }
@@ -1910,15 +2160,30 @@ function wingUI(){
       `${t} room${t === 1 ? '' : 's'}${wingExtra ? ` · ${wingExtra} kept empty` : ''}`
       + (unhung ? ` · ${unhung} work${unhung === 1 ? ' has' : 's have'} no wall yet — Gather hangs everything` : '');
   }
-  /* The boundary switch appears once there is a gallery to bound. */
+  /* How tall the gallery stands. Shown beside how wide it spreads, because
+     they are the same decision asked along two axes. */
+  const frow = document.getElementById('cur-floors');
+  if (frow){
+    frow.hidden = row.hidden;
+    if (!frow.hidden)
+      document.getElementById('cur-floor-n').textContent =
+        wingFloors === 1 ? 'one floor' : `${wingFloors} floors, joined by the stair`;
+  }
+  boundUI();
+}
+/* Whether the museum has a far wall. Shown to everyone who is not a guest,
+   signed in or not, and whether or not anything hangs yet — it is the answer
+   to "why can I not walk any further", and it used to appear only once there
+   was already a gallery, which is precisely when it was too late to ask. */
+function boundUI(){
   const brow = document.getElementById('cur-bound-row');
   if (!brow) return;
-  brow.hidden = row.hidden && !curator.placements.size;
+  brow.hidden = !!cloud.viewing;
   if (brow.hidden) return;
   const b = document.getElementById('cur-bound');
   b.classList.toggle('on', boundOn);
-  b.textContent = boundOn ? 'closed — the gallery ends at the wing'
-                          : 'open — endless halls beyond';
+  b.textContent = boundOn ? 'closed — you are walking it as a visitor does'
+                          : 'open — endless halls, as the curator';
 }
 function curatorGrid(){
   wingUI();
@@ -2068,6 +2333,9 @@ function curatorRefresh(){
     }
     curatorGrid();
   }
+  /* Outside the `open` branch: the boundary belongs to the browser, so it is
+     answerable while the collection is still behind a sign-in. */
+  boundUI();
 }
 /* Focus whichever gate is actually showing. The old code always reached for
    #cur-pass, which lives inside #cur-lock — permanently hidden whenever cloud
@@ -2184,17 +2452,60 @@ document.getElementById('curator').addEventListener('keydown', (e) => {
     applyBounds();
     if (wingPrev && gatherIntoWing()) curatorToggle();
   });
+  /* ————— the floors —————
+     Adding a storey re-lays the collection across the whole building rather
+     than appending to the top, so three floors is three floors of gallery
+     instead of two full ones and an attic with one drawing in it. The gather
+     is what does the laying, and it sweeps the old footprint first, so
+     shrinking puts everything back down without stranding a hanging upstairs
+     in a room that is no longer part of the walk. */
+  document.getElementById('cur-floor-plus').addEventListener('click', () => {
+    if (!curatorCanEdit()) return;
+    if (wingFloors >= MAX_WING_FLOORS){
+      flashHint(`${MAX_WING_FLOORS} floors is as tall as a wing goes`); return;
+    }
+    const works = curator.uploads.size;
+    if (!works){ flashHint('the collection is empty — add works first'); return; }
+    curatorToggle();
+    confirmPlate('Another floor',
+      'Your works are laid again across one more storey, joined by the stair in the '
+      + 'entrance hall. The gallery grows upward instead of outward. Add it?',
+      'Add the floor', (yes) => {
+        if (!yes){ curatorToggle(); return; }
+        wingFloors++; saveWingPrefs();
+        gatherIntoWing();
+        goToRoom(WING_ORIGIN[0], WING_ORIGIN[1], 0, wingFloors - 1);
+        flashHint(`the gallery stands ${wingFloors} floors — the stair in the entrance hall joins them`);
+      });
+  });
+  document.getElementById('cur-floor-minus').addEventListener('click', () => {
+    if (!curatorCanEdit()) return;
+    if (wingFloors <= 1){ flashHint('the gallery is already on one floor'); return; }
+    wingFloors--; saveWingPrefs();
+    gatherIntoWing();
+    flashHint(wingFloors === 1 ? 'the gallery comes back down to one floor'
+                               : `the gallery stands ${wingFloors} floors`);
+    curatorToggle();
+  });
   /* The boundary switch: closed, the gallery ends at the wing and a shut
      door asks before any room is created; open, the museum is endless. */
   document.getElementById('cur-bound').addEventListener('click', () => {
-    if (!curatorCanEdit()) return;
+    /* Not curatorCanEdit(): that asks whether this visitor may change the
+       *collection*, which is an account question. Which halls exist is not —
+       it is this browser's own preference, and gating it on a session is what
+       made a sealed wing inescapable for anyone who had not signed in. Only a
+       guest is refused, because a guest is walking somebody else's hanging. */
+    if (cloud.viewing){
+      flashHint('you are a guest here — this is <b>' + cloud.viewing.slug + '</b>’s hanging');
+      return;
+    }
     boundOn = !boundOn; saveBoundPrefs();
     applyBounds();
     wingUI();
     if (boundOn && BOUNDS && !inBounds(player.gx, player.gz))
       goToRoom(WING_ORIGIN[0], WING_ORIGIN[1], 0);
     flashHint(boundOn
-      ? 'the boundary is closed — your gallery ends at the wing, and a shut door asks before a room is born'
+      ? 'the boundary is closed — you now walk the gallery exactly as a visitor at your link does'
       : 'the boundary is open — the museum lays new halls as you walk, without asking');
   });
   document.getElementById('confirm-yes').addEventListener('click', () => confirmAnswer(true));
@@ -2481,9 +2792,10 @@ function reportWrite(promise, msg){
 /* The Curator's Office answering the scheduler's loan questions. Registered
    rather than imported, so the scheduler stays ignorant of it. */
 setLoanProvider({
-  releaseOutside(gx, gz, radius){
+  releaseOutside(gx, gz, gy, radius){
     for (const [k, o] of curator.overrides)
-      if (Math.max(Math.abs(o.r.gx - gx), Math.abs(o.r.gz - gz)) > radius){
+      if (Math.max(Math.abs(o.r.gx - gx), Math.abs(o.r.gz - gz)) > radius
+          || Math.abs((o.r.gy || 0) - gy) > 1){
         gl.deleteTexture(o.tex);
         o.A.override = null;               // reapplied from the blob on return
         curator.overrides.delete(k);
@@ -2545,10 +2857,13 @@ async function bootCloud(){
       applyTheme(data.theme, true);
     applyBounds();
     updateHudStat();
-    /* Stand them in front of the work rather than at the origin. */
-    const placed = spawnAtCollection(curator.placements);
-    const halls = new Set([...curator.placements.keys()].map((k) => k.split(':')[0])).size;
-    const n = curator.placements.size;
+    /* Stand them in front of the work rather than at the origin. Counted from
+       the live placements, so a row whose image has since been deleted does
+       not send a guest to an empty frame and then claim there are works there. */
+    const live = livePlacements();
+    const placed = spawnAtCollection(live);
+    const halls = new Set([...live.keys()].map((k) => k.split(':')[0])).size;
+    const n = live.size;
     flashHint(placed
       ? 'you are walking <b>' + data.slug + '</b>’s gallery — ' + n + ' work' + (n===1?'':'s')
         + ' across ' + halls + ' hall' + (halls===1?'':'s') + ', and the doors end where the hanging does'
@@ -2659,9 +2974,9 @@ function computeVisibility(){
   for (let i = 0; i < nearRooms.length; i++){
     const e = nearRooms[i];
     e.vis = false;
-    VIS_BY_KEY.set(roomKey(e.r.gx, e.r.gz), e);
+    VIS_BY_KEY.set(roomKey(e.r.gx, e.r.gz, e.r.gy), e);
   }
-  const start = VIS_BY_KEY.get(roomKey(player.gx, player.gz));
+  const start = VIS_BY_KEY.get(roomKey(player.gx, player.gz, player.gy));
   if (!start){
     /* Mid-teleport the visitor's own room may not be built yet. Fall back to
        the frustum rather than drawing nothing at all. */
@@ -2682,7 +2997,7 @@ function computeVisibility(){
       const [wall, dx, dz] = DOOR_DIRS[d];
       if (!e.r.doors[wall]) continue;
       if (e.r.sealed && e.r.sealed[wall]) continue;     // a shut door lets nothing through
-      const nb = VIS_BY_KEY.get(roomKey(e.r.gx + dx, e.r.gz + dz));
+      const nb = VIS_BY_KEY.get(roomKey(e.r.gx + dx, e.r.gz + dz, e.r.gy));
       if (!nb) continue;
       const p = portalRect(e.ox, e.oz, wall);
       if (p === false) continue;                     // that doorway faces away
@@ -2706,7 +3021,16 @@ function computeVisibility(){
   }
   for (let i = 0; i < nearRooms.length; i++){
     const e = nearRooms[i];
-    if (e.vis && e !== start && !boxVisible(e.ox, H/2, e.oz, HS, H/2, HS)) e.vis = false;
+    if (e.vis && e !== start && !boxVisible(e.ox, e.oy + H/2, e.oz, HS, H/2, HS)) e.vis = false;
+  }
+  /* A storey is not reached through a doorway, so the flood never finds it —
+     and it must not, because the flood's clip rectangles describe apertures in
+     walls. What bounds the room above is the well in the ceiling, which sits
+     overhead rather than ahead; the honest cheap test for it is the frustum
+     against the room's own box, one storey up. */
+  for (let i = 0; i < nearRooms.length; i++){
+    const e = nearRooms[i];
+    if (e.vertical) e.vis = boxVisible(e.ox, e.oy + H/2, e.oz, HS, H/2, HS);
   }
 }
 /* The floor reflections are a second pass over the whole visible world — every
@@ -2754,7 +3078,7 @@ function windowSlice(r, wn, flip){
 function computeMirrorVisibility(){
   for (let i = 0; i < nearRooms.length; i++){
     const e = nearRooms[i];
-    e.visR = boxVisible(e.ox, -H/2, e.oz, HS, H/2, HS);
+    e.visR = boxVisible(e.ox, e.oy - H/2, e.oz, HS, H/2, HS);
   }
 }
 
@@ -2938,13 +3262,13 @@ function frame(t){
   gl.activeTexture(gl.TEXTURE5); gl.bindTexture(gl.TEXTURE_2D, parquetNrm);
   gl.activeTexture(gl.TEXTURE0);
 
-  function archRoomUniforms(r, ox, oz){
+  function archRoomUniforms(r, ox, oy, oz){
     const m = r.mood, as = (r.ambScale || 1) * ambMult;
     gl.uniform3f(uArch.amb,
       (AMB_BASE[0]+m[0])*as, (AMB_BASE[1]+m[1])*as, (AMB_BASE[2]+m[2])*as);
     gl.uniform3f(uArch.fog,
       fogCur[0]+m[0]*.5, fogCur[1]+m[1]*.5, fogCur[2]+m[2]*.5);
-    const nl = packLights(r, ox, oz);
+    const nl = packLights(r, ox, oy, oz);
     gl.uniform1i(uArch.nl, nl);
     /* Which packed light the baked map belongs to. packLights drops lights the
        switch turned off, so the index has to be found rather than assumed. */
@@ -2957,15 +3281,15 @@ function frame(t){
     gl.uniform4fv(uArch.lpos, r.lpos);
     gl.uniform4fv(uArch.ldir, r.ldir);
     gl.uniform4fv(uArch.lcol, r.lcol);
-    mulT(M_MV, M_V, ox, 0, oz);
+    mulT(M_MV, M_V, ox, oy, oz);
     gl.uniformMatrix4fv(uArch.mv, false, M_MV);
   }
   /* pass A — opaque architecture, floors withheld */
   for (let ri = 0; ri < nearRooms.length; ri++){
-      const { r, ox, oz, vis } = nearRooms[ri];
+      const { r, ox, oy, oz, vis } = nearRooms[ri];
       if (!r.vao) continue;
       if (!vis) continue;
-      archRoomUniforms(r, ox, oz);
+      archRoomUniforms(r, ox, oy, oz);
       gl.bindVertexArray(r.vao);
       gl.drawElements(gl.TRIANGLES, r.floorStart, gl.UNSIGNED_SHORT, 0);
     }
@@ -3002,17 +3326,17 @@ function frame(t){
     gl.uniform1f(uPaint.uAT, 0);
     gl.bindVertexArray(quadVAO);
     for (let ri = 0; ri < midRooms.length; ri++){
-      const { r, ox, oz, visR } = midRooms[ri];
+      const { r, ox, oy, oz, visR } = midRooms[ri];
       if (!r.vao) continue;
       if (!visR) continue;
       const m = r.mood;
       gl.uniform3f(uPaint.uFog, fogCur[0]+m[0]*.5, fogCur[1]+m[1]*.5, fogCur[2]+m[2]*.5);
-      const nl = packLights(r, ox, oz);
+      const nl = packLights(r, ox, oy, oz);
       gl.uniform1i(uPaint.uNL, nl);
       gl.uniform4fv(uPaint.uLPos, r.lpos);
       gl.uniform4fv(uPaint.uLDir, r.ldir);
       gl.uniform4fv(uPaint.uLCol, r.lcol);
-      mulT(M_MV, M_V, ox, 0, oz);
+      mulT(M_MV, M_V, ox, oy, oz);
       gl.uniformMatrix4fv(uPaint.uMV, false, M_MV);
       for (const A of r.artworks){
         if (!A.tex && !A.override) continue;
@@ -3083,10 +3407,10 @@ function frame(t){
       gl.uniform1f(uFlame.uEyeY, camY);
       gl.uniform3f(uFlame.uCol, 0.34, 0.21, 0.09);
       for (let ri = 0; ri < midRooms.length; ri++){
-        const { r, ox, oz, visR } = midRooms[ri];
+        const { r, ox, oy, oz, visR } = midRooms[ri];
         if (!r.nFlames || !r.flameVAO) continue;
         if (!visR) continue;
-        mulT(M_MV, M_V, ox, 0, oz);
+        mulT(M_MV, M_V, ox, oy, oz);
         gl.uniformMatrix4fv(uFlame.uMV, false, M_MV);
         gl.bindVertexArray(r.flameVAO);
         gl.drawArrays(gl.POINTS, 0, r.nFlames);
@@ -3104,10 +3428,10 @@ function frame(t){
   gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
   gl.uniform1f(uArch.alpha, reflecting() ? 0.87 : 1.0);
   for (let ri = 0; ri < nearRooms.length; ri++){
-      const { r, ox, oz, vis } = nearRooms[ri];
+      const { r, ox, oy, oz, vis } = nearRooms[ri];
       if (!r.vao) continue;
       if (!vis) continue;
-      archRoomUniforms(r, ox, oz);
+      archRoomUniforms(r, ox, oy, oz);
       gl.bindVertexArray(r.vao);
       gl.drawElements(gl.TRIANGLES, r.nIdx - r.floorStart, gl.UNSIGNED_SHORT, r.floorStart * 2);
     }
@@ -3131,7 +3455,7 @@ function frame(t){
   gl.uniform1f(uPaint.uAT, 0);
   gl.bindVertexArray(quadVAO);
   for (let ri = 0; ri < midRooms.length; ri++){
-      const { r, ox, oz, vis } = midRooms[ri];
+      const { r, ox, oy, oz, vis } = midRooms[ri];
       if (!r.vao) continue;
       if (!vis) continue;
       let any = (WIN.on && r.windows.length > 0) || !!r.pedestal;
@@ -3139,12 +3463,12 @@ function frame(t){
       if (!any) continue;
       const m = r.mood;
       gl.uniform3f(uPaint.uFog, fogCur[0]+m[0]*.5, fogCur[1]+m[1]*.5, fogCur[2]+m[2]*.5);
-      const nl = packLights(r, ox, oz);
+      const nl = packLights(r, ox, oy, oz);
       gl.uniform1i(uPaint.uNL, nl);
       gl.uniform4fv(uPaint.uLPos, r.lpos);
       gl.uniform4fv(uPaint.uLDir, r.ldir);
       gl.uniform4fv(uPaint.uLCol, r.lcol);
-      mulT(M_MV, M_V, ox, 0, oz);
+      mulT(M_MV, M_V, ox, oy, oz);
       gl.uniformMatrix4fv(uPaint.uMV, false, M_MV);
       /* ————— contact shadows —————
          They used to be centred under whatever cast them and drawn at a fixed
@@ -3320,13 +3644,13 @@ function frame(t){
   /* candle flames on the chandeliers */
   if (lightsOn){
     for (let ri = 0; ri < midRooms.length; ri++){
-      const { r, ox, oz, vis } = midRooms[ri];
+      const { r, ox, oy, oz, vis } = midRooms[ri];
       if (!r.nFlames || !r.flameVAO) continue;
       if (!vis) continue;
       if (!addOn){ gl.blendFunc(gl.ONE, gl.ONE); addOn = true; }
       gl.useProgram(progFlame);
       gl.uniformMatrix4fv(uFlame.uP, false, M_P);
-      mulT(M_MV, M_V, ox, 0, oz);
+      mulT(M_MV, M_V, ox, oy, oz);
       gl.uniformMatrix4fv(uFlame.uMV, false, M_MV);
       gl.uniform1f(uFlame.uTime, shaderT);
       gl.uniform1f(uFlame.uMY, 0);
@@ -3337,14 +3661,14 @@ function frame(t){
     }
   }
   for (let ri = 0; ri < midRooms.length; ri++){
-      const { r, ox, oz, vis } = midRooms[ri];
+      const { r, ox, oy, oz, vis } = midRooms[ri];
       if (WIN.on || !r.shaft || !r.vao) continue;
       if (!vis) continue;
       if (!addOn){
         gl.blendFunc(gl.ONE, gl.ONE);
         addOn = true;
       }
-      mulT(M_MV, M_V, ox, 0, oz);
+      mulT(M_MV, M_V, ox, oy, oz);
       gl.useProgram(progShaft);
       gl.uniformMatrix4fv(uShaft.uP, false, M_P);
       gl.uniformMatrix4fv(uShaft.uMV, false, M_MV);
@@ -3514,9 +3838,53 @@ window.DBG = {
    and esbuild drops this whole block, which is what keeps that artifact
    under the 100 KiB free-upload threshold. See docs/permanence.md. */
 if (DBG_FULL) Object.assign(window.DBG, {
-  tp(gx, gz, yaw = 0){
-    goToRoom(gx, gz, yaw);
-    return `room (${player.gx},${player.gz}) yaw=${yaw}`;
+  tp(gx, gz, yaw = 0, gy = 0){
+    goToRoom(gx, gz, yaw, gy);
+    return `room (${player.gx},${player.gz},${player.gy}) yaw=${yaw}`;
+  },
+  /* ————— the vertical dimension, inspectable —————
+     Where a room's stair stands, how high the ground is under any point of
+     it, and where the well is cut. A staircase is the one piece of this
+     museum whose correctness is a claim about three dimensions at once, so
+     it gets hooks rather than screenshots. */
+  stair(gx = player.gx, gz = player.gz, gy = player.gy){
+    const r = getRoom(gx, gz, gy);
+    return { up: !!r.stairUp, down: !!r.stairDown,
+             builtUp: !!r.hasStairUp, builtDown: !!r.hasStairDown,
+             planUp: r.stairPlanUp || null, planDown: r.stairPlanDown || null,
+             wellUp: r.stairPlanUp ? stairWell(r.stairPlanUp) : null };
+  },
+  /** The floor under a point of the visitor's own room, in that floor's frame. */
+  ground(x = player.x, z = player.z){ return +groundAt(x, z).toFixed(3); },
+  /** Which storey, and how high above its floor. */
+  floor(){ return { gy: player.gy, py: +player.py.toFixed(2),
+                    ground: +player.ground.toFixed(2),
+                    x: +player.x.toFixed(2), z: +player.z.toFixed(2) }; },
+  /** Walk the visitor up (or down) their own stair, stepping the physics for
+   *  real rather than teleporting — which is the only way to prove the climb
+   *  actually works. Returns where they ended up. */
+  climb(up = true, seconds = 12){
+    const r = rooms.get(roomKey(player.gx, player.gz, player.gy));
+    const st = up ? r && r.stairPlanUp : r && r.stairPlanDown;
+    if (!st) return { error: 'no stair in this room' };
+    /* Stand at the foot of the flight, facing along it. */
+    const foot = up ? st.u0 : st.u1, dir = up ? st.dir : -st.dir;
+    if (st.axis === 'x'){ player.x = foot - dir*0.9; player.z = st.across; player.yaw = dir > 0 ? Math.PI/2 : -Math.PI/2; }
+    else                { player.z = foot - dir*0.9; player.x = st.across; player.yaw = dir > 0 ? Math.PI : 0; }
+    player.py = player.ground = groundAt(player.x, player.z);
+    const startGy = player.gy;
+    keys.add('KeyW');
+    const dt = 1/60, path = [];
+    for (let i = 0; i < seconds*60; i++){
+      step(dt);
+      if ((i % 30) === 0) path.push({ gy: player.gy, py: +player.py.toFixed(2) });
+      if (player.gy !== startGy && Math.abs(player.py - player.ground) < 0.01
+          && !overWell(up ? null : st, player.x, player.z)) break;
+    }
+    keys.delete('KeyW');
+    onRoomChanged();
+    return { from: startGy, to: player.gy, py: +player.py.toFixed(2),
+             ground: +player.ground.toFixed(2), path };
   },
   /** Register a placement without a backend, so guest arrival is testable.
    *  Deliberately raw — no one-wall rule here, so a test can fabricate any
@@ -3531,6 +3899,14 @@ if (DBG_FULL) Object.assign(window.DBG, {
     return { placed: k };
   },
   wingSizeForTest(extra){ wingExtra = Math.min(39, Math.max(0, extra | 0)); return wingExtra; },
+  /** How many storeys the wing takes. The whole of "add a floor", settable. */
+  wingFloorsForTest(n){
+    if (n !== undefined){ wingFloors = Math.min(MAX_WING_FLOORS, Math.max(1, n | 0)); saveWingPrefs(); }
+    return wingFloors;
+  },
+  /** The frame key a room and index produce — the one string a placement is
+   *  stored under, a share link resolves, and a CHECK constraint validates. */
+  frameKeyForTest(gx, gz, gy, i){ return roomKey(gx, gz, gy) + ':' + i; },
   gatherForTest(){ return gatherIntoWing(); },
   /** The boundary, inspectable and settable. No argument reads; true/false
    *  flips the curator's switch exactly as the office button would. */
@@ -3585,7 +3961,7 @@ if (DBG_FULL) Object.assign(window.DBG, {
     artState.placards.length = 0; artState.beheld = 0;
     for (const [, r] of rooms) dropRoomGL(r);
     rooms.clear();
-    setVisited(new Set([roomKey(player.gx, player.gz)]));
+    setVisited(new Set([roomKey(player.gx, player.gz, player.gy)]));
     onRoomChanged();
     return `world seed ${WORLD_SEED}`;
   },
@@ -3624,10 +4000,10 @@ if (DBG_FULL) Object.assign(window.DBG, {
              works: r.artworks.length };
   },
   lightsInfo(){
-    const r = rooms.get(roomKey(player.gx, player.gz));
+    const r = rooms.get(roomKey(player.gx, player.gz, player.gy));
     if (!r) return 'no room';
     return { own: r.ownLights.length, final: r.lights ? r.lights.length : null,
-             packed: packLights(r, 0, 0, true),   // force: the frame cache is keyed to the real offsets
+             packed: packLights(r, 0, 0, 0, true),   // force: the frame cache is keyed to the real offsets
              sample: r.lights && r.lights[0] ? { p: r.lights[0].p, col: r.lights[0].col } : null,
              lpos0: [+r.lpos[0].toFixed(2), +r.lpos[1].toFixed(2), +r.lpos[2].toFixed(2), +r.lpos[3].toFixed(4)] };
   },
@@ -3760,9 +4136,9 @@ if (DBG_FULL) Object.assign(window.DBG, {
              kinds: outbox.items.map((i) => i.kind + ':' + i.key) };
   },
   /** The route a wing would take for n works, without hanging anything. */
-  wingRoute(n = 12){ return wingRoute(n).map(({gx, gz}) => [gx, gz]); },
+  wingRoute(n = 12, floors){ return wingRoute(n, 0, floors).map(({gx, gz, gy}) => [gx, gz, gy]); },
   /** The same walk the next gather would take: kept-empty rooms included. */
-  wingRouteSized(n = 12){ return wingRoute(n, wingExtra).map(({gx, gz}) => [gx, gz]); },
+  wingRouteSized(n = 12){ return wingRoute(n, wingExtra).map(({gx, gz, gy}) => [gx, gz, gy]); },
   /** Lay the collection out along one walkable route. Returns what it hung. */
   gather(){ return gatherIntoWing(); },
   /** Whether the distant murmur is running, and how loud it sits. */

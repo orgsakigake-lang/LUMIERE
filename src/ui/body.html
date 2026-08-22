@@ -86,10 +86,12 @@
         <span class="sub" id="cur-wing-n"></span>
         <button class="btn" id="cur-wing-plus" type="button" title="one more room, empty, ready for new work">+</button>
       </div>
-      <div class="row" id="cur-bound-row" hidden>
-        <span class="sub">The boundary ·</span>
-        <button class="sw" id="cur-bound" type="button"
-          title="closed, your gallery ends at the wing and a shut door asks before any new room is created — guests are always walled in either way"></button>
+      <!-- Outward is not the only direction a gallery can grow. -->
+      <div class="row" id="cur-floors" hidden>
+        <span class="sub">The floors ·</span>
+        <button class="btn" id="cur-floor-minus" type="button" title="one storey fewer — the works come back down">−</button>
+        <span class="sub" id="cur-floor-n"></span>
+        <button class="btn" id="cur-floor-plus" type="button" title="one storey more — the works are shared out over the floors, joined by the stair">+</button>
       </div>
       <div class="row">
         <label class="btn" for="cur-file">Add works…</label>
@@ -108,6 +110,17 @@
         a work hangs on one wall at a time<br>
         <span id="cur-store"></span>
       </div>
+    </div>
+    <!-- Outside #cur-open on purpose. Which halls exist is a property of this
+         browser, not of an account: it lives in localStorage and no sign-in has
+         ever had anything to do with it. Inside the signed-in section it was
+         unreachable in exactly the situation that needs it most — walled into a
+         wing with no account, the only control that opens the museum hidden
+         behind a sign-in form. -->
+    <div class="row" id="cur-bound-row" hidden>
+      <span class="sub">The boundary ·</span>
+      <button class="sw" id="cur-bound" type="button"
+        title="open, you walk the endless museum; closed, you stand in the same walls a visitor at your link does — anyone following that link is walled in either way"></button>
     </div>
   </div>
 </div>
@@ -155,11 +168,12 @@
           sign in in the office, claim a name, and switch on
           <b class="key">anyone with the link</b> — switch it off to make it yours alone again.</span></div>
         <div class="help-h">The boundary</div>
-        <div class="help-row"><span>Once something hangs, your gallery <b class="key">ends at the wing</b>:
-          shut doors stand where it stops, and walking into one asks whether a new room
-          should exist. Guests at your link are always walled in — they walk exactly the
-          rooms you curated, and nothing multiplies behind their backs. The office switch
-          reopens the endless museum whenever you want to wander.</span></div>
+        <div class="help-row"><span>You walk an <b class="key">endless</b> museum: halls are laid as you
+          go, without asking. Anyone following your shared link does not — a guest walks
+          exactly the rooms you curated and finds shut doors where the hanging ends, so
+          nothing multiplies behind their backs. Close the boundary in the office to stand
+          in the same walls a visitor does; a shut door then asks before any new room is
+          born, and opening the switch again gives you back the halls without number.</span></div>
       </div>
     </div>
     <div class="cur-note">The switches at the lower right — lights, shutters, music, rain, curator —

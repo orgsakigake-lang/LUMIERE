@@ -377,7 +377,8 @@ function uploadOne(job, source){
   A.fadeAt = performance.now();
   if (!A.mini){ A.ptexWanted = true; artState.placards.push(A); }
   artState.jobs.delete(job.k);
-  if (job.r.gx === player.gx && job.r.gz === player.gz && !A.seen){
+  if (job.r.gx === player.gx && job.r.gz === player.gz
+      && (job.r.gy || 0) === player.gy && !A.seen){
     A.seen = true; artState.beheld++; updateHudStat();
   }
 }
@@ -402,7 +403,8 @@ export function pumpArt(budgetMs = 3.5){
     A.fadeAt = performance.now();
     if (!A.mini){ A.ptexWanted = true; artState.placards.push(A); }
     artState.jobs.delete(job.k);
-    if (job.r.gx === player.gx && job.r.gz === player.gz && !A.seen){
+    if (job.r.gx === player.gx && job.r.gz === player.gz
+      && (job.r.gy || 0) === player.gy && !A.seen){
       A.seen = true; artState.beheld++; updateHudStat();
     }
     trace(`[gen] art (${job.r.gx},${job.r.gz},${job.i}) ${job.ms|0}ms algo=${job.effAlgo} seed=${A.seed}`);

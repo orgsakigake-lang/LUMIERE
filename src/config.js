@@ -20,6 +20,58 @@ export const PR  = 0.35;   // player radius
    museum is one connected component rather than pockets of sealed rooms. */
 export const DOOR_P = 0.6;
 
+/* ————— the vertical dimension —————
+   How often a room holds a stair to the floor above. Deliberately much rarer
+   than a doorway: a stair is an event, and a museum where every room has one
+   is a car park. At 0.14 a visitor meets one every few halls, which is often
+   enough to feel like a building with upper floors and seldom enough that
+   finding one is a small discovery. The entrance hall always has its own.
+
+   STAIR_RUN is measured along the floor and STAIR_W across it; the rise is
+   always H, because a stair that does not arrive at the next floor is not a
+   stair. 6.6 m of run for 4.2 m of rise is about 32°, which is steep for a
+   building and correct for a walk — a code-compliant 7 m of run at this
+   ceiling height reads as a ramp from eye level. The well cut through the
+   ceiling is the footprint plus a landing at the top. */
+export const STAIR_P = 0.14;
+export const STAIR_RUN = 6.6, STAIR_W = 1.9;
+export const STAIR_STEPS = 21;              // 0.2 m rise, ~0.314 m going
+/* The landing at the head of the flight, level with the floor it serves.
+   Not decoration — it is what makes arriving possible. Without it the top
+   tread is the last walkable point, and a walk reaches the top of the rise
+   and the end of the run in the same instant: one substep later the ground
+   under the visitor falls from 4.2 m to nothing and they drop the height of
+   the storey they just climbed, every time, for ever. The landing gives the
+   height a flat stretch to be *reached on*, which is where the floor above
+   takes over. */
+export const STAIR_LANDING = 1.25;
+
+/* ————— the thickness of a floor —————
+   Storeys stack at H + FLOOR_SLAB rather than at H, and that is not a detail.
+   Stacked at H exactly, a room's ceiling and the floor of the room above it
+   are the *same plane*: both get drawn, both win the depth test in patches,
+   and the ceiling of the entrance hall fills with the fan of shimmering
+   stripes that coplanar surfaces always produce. A building has a slab
+   between its floors; giving it one costs six centimetres of head height and
+   removes the whole class of problem by construction. The ceiling still sits
+   at H and the floor still at 0, so a single storey is unchanged — only the
+   distance between two of them moves. */
+export const FLOOR_SLAB = 0.06;
+export const STOREY = H + FLOOR_SLAB;
+/* Where along the run the ceiling has to open. A climber's eyes are 1.65 m
+   above the tread, so at 40% of the rise their head is at 3.33 m under a
+   4.2 m ceiling — two thirds of a metre of clearance at the moment the well
+   swallows them, which is enough that the opening reads as arriving rather
+   than as a hole to duck through. The well is cut through the floor above
+   over exactly this stretch, so the steps come up where the hole is. */
+export const STAIR_WELL_FRAC = 0.40;
+export const STAIR_WELL_PAD = 0.16;         // well cut slightly wider than the treads
+/* The tallest rise a walk will take in its stride. Comfortably over one
+   0.2 m tread so a flight is climbed without noticing, and far under the
+   height of a stringer so its side is a wall rather than a ramp. This one
+   constant is the whole of the stair's collision. */
+export const STEP_UP = 0.46;
+
 /* Extinction per metre. At the original 0.15 a surface 10 m off was 78% fog and
    22% light: zeroing the fog colour dropped the frame median from 19 to 4, and
    tripling the chandelier moved it by two code values. The lighting model was

@@ -119,6 +119,12 @@ echo "write guards"
 check "path outside own folder is rejected"      f "$(try_insert "public.uploads (owner,name,path) values ('11111111-1111-1111-1111-111111111111','evil','22222222-2222-2222-2222-222222222222/steal.jpg')" 11111111-1111-1111-1111-111111111111)"
 check "placement key shape is enforced"          f "$(try_insert "public.placements (owner,k,upload_id) values ('11111111-1111-1111-1111-111111111111','not-a-key','aaaaaaaa-0000-0000-0000-000000000001')" 11111111-1111-1111-1111-111111111111)"
 check "a well-formed placement is accepted"      t "$(try_insert "public.placements (owner,k,upload_id) values ('11111111-1111-1111-1111-111111111111','3,-4:2','aaaaaaaa-0000-0000-0000-000000000001')" 11111111-1111-1111-1111-111111111111)"
+# Upper storeys. The suffix is what the whole floors feature writes, and a
+# CHECK that rejects it fails every hanging above the ground floor with a bare
+# 403 that looks, from the gallery, exactly like the cloud being down.
+check "a placement on an upper floor is accepted" t "$(try_insert "public.placements (owner,k,upload_id) values ('11111111-1111-1111-1111-111111111111','3,-4@2:2','aaaaaaaa-0000-0000-0000-000000000001')" 11111111-1111-1111-1111-111111111111)"
+check "a placement in a basement is accepted"     t "$(try_insert "public.placements (owner,k,upload_id) values ('11111111-1111-1111-1111-111111111111','0,1@-1:5','aaaaaaaa-0000-0000-0000-000000000001')" 11111111-1111-1111-1111-111111111111)"
+check "a floor suffix of nonsense is rejected"     f "$(try_insert "public.placements (owner,k,upload_id) values ('11111111-1111-1111-1111-111111111111','3,-4@x:2','aaaaaaaa-0000-0000-0000-000000000001')" 11111111-1111-1111-1111-111111111111)"
 
 echo
 echo "a visitor cannot change anything"

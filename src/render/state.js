@@ -14,12 +14,18 @@ import { mat4 } from './mat4.js';
 /* Floating origin: the world is addressed by anchor room plus a local offset,
    so coordinates never grow large enough to lose float precision. Walk to
    Wing 100000 and the geometry is still exact. */
+/* The vertical axis is the same idea one storey at a time: `gy` names the
+   floor, `py` is the height above *that floor's* plane, and climbing past the
+   ceiling re-anchors upward exactly as walking past a wall re-anchors sideways.
+   Which means a stair needs no special case in the renderer, no second
+   coordinate system, and no limit on how tall the museum gets. */
 export const player = {
-  gx: 0, gz: 0,          // anchor room (also the room the player is in)
+  gx: 0, gz: 0, gy: 0,   // anchor room (also the room the player is in)
   x: 0, z: 0,            // anchor-local position
   yaw: 0, pitch: 0,
   vx: 0, vz: 0,
-  py: 0, vy: 0,          // height above the floor, vertical speed
+  py: 0, vy: 0,          // height above this floor's plane, vertical speed
+  ground: 0,             // height of whatever is under their feet, this frame
   jumps: 0, lastJumpT: 0,
 };
 

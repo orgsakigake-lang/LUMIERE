@@ -22,7 +22,8 @@ create table if not exists public.uploads (
 create index if not exists uploads_owner_idx on public.uploads(owner);
 
 -- ————— placements: which upload hangs in which frame —————
--- k is the frame key "gx,gz:i" — a coordinate in the infinite gallery.
+-- k is the frame key "gx,gz:i" on the ground floor, or "gx,gz@gy:i" on any
+-- storey above or below it — a coordinate in the infinite gallery.
 create table if not exists public.placements (
   owner      uuid not null references auth.users(id) on delete cascade,
   k          text not null,
@@ -114,11 +115,19 @@ drop policy if exists "placements update" on public.placements;
 drop policy if exists "placements delete" on public.placements;
 create policy "placements read"   on public.placements for select
   using (auth.uid() = owner or public.is_published(owner));
--- `k` is a frame key, "gx,gz:i". Unconstrained text let a script insert
--- millions of rows; bound the shape and the count.
+-- `k` is a frame key: "gx,gz:i" on the ground floor, "gx,gz@gy:i" on any other
+-- storey. Unconstrained text let a script insert millions of rows; bound the
+-- shape and the count.
+--
+-- The `@gy` group is optional, which is what keeps every placement ever made
+-- valid under the new rule — the ground floor's keys are unchanged, so this
+-- widens what is accepted and rejects nothing it used to allow. Until this
+-- file is re-run against a project, works hung above the ground floor are
+-- refused by the database with a bare 403 and stay in the outbox; the gallery
+-- itself is unaffected, and re-running fixes it retroactively.
 create policy "placements upsert" on public.placements for insert with check (
   auth.uid() = owner
-  and k ~ '^-?[0-9]{1,7},-?[0-9]{1,7}:[0-9]{1,2}$'
+  and k ~ '^-?[0-9]{1,7},-?[0-9]{1,7}(@-?[0-9]{1,4})?:[0-9]{1,2}$'
   and (select count(*) from public.placements p where p.owner = auth.uid()) < 2000
 );
 create policy "placements update" on public.placements for update using (auth.uid() = owner) with check (auth.uid() = owner);

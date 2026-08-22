@@ -61,7 +61,13 @@
   body.entered #hud{opacity:1;}
   .hud-corner{position:fixed; font-size:.7rem; letter-spacing:.3em; text-transform:uppercase;
               color:rgba(169,159,140,.75); font-variant-numeric:tabular-nums;}
-  #hud-loc{left:5.9rem; top:1.7rem;}   /* clear of the corner nav, on its centre line */
+  /* Clear of the corner nav, on its centre line — and it has to stay clear when
+     the nav's buttons bloom into labelled pills. 5.9rem cleared two 1.9rem dots
+     and nothing else, so the moment Esc freed the cursor the pills grew to
+     ~11.3rem and printed straight through "Wing 0 · Hall 0". Moves on the same
+     easing as the pills, so the two travel together rather than racing. */
+  #hud-loc{left:5.9rem; top:1.7rem; transition:left .4s ease;}
+  body.entered:not(.locked) #hud-loc{left:13.2rem;}
   #hud-stat{right:1.6rem; top:1.4rem; text-align:right;}
   /* A notice. Transient, and no longer sharing an element with the legend. */
   #hud-toast{left:50%; bottom:1.5rem; transform:translateX(-50%); white-space:nowrap;

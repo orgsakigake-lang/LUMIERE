@@ -6,8 +6,9 @@
    Takes daylight as an argument rather than reading the shutter toggle:
    window geometry is baked into the mesh, so the caller owns that choice.
    ═══════════════════════════════════════════════════════════════════ */
-import { S, HS, H, WT, DOORW, DOORH } from '../config.js';
-import { SPECIAL, spotAt, getRoom, RIG, sealedWall } from './rooms.js';
+import { S, HS, H, WT, DOORW, DOORH, STAIR_W, STAIR_STEPS, STAIR_LANDING,
+         STOREY, FLOOR_SLAB } from '../config.js';
+import { SPECIAL, spotAt, getRoom, RIG, sealedWall, sealedStair, stairWell, stairTop } from './rooms.js';
 import { theme } from './themes.js';
 
 /* 0 ordinary · 1 vermilion · 2 archive · 3 dark room. The live values; a theme
@@ -55,9 +56,46 @@ export function buildRoomMesh(r, daylight){
   const IN = HS - WT;              // interior face plane (6.76)
   const DW = DOORW / 2;
 
+  /* ————— which openings this room actually has —————
+     A stair is an opening between two floors, and the boundary treats it
+     exactly as it treats a doorway: if the floor on the other side is not
+     part of the gallery, the opening is never cut and the steps are never
+     built. Cached on the record, because collision has to agree with the
+     mesh about whether there is a hole in the floor. */
+  const stUp   = !!r.stairUp   && !sealedStair(r, true);
+  const stDown = !!r.stairDown && !sealedStair(r, false);
+  r.hasStairUp = stUp; r.hasStairDown = stDown;
+  const wellUp   = stUp   ? stairWell(r.stairPlanUp)   : null;   // cut in this ceiling
+  const wellDown = stDown ? stairWell(r.stairPlanDown) : null;   // cut in this floor
+
+  /* A horizontal slab, optionally with a rectangular hole in it. The no-hole
+     path emits the single quad it always did, unchanged, so a museum without
+     stairs is the museum it was down to the vertex. */
+  const UVS = S / (2 * IN);        // keep the texture scale of the original quad
+  function slab(x0, z0, x1, z1, y, up, col){
+    if (x1 - x0 < 1e-4 || z1 - z0 < 1e-4) return;
+    const us = (x1 - x0) / 2 * UVS, vs = (z1 - z0) / 2 * UVS;
+    if (up) quad(x0,y,z1, x1,y,z1, x1,y,z0, x0,y,z0,  0, 1,0, col, us, vs);
+    else    quad(x0,y,z0, x1,y,z0, x1,y,z1, x0,y,z1,  0,-1,0, col, us, vs);
+  }
+  function slabHole(x0, z0, x1, z1, y, up, col, hole){
+    const a = hole && Math.max(x0, hole.x0), b = hole && Math.min(x1, hole.x1);
+    const c = hole && Math.max(z0, hole.z0), e = hole && Math.min(z1, hole.z1);
+    if (!hole || b <= a || e <= c){
+      /* No hole: the original single quad, with the original UV span. */
+      if (up) quad(x0,y,z1, x1,y,z1, x1,y,z0, x0,y,z0,  0, 1,0, col, S/2, S/2);
+      else    quad(x0,y,z0, x1,y,z0, x1,y,z1, x0,y,z1,  0,-1,0, col, S/2, S/2);
+      return;
+    }
+    slab(x0, z0, x1, c,  y, up, col);      // this side of the well
+    slab(x0, e,  x1, z1, y, up, col);      // beyond it
+    slab(x0, c,  a,  e,  y, up, col);      // beside it
+    slab(b,  c,  x1, e,  y, up, col);      // and beside it
+  }
+
   /* ceiling now; the floor is emitted last, in its own index range, so it
      can be drawn semi-transparent over its own reflections */
-  quad(-IN,H,-IN,  IN,H,-IN,  IN,H, IN,  -IN,H, IN,  0,-1,0, COL.ceil,  S/2, S/2);
+  slabHole(-IN, -IN, IN, IN, H, false, COL.ceil, wellUp);
   const d = r.doors;
 
   /* Wall on one edge. Axis-generic via a tiny frame:
@@ -469,6 +507,88 @@ export function buildRoomMesh(r, daylight){
     }
   }
 
+  /* ————— the stair, and the rail around the well it arrives through —————
+     A straight flight of stone treads on a solid stringer. There is no
+     soffit and none is needed: the two side panels run from the floor to the
+     top of each tread, so the flight is already a closed solid seen from any
+     angle. Nothing here is a collider — the treads are meant to be walked on,
+     and what stops a visitor strolling through the side of the flight is the
+     step-height rule in the walk loop, which refuses a rise it could not
+     climb. That is one rule instead of a box per step, and it is the same
+     rule that lets the bottom tread be walked onto at all. */
+  if (stUp || stDown){
+    const TREAD = [0.300, 0.286, 0.262];        // pale stone, takes the light
+    const STRING = SCH.trim;
+    /* u travels along the run, v across it. */
+    const pt = (st) => (u, v, y) => st.axis === 'x' ? [u, y, v] : [v, y, u];
+    if (stUp){
+      const st = r.stairPlanUp, p = pt(st);
+      const v0 = st.across - STAIR_W/2, v1 = st.across + STAIR_W/2;
+      const du = (st.u1 - st.u0) / STAIR_STEPS, dy = STOREY / STAIR_STEPS;
+      const nRise = st.axis === 'x' ? [-st.dir, 0, 0] : [0, 0, -st.dir];
+      const nSide = st.axis === 'x' ? [0, 0, 1] : [1, 0, 0];
+      for (let i = 0; i < STAIR_STEPS; i++){
+        const ua = st.u0 + du*i, ub = ua + du;
+        const ya = dy*i, yb = ya + dy;
+        /* riser, facing back down the flight */
+        q4(p(ua,v0,ya), p(ua,v1,ya), p(ua,v1,yb), p(ua,v0,yb), nRise, STRING, STAIR_W/2, dy/2);
+        /* tread */
+        q4(p(ua,v0,yb), p(ub,v0,yb), p(ub,v1,yb), p(ua,v1,yb), [0,1,0], TREAD, Math.abs(du)/2, STAIR_W/2);
+        /* the two stringer panels, stepped to the profile of the flight */
+        q4(p(ua,v0,0), p(ub,v0,0), p(ub,v0,yb), p(ua,v0,ya),
+           [-nSide[0], 0, -nSide[2]], STRING, Math.abs(du)/2, yb/2);
+        q4(p(ua,v1,0), p(ub,v1,0), p(ub,v1,yb), p(ua,v1,ya),
+           nSide, STRING, Math.abs(du)/2, yb/2);
+      }
+      /* The landing at the head of the flight. It is drawn here, in the room
+         below, and it *is* the floor of the room above over this patch — the
+         well is cut through both slabs and this fills the near end of it. One
+         surface, one owner, so there is nothing to z-fight with. */
+      const ue = stairTop(st);
+      q4(p(st.u1,v0,STOREY), p(ue,v0,STOREY), p(ue,v1,STOREY), p(st.u1,v1,STOREY),
+         [0,1,0], TREAD, STAIR_LANDING/2, STAIR_W/2);
+      /* and its underside, so the ceiling below does not show daylight */
+      q4(p(st.u1,v0,H), p(ue,v0,H), p(ue,v1,H), p(st.u1,v1,H),
+         [0,-1,0], SCH.ceil, STAIR_LANDING/2, STAIR_W/2);
+      /* ————— the fascia round the opening —————
+         The ceiling is cut at H and the floor above at H + FLOOR_SLAB, so the
+         slab is open at its edge all the way round the well. These four
+         inward-facing bands close it — and they are what a real opening has
+         anyway: the reveal you see when you look up through a stairwell. */
+      const w = wellUp;
+      const fascia = (x0, z0, x1, z1, nx, nz) =>
+        quad(x0,H,z0, x1,H,z1, x1,STOREY,z1, x0,STOREY,z0,
+             nx,0,nz, SCH.trim, Math.hypot(x1-x0, z1-z0)/2, FLOOR_SLAB/2);
+      fascia(w.x0, w.z0, w.x1, w.z0,  0, 1);
+      fascia(w.x1, w.z1, w.x0, w.z1,  0,-1);
+      fascia(w.x0, w.z1, w.x0, w.z0,  1, 0);
+      fascia(w.x1, w.z0, w.x1, w.z1, -1, 0);
+    }
+    /* The rail. Three sides of the opening; the fourth is where the top tread
+       delivers you onto this floor, and railing that would be walling the
+       stair off from the room it serves. */
+    if (stDown && wellDown){
+      const w = wellDown, st = r.stairPlanDown;
+      const RH = 1.02, T = 0.085, RAIL = SCH.trim;
+      const rail = (x0, z0, x1, z1) => {
+        box(x0, 0, z0, x1, RH, z1, RAIL);
+        r.colliders.push({ cx:(x0+x1)/2, cz:(z0+z1)/2,
+                           hx:Math.max(T, (x1-x0)/2), hz:Math.max(T, (z1-z0)/2) });
+      };
+      if (st.axis === 'x'){
+        rail(w.x0, w.z0 - T, w.x1, w.z0 + T);
+        rail(w.x0, w.z1 - T, w.x1, w.z1 + T);
+        const shut = st.dir > 0 ? w.x0 : w.x1;        // the low end of the flight
+        rail(shut - T, w.z0 - T, shut + T, w.z1 + T);
+      } else {
+        rail(w.x0 - T, w.z0, w.x0 + T, w.z1);
+        rail(w.x1 - T, w.z0, w.x1 + T, w.z1);
+        const shut = st.dir > 0 ? w.z0 : w.z1;
+        rail(w.x0 - T, shut - T, w.x1 + T, shut + T);
+      }
+    }
+  }
+
   /* ——— the ceiling: rosette + chandelier ——— */
   r.flames = [];
   function ringFlat(inner, outer, y, col){
@@ -530,7 +650,7 @@ export function buildRoomMesh(r, daylight){
   /* ——— the floor, last: its own range, drawn over the reflections ——— */
   const floorStart = I.length;
   curMat = 1;
-  quad(-IN,0, IN,  IN,0, IN,  IN,0,-IN,  -IN,0,-IN,  0,1,0, COL.floor, S/2, S/2);
+  slabHole(-IN, -IN, IN, IN, 0, true, COL.floor, wellDown);
   if (d.e) quad( IN,0, DW,  HS,0, DW,  HS,0,-DW,   IN,0,-DW,  0,1,0, COL.floor, .3,1);
   if (d.w) quad(-HS,0, DW, -IN,0, DW, -IN,0,-DW,  -HS,0,-DW,  0,1,0, COL.floor, .3,1);
   if (d.n) quad(-DW,0, HS, -DW,0, IN,   DW,0, IN,   DW,0, HS,  0,1,0, COL.floor, .3,1);

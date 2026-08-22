@@ -3,17 +3,34 @@
    Doors, special rooms, which works hang where, and the lights that aim
    at them. No GL here — buildRoomMesh turns this into geometry.
    ═══════════════════════════════════════════════════════════════════ */
-import { S, HS, H, WT, DOORW } from '../config.js';
+import { S, HS, H, WT, DOORW,
+         STAIR_RUN, STAIR_W, STAIR_WELL_FRAC, STAIR_WELL_PAD, STAIR_LANDING,
+         STOREY } from '../config.js';
 import { theme } from './themes.js';
-import { h2, mulberry32, SALT_ROOM, SALT_ART, SALT_WIN, WORLD_SEED,
-         edgeOpenX, edgeOpenZ } from './seed.js';
+import { h2, mulberry32, SALT_ROOM, SALT_ART, SALT_WIN, SALT_STAIR, WORLD_SEED,
+         edgeOpenX, edgeOpenZ, stairUpAt } from './seed.js';
 import { PALETTES } from '../art/palettes.js';
 import { ALGOS } from '../art/algos.js';
 
 export const SPECIAL = { NONE:0, VERMILION:1, ARCHIVE:2, DARKROOM:3 };
-export const rooms = new Map();   // "gx,gz" → room record
+export const rooms = new Map();   // room key → room record
 
-export function roomKey(gx, gz){ return gx + ',' + gz; }
+/* ————— addressing a room on any floor —————
+   The ground floor keeps the key it has always had. That is not tidiness: a
+   frame key is "<roomKey>:<i>", every placement a curator has ever made is
+   stored under one, they are written into a database with a CHECK constraint
+   on their shape, and they are what a shared link resolves. Appending a floor
+   unconditionally would have silently unhung every work in every gallery.
+   So floor 0 is "gx,gz" exactly as before, and only the floors that did not
+   exist until now carry a suffix. */
+export function roomKey(gx, gz, gy = 0){
+  return gy ? gx + ',' + gz + '@' + gy : gx + ',' + gz;
+}
+/** Split a room key back into coordinates. Accepts both shapes. */
+export function parseRoomKey(k){
+  const m = /^(-?\d+),(-?\d+)(?:@(-?\d+))?$/.exec(k);
+  return m ? { gx: +m[1], gz: +m[2], gy: m[3] ? +m[3] : 0 } : null;
+}
 
 /* ————— the boundary —————
    The museum is endless by nature, but a *gallery* — a curator's hanging,
@@ -27,17 +44,80 @@ export function roomKey(gx, gz){ return gx + ',' + gz; }
    work hung at "0,0:4" hangs on the same wall for the curator who placed
    it and the guest who is walled in — sealing happens at build time, never
    at generation time. */
-export let BOUNDS = null;         // Set of "gx,gz" | null = endless
+export let BOUNDS = null;         // Set of room keys | null = endless
 export function setBounds(s){ BOUNDS = s || null; }
-export function inBounds(gx, gz){ return !BOUNDS || BOUNDS.has(roomKey(gx, gz)); }
+export function inBounds(gx, gz, gy = 0){ return !BOUNDS || BOUNDS.has(roomKey(gx, gz, gy)); }
 const SEAL_DIRS = { e: [1, 0], w: [-1, 0], n: [0, 1], s: [0, -1] };
 /** Is this open doorway built shut? Only doors leading *out* of the set seal,
  *  so a room reached by debug teleport still lets you walk back in. */
 export function sealedWall(r, wall){
   if (!BOUNDS || !r.doors[wall]) return false;
-  if (!BOUNDS.has(roomKey(r.gx, r.gz))) return false;
+  if (!BOUNDS.has(roomKey(r.gx, r.gz, r.gy))) return false;
   const d = SEAL_DIRS[wall];
-  return !BOUNDS.has(roomKey(r.gx + d[0], r.gz + d[1]));
+  return !BOUNDS.has(roomKey(r.gx + d[0], r.gz + d[1], r.gy));
+}
+/** Is the stair out of this room built over? A floor beyond the boundary is
+ *  reached the same way a hall beyond it is: it is not, and the opening that
+ *  would have led there is closed. The ceiling is simply never cut. */
+export function sealedStair(r, up){
+  if (!BOUNDS) return false;
+  if (!BOUNDS.has(roomKey(r.gx, r.gz, r.gy))) return false;
+  return !BOUNDS.has(roomKey(r.gx, r.gz, r.gy + (up ? 1 : -1)));
+}
+
+/* ————— where a stair stands, and how high it is under your feet —————
+   A straight run, inset from the walls: far enough in that the pictures on
+   the wall behind it are still approachable, far enough out that the
+   chandelier still has its floor. Keyed to the coordinates of the *lower* of
+   the two rooms it joins, so the room with the steps and the room with the
+   hole in its floor compute the identical footprint without either of them
+   asking the other. */
+export function stairPlan(gx, gz, gy){
+  const sr = mulberry32(h2(gx, gz, ((SALT_STAIR ^ WORLD_SEED) + Math.imul(gy|0, 0x85EBCA6B) ^ 0x5741) | 0));
+  const axis = sr() < 0.5 ? 'x' : 'z';        // which way the run travels
+  const dir  = sr() < 0.5 ? -1 : 1;           // which way it climbs
+  const across = (sr() < 0.5 ? -1 : 1) * 3.55;
+  const half = STAIR_RUN / 2;
+  return { axis, dir, across, u0: -dir * half, u1: dir * half };
+}
+/** Height of the tread under (x,z), or null when the point is off the stair.
+ *  The walk follows the ramp rather than the treads: the drawn steps are
+ *  0.2 m apart, and climbing them as steps means being bounced 0.2 m twenty-one
+ *  times, which reads as a fault rather than as a staircase. */
+export function stairHeight(st, x, z){
+  if (!st) return null;
+  const u = st.axis === 'x' ? x : z;
+  const v = st.axis === 'x' ? z : x;
+  if (Math.abs(v - st.across) > STAIR_W / 2) return null;
+  const t = (u - st.u0) / (st.u1 - st.u0);
+  if (t < 0) return null;
+  if (t <= 1) return STOREY * t;
+  /* The landing: flat, at the height of the floor above, for as long as it
+     takes a walk to *arrive* there rather than merely pass through the top of
+     the rise on its way off the end of the run. */
+  return (t - 1) * STAIR_RUN <= STAIR_LANDING ? STOREY : null;
+}
+/** The far end of the run, landing included, in run coordinates. */
+function stairTop(st){ return st.u1 + st.dir * STAIR_LANDING; }
+/** The rectangle cut through the floor above: {x0,z0,x1,z1}. Runs from the
+ *  point where a climber would otherwise meet the ceiling to the far edge of
+ *  the landing — so the landing is a piece of the floor above seen from
+ *  below, which is exactly what it is. */
+export function stairWell(st){
+  if (!st) return null;
+  const uw = st.u0 + (st.u1 - st.u0) * STAIR_WELL_FRAC;
+  const ue = stairTop(st);
+  const ua = Math.min(uw, ue), ub = Math.max(uw, ue);
+  const va = st.across - STAIR_W / 2 - STAIR_WELL_PAD;
+  const vb = st.across + STAIR_W / 2 + STAIR_WELL_PAD;
+  return st.axis === 'x' ? { x0: ua, x1: ub, z0: va, z1: vb }
+                         : { x0: va, x1: vb, z0: ua, z1: ub };
+}
+export { stairTop };
+/** Is (x,z) over the opening in this room's floor? */
+export function overWell(st, x, z){
+  const w = stairWell(st);
+  return !!w && x > w.x0 && x < w.x1 && z > w.z0 && z < w.z1;
 }
 
 /** The odds, in one place. Three specials at 1/64 each; the spawn room is
@@ -51,24 +131,32 @@ export function classifySpecial(roll){
   return SPECIAL.NONE;
 }
 
-/** What kind of room sits at (gx,gz), without building it. */
-export function specialAt(gx, gz){
-  if (gx === 0 && gz === 0) return SPECIAL.NONE;
-  return classifySpecial(mulberry32(h2(gx, gz, SALT_ROOM ^ WORLD_SEED))());
+/* Every stream the museum draws from is offset by the floor, and by exactly
+   nothing on the ground floor. That keeps `gy = 0` byte-identical to the
+   museum as it was — same specials, same doors, same works, same seeds — while
+   the storeys above it are genuinely different buildings rather than carbon
+   copies stacked on each other. */
+function floorSalt(base, gy){ return gy ? (base + Math.imul(gy, 0x85EBCA6B)) | 0 : base; }
+
+/** What kind of room sits at (gx,gz,gy), without building it. */
+export function specialAt(gx, gz, gy = 0){
+  if (gx === 0 && gz === 0 && !gy) return SPECIAL.NONE;
+  return classifySpecial(mulberry32(h2(gx, gz, floorSalt(SALT_ROOM ^ WORLD_SEED, gy)))());
 }
 
-export function getRoom(gx, gz){
-  const k = roomKey(gx, gz);
+export function getRoom(gx, gz, gy = 0){
+  gy = gy | 0;
+  const k = roomKey(gx, gz, gy);
   let r = rooms.get(k);
   if (r) return r;
-  const seed = h2(gx, gz, SALT_ROOM ^ WORLD_SEED);
+  const seed = h2(gx, gz, floorSalt(SALT_ROOM ^ WORLD_SEED, gy));
   const rnd = mulberry32(seed);
   /* draw unconditionally — the spawn room must consume it too, or every
      downstream value in its stream shifts */
   const sroll = rnd();
-  const special = (gx !== 0 || gz !== 0) ? classifySpecial(sroll) : SPECIAL.NONE;
+  const special = (gx !== 0 || gz !== 0 || gy) ? classifySpecial(sroll) : SPECIAL.NONE;
   r = {
-    gx, gz, seed, special,
+    gx, gz, gy, seed, special,
     doors: {                       // e:+x  w:−x  n:+z  s:−z
       e: edgeOpenX(gx, gz),
       w: edgeOpenX(gx - 1, gz),
@@ -82,7 +170,21 @@ export function getRoom(gx, gz){
     vao: null, vbo: null, ibo: null, nIdx: 0,
     colliders: [],                 // room-local {cx,cz,hx,hz}
   };
-  const ar = mulberry32(h2(gx, gz, SALT_ART ^ WORLD_SEED));
+  /* ————— the stair —————
+     Decided before the artworks are laid, because a room that holds a stair
+     gives up the wall segment the stair stands in front of. Its own stream,
+     never `ar`: one extra draw there would shift every work in the museum. */
+  r.stairUp = stairUpAt(gx, gz, gy);
+  r.stairDown = stairUpAt(gx, gz, gy - 1);
+  /* A run of steps and the well it comes up through must occupy the same
+     footprint, or the hole in this floor is not where the treads arrive. So
+     the plan is always keyed to the *lower* of the two rooms it joins.
+     A room can be both: steps coming up into it and steps going on up out of
+     it, which is a stairwell running the height of the building. */
+  if (r.stairUp) r.stairPlanUp = stairPlan(gx, gz, gy);
+  if (r.stairDown) r.stairPlanDown = stairPlan(gx, gz, gy - 1);
+  r.stair = r.stairPlanUp || null;
+  const ar = mulberry32(h2(gx, gz, floorSalt(SALT_ART ^ WORLD_SEED, gy)));
   r.mood = [(ar()-.5)*.02, (ar()-.5)*.016, (ar()-.5)*.02];
   genArtworks(r, ar);
   genLights(r, ar);
@@ -108,7 +210,7 @@ export function getRoom(gx, gz){
     else if (b2 < 0.20){
       /* Its own stream, so the sculpture's shape cannot lean on draws the
          bench question already spent. */
-      const sr = mulberry32(h2(gx, gz, 0x5C17 ^ WORLD_SEED));
+      const sr = mulberry32(h2(gx, gz, floorSalt(0x5C17 ^ WORLD_SEED, gy)));
       r.pedestal = { x: (b3-.5)*3, z: (b4-.5)*3,
                      kind: (sr()*4) | 0, tone: (sr()*3) | 0,
                      form: [sr(), sr(), sr()] };
@@ -116,7 +218,7 @@ export function getRoom(gx, gz){
       /* A standing figure on the floor — position from its own stream too,
          because b2 arrives here conditioned on being ≥ 0.20 and would pull
          every statue toward one side of its hall. */
-      const sr = mulberry32(h2(gx, gz, 0x57A7 ^ WORLD_SEED));
+      const sr = mulberry32(h2(gx, gz, floorSalt(0x57A7 ^ WORLD_SEED, gy)));
       r.statue = { x: (sr()-.5)*3, z: (sr()-.5)*3,
                    tone: (sr()*3) | 0, form: [sr(), sr(), sr(), sr()] };
     }
@@ -128,7 +230,7 @@ export function getRoom(gx, gz){
      glass and sunlight only materialise while the shutters are open */
   r.windows = [];
   if (r.special !== SPECIAL.DARKROOM){
-    const wr = mulberry32(h2(gx, gz, SALT_WIN ^ WORLD_SEED));
+    const wr = mulberry32(h2(gx, gz, floorSalt(SALT_WIN ^ WORLD_SEED, gy)));
     const walls = ['e','w','n','s'].filter(w => !r.doors[w]);
     for (let i = walls.length-1; i > 0; i--){
       const j = Math.floor(wr()*(i+1)); const t = walls[i]; walls[i] = walls[j]; walls[j] = t;
@@ -154,7 +256,7 @@ export function getRoom(gx, gz){
      punctuation in the sepia. Their own stream, never `ar`: one extra
      draw there would shift every artwork in the world. */
   if (!r.special){
-    const dr = mulberry32(h2(gx, gz, 0xDEC0 ^ WORLD_SEED));
+    const dr = mulberry32(h2(gx, gz, floorSalt(0xDEC0 ^ WORLD_SEED, gy)));
     r.plants = [];
     for (const [sx, sz] of [[1,1],[1,-1],[-1,1],[-1,-1]]){
       if (dr() < 0.28){

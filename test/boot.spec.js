@@ -69,33 +69,116 @@ test.describe('boot', () => {
     expect(r.rehang).toEqual({ placed: '0,0:0' });
   });
 
-  test('a shared gallery is walled in, and a shut door can be asked to open', async ({ page }) => {
+  /* The wall is for the people a gallery is *shown* to. The curator walks an
+     endless museum unless they ask otherwise — which is the whole correction
+     here, because the wing is sized to hold the works and a small collection
+     fits in one room, so closing the boundary by default sealed its owner
+     into a single box with every door built shut and no way out of it. */
+  test('a guest is walled in; the curator is not, unless they ask', async ({ page }) => {
     await boot(page);
     const r = await page.evaluate(() => {
       const D = window.DBG;
       const out = {};
-      out.endless = D.boundary();                      // nothing hangs yet
+      out.curatorDefault = D.boundary();               // endless, out of the box
       D.placeForTest('0,0:0', 'u1');
+      out.stillEndless = D.boundary();                 // and a hanging does not wall them in
       out.guest = D.guestWorldForTest(true);           // the shared-link visit
       out.sealedOrigin = D.sealed(0, 0);               // every door out is shut
       out.farRoom = D.inBounds(5, 5);
-      /* Back to being the curator: rooms opened by hand count again —
-         a guest's world ignores them, which is the point of the wall. */
       D.guestWorldForTest(false);
-      out.opened = D.openRoomForTest(1, 0);            // the plate's yes
+      /* The curator asking to see what a visitor sees. */
+      out.closed = D.boundary(true);
+      out.sealedAsCurator = D.sealed(0, 0);
+      out.opened = D.openRoomForTest(1, 0);            // the shut door's "yes"
       out.eastNow = D.sealed(0, 0);
-      /* And the switch reopens the endless museum. */
-      out.off = D.boundary(false);
+      out.off = D.boundary(false);                     // and back to halls without number
       return out;
     });
-    expect(r.endless.rooms).toBe(null);                // no hanging → no wall
+    expect(r.curatorDefault.rooms).toBe(null);
+    expect(r.curatorDefault.on).toBe(false);
+    expect(r.stillEndless.rooms).toBe(null);
     expect(r.guest.rooms).toBeGreaterThanOrEqual(1);
     expect(r.sealedOrigin).toEqual({ e: true, w: true, n: true, s: true });
     expect(r.farRoom).toBe(false);
+    expect(r.sealedAsCurator).toEqual({ e: true, w: true, n: true, s: true });
     expect(r.opened).toBe(true);
     expect(r.eastNow.e).toBe(false);                   // the new room's door stands open
-    expect(r.eastNow.n).toBe(true);
+    expect(r.eastNow.n).toBe(true);                    // the others are still shut
     expect(r.off.rooms).toBe(null);
+  });
+
+  /* ————— floors —————
+     The vertical axis is the one part of this world whose correctness is a
+     claim about three dimensions at once, so it is asserted rather than
+     looked at. Nothing here needs the gallery entered: the stair is world
+     data and the walk is stepped by hand. */
+  test('the entrance carries a stair, and it climbs a whole storey', async ({ page }) => {
+    await boot(page);
+    const r = await page.evaluate(() => {
+      const D = window.DBG;
+      const st = D.stair(0, 0, 0);
+      const p = st.planUp;
+      const at = (t) => {
+        const u = p.u0 + (p.u1 - p.u0) * t;
+        return D.ground(p.axis === 'x' ? u : p.across, p.axis === 'x' ? p.across : u);
+      };
+      return { up: st.up, down: st.down, built: st.builtUp,
+               foot: at(0), mid: at(0.5), head: at(1),
+               offToTheSide: D.ground(p.axis === 'x' ? 0 : p.across + 4,
+                                      p.axis === 'x' ? p.across + 4 : 0) };
+    });
+    expect(r.up).toBe(true);
+    expect(r.down).toBe(false);            // no basement under the front door
+    expect(r.built).toBe(true);
+    expect(r.foot).toBeCloseTo(0, 2);
+    expect(r.head).toBeGreaterThan(4.2);   // a storey is a ceiling plus its slab
+    expect(r.mid).toBeCloseTo(r.head / 2, 1);
+    expect(r.offToTheSide).toBe(0);        // beside the flight is plain floor
+  });
+
+  test('walking up a stair arrives on the floor above, and walking down returns', async ({ page }) => {
+    await boot(page);
+    const r = await page.evaluate(() => {
+      const D = window.DBG;
+      const up = D.climb(true, 10);
+      const landed = D.floor();
+      const down = D.climb(false, 10);
+      return { up, landed, down, back: D.floor() };
+    });
+    expect(r.up.to).toBeGreaterThan(r.up.from);        // they went up
+    expect(r.landed.py).toBeCloseTo(r.landed.ground, 1);  // and are standing on something
+    expect(r.down.to).toBeLessThan(r.down.from);       // and can come back
+  });
+
+  test('a frame key carries its floor, and the ground floor keeps the old shape', async ({ page }) => {
+    await boot(page);
+    const r = await page.evaluate(() => ({
+      ground: window.DBG.frameKeyForTest(3, -4, 0, 2),
+      upstairs: window.DBG.frameKeyForTest(3, -4, 2, 2),
+      basement: window.DBG.frameKeyForTest(3, -4, -1, 2),
+    }));
+    /* Every placement ever stored, and a database CHECK constraint, are on
+       the left-hand shape. It must not move. */
+    expect(r.ground).toBe('3,-4:2');
+    expect(r.upstairs).toBe('3,-4@2:2');
+    expect(r.basement).toBe('3,-4@-1:2');
+  });
+
+  test('a wing can be asked to go upward instead of outward', async ({ page }) => {
+    await boot(page);
+    const r = await page.evaluate(() => {
+      const flat = window.DBG.wingRoute(12, 1);
+      const tall = window.DBG.wingRoute(12, 3);
+      return { flatFloors: [...new Set(flat.map((c) => c[2]))],
+               tallFloors: [...new Set(tall.map((c) => c[2]))],
+               tallStartsEachFloorAtTheStair:
+                 tall.filter((c) => c[0] === 0 && c[1] === 0).map((c) => c[2]) };
+    });
+    expect(r.flatFloors).toEqual([0]);
+    expect(r.tallFloors).toEqual([0, 1, 2]);
+    /* Each storey's walk begins in the room with the stair, which is what
+       makes the three of them one gallery rather than three. */
+    expect(r.tallStartsEachFloorAtTheStair).toEqual([0, 1, 2]);
   });
 
   test('the wing sizer clamps and the route grows by whole rooms', async ({ page }) => {
