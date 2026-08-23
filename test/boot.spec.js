@@ -300,3 +300,156 @@ test.describe('boot', () => {
     expect(r.reset).toBe(0);
   });
 });
+
+/* ═══════════════════════════════════════════════════════════════════
+   The gallery plan, and the card at the door.
+   ═══════════════════════════════════════════════════════════════════ */
+test.describe('the gallery plan', () => {
+  const open = async (page) => {
+    await page.locator('#plan-btn').click();
+    await expect(page.locator('#plan')).toBeVisible();
+  };
+  /* How much of the drawing is drawn on. A canvas that silently produced
+     nothing is the failure this whole feature is one bad coordinate away from,
+     and it is invisible to every assertion about counts and captions. */
+  const inked = (page) => page.evaluate(() => {
+    const cv = document.getElementById('plan-cv');
+    const d = cv.getContext('2d').getImageData(0, 0, cv.width, cv.height).data;
+    let on = 0, n = 0;
+    for (let i = 3; i < d.length; i += 4 * 7){ n++; if (d[i] > 8) on++; }
+    return on / n;
+  });
+
+  test('draws the museum, and builds not one room to do it', async ({ page }) => {
+    /* The claim the module is built on: every line comes from the seed layer,
+       which is pure. If opening the plan — or flicking up two storeys and back
+       — meshes anything, the room cache grows, the evictor inherits halls
+       nobody stood in, and a plan of the fourth floor costs what walking to it
+       costs. */
+    await boot(page, '?q=0');
+    const before = await page.evaluate(() => window.DBG.stats().cached);
+    await open(page);
+    expect(await inked(page), 'the plan drew nothing at all').toBeGreaterThan(0.02);
+
+    await page.locator('#plan-up').click();
+    await page.locator('#plan-up').click();
+    await page.locator('#plan-down').click();
+    const after = await page.evaluate(() => window.DBG.stats().cached);
+    console.log(`    rooms cached: ${before} before the plan, ${after} after three storeys of it`);
+    expect(after, 'opening the plan built rooms').toBe(before);
+    expect(await inked(page), 'the storey above drew nothing').toBeGreaterThan(0.01);
+  });
+
+  test('looking at another storey does not take you to it', async ({ page }) => {
+    await boot(page, '?q=0');
+    const where = () => page.evaluate(() => window.DBG.stats().room.concat(window.DBG.stats().py));
+    await open(page);
+    const start = await where();
+    await page.locator('#plan-up').click();
+    expect(await page.locator('#plan-where').textContent()).toContain('above you');
+    expect(await where(), 'peeking at a storey moved the visitor').toEqual(start);
+    /* And stepping out puts the plan back on the floor you are standing on. */
+    await page.locator('#plan-close').click();
+    await open(page);
+    expect(await page.locator('#plan-where').textContent()).toContain('you are here');
+  });
+
+  test('a bounded gallery is framed whole, with its far walls shut', async ({ page }) => {
+    /* What a guest is handed at the door: not a window onto part of a
+       collection but the shape of all of it. */
+    await boot(page, '?q=0');
+    await page.evaluate(() => {
+      const D = window.DBG;
+      for (const [k, id] of [['0,0:0','a'], ['0,0:3','b'], ['1,0:1','c'], ['0,1:2','d']]){
+        D.loanForTest(id, 'Work ' + id, '');
+        D.hangForTest(k, id);
+      }
+      D.boundary(true);
+    });
+    await open(page);
+    const note = await page.locator('#plan-note').textContent();
+    console.log(`    ${note}`);
+    expect(note).toContain('4 works hanging');
+    /* Every hall of the gallery is inside the drawing — that is what "framed
+       whole" means, and it is the one property a fixed window cannot promise. */
+    const framed = await page.evaluate(() => {
+      const b = window.DBG.boundary();
+      return b.rooms;
+    });
+    expect(framed, 'the boundary did not close around the hanging').toBeGreaterThan(0);
+    expect(note).toContain(`${framed} hall`);
+    await page.evaluate(() => window.DBG.boundary(false));
+  });
+});
+
+test.describe('the card at the door', () => {
+  test('a panel opened at the door hands the cursor back, not the gallery',
+    async ({ page }) => {
+    /* Every plate calls tryPointerLock on the way out, and all of them can be
+       opened from the entrance card. Closing one there used to capture the
+       pointer into a museum nobody had entered — the cursor vanished, the card
+       stopped answering clicks, and the only way out was an Esc nothing had
+       mentioned. Asserted on the guide *and* the plan, because the bug was
+       written once and inherited twice. */
+    await boot(page, '?q=0');
+    for (const [open, close] of [['#help-btn', '#help-close'], ['#plan-btn', '#plan-close']]){
+      await page.locator(open).click();
+      await page.locator(close).click();
+      expect(await page.evaluate(() => !!document.pointerLockElement),
+             `${close} locked the pointer before the visitor had entered`).toBe(false);
+    }
+    /* And the card is still a card: the button it was covering answers. */
+    await expect(page.locator('#enter')).toBeEnabled();
+  });
+
+  const card = (page) => page.evaluate(() => ({
+    sub: document.getElementById('intro-sub').textContent,
+    hook: document.getElementById('intro-hook').textContent,
+    enter: document.getElementById('enter').textContent,
+    title: document.title,
+  }));
+
+  test('names the collection a shared link leads to', async ({ page }) => {
+    /* The defect: the entrance card is written for the endless museum, and a
+       guest at somebody's link got the same one — LUMIÈRE, The Endless
+       Gallery, and the promise that *no one else will ever see these works*,
+       printed to the one visitor who is looking at works somebody else chose
+       and sent them the key to. */
+    await boot(page, '?q=0');
+    expect((await card(page)).hook).toContain('No one else will ever see');
+
+    await page.evaluate(() => window.DBG.introForTest(
+      { mode: 'guest', slug: 'marguerite', works: 12, halls: 4 }));
+    const guest = await card(page);
+    console.log(`    ${guest.sub} — ${guest.title}`);
+    expect(guest.sub).toBe('The Collection of marguerite');
+    expect(guest.hook).toContain('12 works across 4 halls');
+    expect(guest.hook).not.toContain('No one else will ever see');
+    expect(guest.enter).toBe('Enter the collection');
+    expect(guest.title).toContain('marguerite');
+
+    /* A name nothing answers to is its own answer, and hands the visitor back
+       the museum they can have. */
+    await page.evaluate(() => window.DBG.introForTest({ mode: 'missing', slug: 'nobody' }));
+    const gone = await card(page);
+    expect(gone.sub).toBe('No such collection');
+    expect(gone.hook).toContain('nobody');
+    expect(gone.enter).toBe('Enter the gallery');
+  });
+
+  test('will not print a name that could not be a gallery', async ({ page }) => {
+    /* The slug arrives in a URL somebody else composed and is written straight
+       onto the first thing a visitor reads. textContent makes it inert; this
+       makes sure it is not even shown — a card reading "The Collection of
+       <img src=x onerror=...>" is not an attack, but it is not a museum
+       either. */
+    await boot(page, '?q=0');
+    await page.evaluate(() => window.DBG.introForTest(
+      { mode: 'guest', slug: '<img src=x onerror=alert(1)>', works: 1, halls: 1 }));
+    const c = await card(page);
+    expect(c.sub).not.toContain('<img');
+    expect(c.hook).not.toContain('<img');
+    expect(c.sub).toBe('The Collection of that name');
+    expect(await page.evaluate(() => document.querySelectorAll('#intro img').length)).toBe(0);
+  });
+});

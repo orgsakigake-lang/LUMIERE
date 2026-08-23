@@ -73,6 +73,7 @@ src/
     body.html          spliced into the template at build
     hint.js            flashHint
     touch.js           the three gestures: drag to look, the ring, tap
+    plan.js            the floor plan, drawn from the seed layer alone
 tools/
   scope.mjs            extraction helper — see below
   verify-sql.sh        runs supabase-setup.sql against Dockerised PostgreSQL
@@ -342,6 +343,63 @@ on the museum's height.
   `mulT` and `packLights`. The portal flood cannot reach them (its clip
   rectangles describe apertures in *walls*), so they are marked visible by a
   frustum test against their own box a storey up.
+
+## The plan
+
+`ui/plan.js` draws a storey. The one property everything else follows from:
+**it builds nothing.** Doors come from `edgeOpenX/Z`, stairs from `stairUpAt`
+and `stairPlan`, a hall's character from `specialAt`, its walls from
+`sealedAt` — all of them pure functions of the seed and the boundary. So the
+plan can draw halls nobody has walked, and a whole storey nobody is standing
+on, without meshing geometry, baking a shadow map, or putting a record in the
+room cache for the evictor to inherit. A test asserts it: `DBG.stats().cached`
+is identical before opening the plan and after flicking through three storeys
+of it.
+
+- **Sealing had to become answerable from coordinates.** `sealedWall(r, wall)`
+  needs a built room record; the plan has none, and needs the same answer.
+  `sealedAt(gx, gz, gy, wall)` is now the one implementation and `sealedWall`
+  delegates to it — rather than the plan carrying a second copy of the rule
+  that drifts the first time the boundary changes.
+- **Walls are filled rectangles, not strokes.** A wall between two halls is
+  0.48 m of a 14 m bay — 3.4% — so at plan scale it genuinely has thickness. It
+  is also what makes the plan legible: a doorway is 13% of a wall, and a 13%
+  break in a hairline is not a break anyone sees. Kept even and on integer
+  coordinates so edges land on whole pixels.
+- **What it withholds.** A hall's `specialAt` tint is painted only once the hall
+  is in `visited`. The shape of the building is what a plan is for; what is
+  hanging in the dark room is not.
+- **Bounded galleries are framed whole.** `planFrame` reads the extent of
+  `BOUNDS` on the storey and sizes the drawing to it. A guest is handed the
+  shape of the entire collection; the endless museum gets a travelling window
+  and a caption saying it carries on past every edge.
+- The compass and the scale bar are in the HTML caption, not the canvas. The
+  grid is sized to fill the page, so a compass rose inside it lands on
+  somebody's hall.
+
+## Arrival
+
+The entrance card is written for the endless museum, and a guest at a shared
+link used to get the same one — including *"no one else will ever see these
+works"*, printed to the one visitor looking at works somebody else chose and
+sent them the key to. `introVoice()` rewrites it.
+
+- It fires **twice**: once synchronously at boot from the slug in the URL, so
+  the door is labelled before the network has answered, and again when the
+  collection lands, with the counts.
+- The slug is somebody else's text. Everything goes through `textContent`, and
+  the name is additionally checked against `SLUG_SHAPE` at the display boundary
+  — not only at the URL, because a name also arrives in the backend's answer.
+  A name that could not be a gallery is printed as "that name".
+- `arrivalAnswered`, not `cloud.viewing`: a link naming a gallery that does not
+  exist has been answered too, and would otherwise sit for ever under a card
+  saying it was still fetching.
+
+The `<head>` carries Open Graph and Twitter-card tags and an inline SVG favicon.
+`preview.jpg` is a real frame of the museum, rendered at 1200x630 by the same
+headless pipeline the tests use and committed at the repo root. It is the one
+asset the page does not inline — an unfurler cannot read a data URI, and the
+page itself never fetches it, so `index.html` is still one request.
 
 ## Touch
 

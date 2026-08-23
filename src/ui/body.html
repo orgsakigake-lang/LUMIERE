@@ -9,6 +9,10 @@
      pills — reachable exactly when they are reaching for them. -->
 <div id="corner-nav">
   <button id="help-btn" type="button" title="the visitor’s guide — ?">?<span class="lbl">guide</span></button>
+  <!-- Drawn rather than typed, for the same reason the wall switches' dots are:
+       a floor-plan glyph does not exist in Georgia, and anything close falls
+       back to a system symbol font that shifts baseline on every OS. -->
+  <button id="plan-btn" type="button" title="the gallery plan — P"><svg viewBox="0 0 14 14" width="12" height="12" aria-hidden="true" focusable="false"><path d="M1.5 1.5h11v11h-11z"/><path d="M1.5 6.2h3.6M5.1 6.2v6.3M9.2 1.5v3.4M9.2 8.6h3.3"/></svg><span class="lbl">plan</span></button>
   <button id="back-btn" type="button" title="return to the entrance — Esc, once the cursor is free">←<span class="lbl">entrance</span></button>
 </div>
 
@@ -19,14 +23,14 @@
   <div id="hud-legend" class="show">
     <div class="by-key">
       <b>W A S D</b> walk<span>·</span><b>mouse</b> look<span>·</span><b>Space</b> jump<span>·</span><b>F</b> inspect<span>·</span><b>V</b>/<b>E</b> view larger<br>
-      <b>L</b> lights<span>·</span><b>O</b> shutters<span>·</span><b>T</b> theme<span>·</span><b>C</b> curator<span>·</span><b>M</b> sound<span>·</span><b>N</b> music<span>·</span><b>H</b>/<b>U</b> hang, take down
+      <b>P</b> plan<span>·</span><b>L</b> lights<span>·</span><b>O</b> shutters<span>·</span><b>T</b> theme<span>·</span><b>C</b> curator<span>·</span><b>M</b> sound<span>·</span><b>N</b> music<span>·</span><b>H</b>/<b>U</b> hang
     </div>
     <!-- The same gallery, said in gestures. Shown instead of the keys the
          moment a finger lands, because a phone visitor reading about W A S D
          is a phone visitor who thinks nothing works. -->
     <div class="by-touch">
       <b>drag</b> to look<span>·</span>the <b>ring</b> walks<span>·</span><b>tap</b> a work to see it larger<br>
-      the switches at the right<span>·</span><b>?</b> for the guide
+      the switches at the right<span>·</span><b>?</b> guide<span>·</span><b>plan</b> at the upper left
     </div>
     <div class="dismiss"><b>?</b> opens the full visitor’s guide</div>
   </div>
@@ -46,7 +50,7 @@
   </div>
 </div>
 
-<div class="plate" id="curator" hidden>
+<div class="plate" id="curator" hidden role="dialog" aria-label="The Curator’s Office">
   <div class="panel">
     <h2>The Curator’s Office</h2>
     <div class="sub" id="cur-state">locked</div>
@@ -143,7 +147,7 @@
   </div>
 </div>
 
-<div class="plate" id="help" hidden>
+<div class="plate" id="help" hidden role="dialog" aria-label="The visitor’s guide">
   <div class="panel">
     <h2>Visitor’s Guide</h2>
     <div class="sub">what this place is, and every key and switch in it</div>
@@ -159,6 +163,9 @@
         <div class="help-row"><b class="key">W A S D</b><span>walk the halls</span></div>
         <div class="help-row"><b class="key">Shift</b><span>run</span></div>
         <div class="help-row"><b class="key">Space</b><span>jump — again within half a second for a second step</span></div>
+        <div class="help-row"><b class="key">stairs</b><span>no key — walk up them. Roughly one hall in seven has a flight, and the entrance always does</span></div>
+        <div class="help-h">Finding your way</div>
+        <div class="help-row"><b class="key">P</b><span>the gallery plan — the halls around you drawn to scale, the doors, the stairs with an arrow up the run, and everywhere you have walked. <b class="key">↑</b> and <b class="key">↓</b> look at the storey above or below without climbing to it</span></div>
         <div class="help-h">Looking</div>
         <div class="help-row"><b class="key">mouse</b><span>look around — walking, running and jumping carry on while you do</span></div>
         <div class="help-row"><b class="key">Esc</b><span>free the cursor — press it again to step out to the entrance</span></div>
@@ -212,25 +219,57 @@
   </div>
 </div>
 
+<!-- ————— the gallery plan —————
+     Its own plate, like the guide: it holds the gallery still while you read
+     it, and hands the pointer back on the way out. -->
+<div class="plate" id="plan" hidden role="dialog" aria-labelledby="plan-title">
+  <div class="panel">
+    <h2 id="plan-title">The Gallery Plan</h2>
+    <div class="sub" id="plan-where">Ground floor</div>
+    <hr class="rule">
+    <canvas id="plan-cv" role="img" aria-label="A plan of this storey"></canvas>
+    <div id="plan-caption"><span><i class="tri up"></i>north</span><span id="plan-scale">one hall is 14 m</span></div>
+    <div id="plan-storeys">
+      <button class="btn plan-step" id="plan-up" type="button" title="the storey above — ↑"><i class="tri up"></i>up</button>
+      <span id="plan-storey">Ground floor</span>
+      <button class="btn plan-step" id="plan-down" type="button" title="the storey below — ↓"><i class="tri down"></i>down</button>
+    </div>
+    <div class="plan-key">
+      <span><i class="k k-seen"></i>walked</span>
+      <span><i class="k k-room"></i>not yet</span>
+      <span><i class="k k-shut"></i>shut door</span>
+      <span><i class="k k-stair"></i>stair, arrow up the run</span>
+      <span><i class="k k-work"></i>a work hangs</span>
+      <span><i class="k k-you"></i>you</span>
+    </div>
+    <div class="cur-note" id="plan-note"></div>
+    <div class="row"><button class="btn" id="plan-close">Return to the gallery</button></div>
+  </div>
+</div>
+
 <div class="plate" id="intro">
   <div class="card">
-    <div class="kicker">Open nightly · Admission free</div>
+    <!-- The default is the museum's own voice. A visitor arriving on somebody
+         else's link is arriving somewhere else, and introVoice() says so —
+         including that the line below about nobody else ever seeing these
+         works is, for them, exactly wrong. -->
+    <div class="kicker" id="intro-kicker">Open nightly · Admission free</div>
     <h1>LUMI<span class="dot">È</span>RE</h1>
-    <div class="kicker" style="letter-spacing:.5em">The Endless Gallery</div>
+    <div class="kicker" id="intro-sub" style="letter-spacing:.5em">The Endless Gallery</div>
     <hr class="rule">
-    <p class="hook">Every artwork here is painted into being the moment you approach it —
+    <p class="hook" id="intro-hook">Every artwork here is painted into being the moment you approach it —
       seeded, singular, unrepeatable. <em>No one else will ever see these works.</em></p>
     <button id="enter" autofocus>Enter the gallery</button>
     <div class="legend by-key">
       <b>W&thinsp;A&thinsp;S&thinsp;D</b> walk · <b>mouse</b> look · <b>Space</b> jump, twice ·
       <b>F</b> inspect · <b>V</b> view larger · <b>M</b> sound<br>
-      <b>L</b> lights · <b>O</b> shutters · <b>N</b> music · <b>C</b> curator
+      <b>P</b> plan · <b>L</b> lights · <b>O</b> shutters · <b>N</b> music · <b>C</b> curator
     </div>
     <div class="legend by-touch">
       <b>drag</b> to look · the <b>ring</b> walks<br>
       <b>tap</b> a work to see it larger
     </div>
-    <div class="fine">Wings without number · every visit hangs anew</div>
+    <div class="fine" id="intro-fine">Wings without number · every visit hangs anew</div>
     <div id="intro-note"></div>
   </div>
 </div>
@@ -244,7 +283,7 @@
 
 <!-- One question, two answers. Used wherever a room is about to exist:
      the shut boundary door, and the wing's + button. -->
-<div class="plate" id="confirm" hidden>
+<div class="plate" id="confirm" hidden role="dialog" aria-labelledby="confirm-title">
   <div class="panel">
     <h2 id="confirm-title">A new room</h2>
     <div class="sub" id="confirm-text"></div>

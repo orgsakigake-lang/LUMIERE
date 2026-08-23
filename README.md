@@ -56,6 +56,7 @@ Edge, or Firefox.
 | mouse | look — the cursor locks on entry, so moving the mouse looks while you walk, run and jump; `Esc` frees it, a click takes it back, and drag-look works whenever the cursor is free |
 | `Space` | jump · press again quickly mid-air for the double jump |
 | stairs | no key — walk up them. Roughly one room in seven has a flight; the entrance hall always does, on every floor |
+| `P` | the gallery plan — where you are, where you have walked, and where the stairs are |
 | `F` or right-click | inspect the work you face (glides the camera up to it, and prints its title and description) |
 | `V` or `E` | view larger — re-renders the work at 1024² beside its title and description, with an opt-in PNG |
 | `L` | the lamps — on/off (also a wall switch, bottom right) |
@@ -70,6 +71,35 @@ Edge, or Firefox.
 
 The wall switches at the lower right — lights, shutters, music, rain, curator —
 answer to touch as well as keys.
+
+## The gallery plan (`P`)
+
+An endless museum with storeys and no plan is a maze. `P` draws one: the halls
+around you to scale, the walls with their doorways as gaps, the shut doors of a
+bounded gallery boarded in red, every stair in its true footprint with an arrow
+up the run, a brass dot for each work hanging, and you — a wedge, pointing where
+you are looking. Halls you have walked are drawn in the darker line; the ones
+you have not are faint but there, because a plan shows the building.
+
+`↑` and `↓` look at the storey above or below **without climbing to it**, which
+is the fastest way to find out whether the way up is worth taking.
+
+Two things it deliberately will not do. It never says what a hall *is* — a
+vermilion room, the archive, the dark room — until you have stood in it: the
+shape of the building is public, what is in it is not. And it never builds
+anything: every line comes from the seed layer, which is pure, so the plan of a
+floor you have never visited costs one Canvas2D pass and no GL at all.
+
+A bounded gallery is framed **whole** rather than windowed — a guest at a shared
+link is handed the shape of the entire collection at the door. The endless
+museum gets a window that travels with you and says so.
+
+## Arriving on somebody's link
+
+A shared link is somebody else's front door, and the museum now says so at it:
+the card names *The Collection of <curator>*, counts the works and the halls,
+and the button reads **Enter the collection**. The browser tab and the link
+preview (Open Graph / Twitter card, with a rendered still of a hall) follow.
 
 ### On a phone
 

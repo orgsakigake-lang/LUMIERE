@@ -4,13 +4,39 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="color-scheme" content="dark">
+<meta name="theme-color" content="#0B0A08">
 <meta name="description" content="A first-person walk through an endless, procedurally generated art gallery. Every painting is painted into being the moment you approach it.">
 <title>LUMIÈRE — The Endless Gallery</title>
+<!-- Drawn here rather than fetched: a lit frame on a dark wall, inline, so the
+     page still arrives in exactly one request. -->
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' fill='%230B0A08'/><rect x='8.5' y='6.5' width='15' height='19' fill='%23191510' stroke='%23C9A96A' stroke-width='2'/><rect x='12' y='10' width='8' height='12' fill='%23EDE6D8'/></svg>">
+<!-- What the link looks like when somebody sends it on. A shared gallery is
+     the whole point of the cloud half of this thing, and until these existed a
+     curator's link unfurled in a chat window as a bare URL. -->
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="LUMIÈRE">
+<meta property="og:title" content="LUMIÈRE — The Endless Gallery">
+<meta property="og:description" content="A first-person walk through an endless art museum that paints itself. Every work is generated the moment you approach it, and no two visitors ever see the same one.">
+<meta property="og:url" content="https://orgsakigake-lang.github.io/LUMIERE/">
+<meta property="og:image" content="https://orgsakigake-lang.github.io/LUMIERE/preview.jpg">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:image:type" content="image/jpeg">
+<meta property="og:image:alt" content="A dim gallery hall lit by a chandelier, three framed paintings on its walls, and further halls through two doorways.">
+<meta name="twitter:card" content="summary_large_image">
 <style>
 @@CSS@@
 </style>
 </head>
 <body>
+<!-- The museum is a WebGL2 program; with scripting off it is a dark rectangle.
+     Say so, in its own voice, rather than leaving a blank page. -->
+<noscript><div style="position:fixed;inset:0;display:flex;align-items:center;justify-content:center;
+  background:#0B0A08;color:#A99F8C;font:italic 1rem/1.8 Georgia,serif;text-align:center;
+  padding:2rem;z-index:99"><div><div style="letter-spacing:.42em;text-transform:uppercase;
+  font-style:normal;font-size:.72rem">Closed this evening</div>
+  <p style="max-width:26rem">LUMIÈRE paints its halls as you walk them, which it needs
+  JavaScript to do. Switch it on for this page and the doors open.</p></div></div></noscript>
 @@BODY@@
 
 <script>

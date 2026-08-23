@@ -48,13 +48,19 @@ export let BOUNDS = null;         // Set of room keys | null = endless
 export function setBounds(s){ BOUNDS = s || null; }
 export function inBounds(gx, gz, gy = 0){ return !BOUNDS || BOUNDS.has(roomKey(gx, gz, gy)); }
 const SEAL_DIRS = { e: [1, 0], w: [-1, 0], n: [0, 1], s: [0, -1] };
+/** Does the boundary shut the doorway on this side of (gx,gz,gy)? Asked with
+ *  coordinates rather than a room record, because the gallery plan draws halls
+ *  that were never built and must still know which of their doors are walls. */
+export function sealedAt(gx, gz, gy, wall){
+  if (!BOUNDS) return false;
+  if (!BOUNDS.has(roomKey(gx, gz, gy))) return false;
+  const d = SEAL_DIRS[wall];
+  return !BOUNDS.has(roomKey(gx + d[0], gz + d[1], gy));
+}
 /** Is this open doorway built shut? Only doors leading *out* of the set seal,
  *  so a room reached by debug teleport still lets you walk back in. */
 export function sealedWall(r, wall){
-  if (!BOUNDS || !r.doors[wall]) return false;
-  if (!BOUNDS.has(roomKey(r.gx, r.gz, r.gy))) return false;
-  const d = SEAL_DIRS[wall];
-  return !BOUNDS.has(roomKey(r.gx + d[0], r.gz + d[1], r.gy));
+  return !!r.doors[wall] && sealedAt(r.gx, r.gz, r.gy, wall);
 }
 /** Is the stair out of this room built over? A floor beyond the boundary is
  *  reached the same way a hall beyond it is: it is not, and the opening that

@@ -18,6 +18,7 @@ import { mat4, perspective, mulM, mulT, viewMatrix, extractPlanes, boxVisible } 
 import { storageOK, persist, savePersist } from './persist.js';
 import { flashHint, toggleLegend } from './ui/hint.js';
 import { initTouch, touchWalk } from './ui/touch.js';
+import { drawPlan } from './ui/plan.js';
 import { audio, initAudio, footstep, toggleMute, setAudioActive, suspendAudio,
          cycleMusic, musicName, setMusic, randomMusic, PIECES,
          setRain, rainActive, rainSounding } from './audio.js';
@@ -793,6 +794,12 @@ addEventListener('keydown', (e)=>{
     if (e.key === 'Escape' || e.key === '?' || e.code === 'Slash') helpToggle(false);
     return;                              // the guide is open — the gallery holds still
   }
+  if (!document.getElementById('plan').hidden){
+    if (e.key === 'Escape' || e.code === 'KeyP') planToggle(false);
+    else if (e.code === 'ArrowUp') planStorey(1);
+    else if (e.code === 'ArrowDown') planStorey(-1);
+    return;                              // the plan is open — the gallery holds still
+  }
   if (!document.getElementById('curator').hidden){
     if (e.code === 'KeyC') curatorToggle();
     return;                              // panel is open — the gallery holds still
@@ -806,6 +813,7 @@ addEventListener('keydown', (e)=>{
   if (e.code === 'KeyL'){ setLights(!lightsOn); return; }
   if (e.code === 'KeyO'){ setShutters(!WIN.on); return; }
   if (e.code === 'KeyC'){ curatorToggle(); return; }
+  if (e.code === 'KeyP'){ planToggle(true); return; }
   if (e.code === 'KeyH'){ curatorHang(); return; }
   if (e.code === 'KeyU'){ curatorUnhang(); return; }
   if (e.code === 'KeyT'){ applyTheme(nextThemeName()); return; }
@@ -911,6 +919,15 @@ addEventListener('mousemove', (e)=>{
   player.pitch = Math.max(-1.5, Math.min(1.5, player.pitch - dy * sens));
 });
 function tryPointerLock(){
+  /* Not before they have walked in. Every panel hands the pointer back on the
+     way out — the office, the guide, the plan, the one-question plate — and
+     each of them can be opened from the entrance card, where there is no
+     gallery to look around and the cursor is still the visitor's. Closing the
+     guide at the front door used to capture it into a museum nobody had
+     entered: the cursor vanished, the card stopped answering, and the only way
+     out was an Esc nothing had told them to press. One guard here, rather than
+     the same condition written four times and forgotten on the fifth. */
+  if (!entered) return;
   /* unadjustedMovement is the better look, but on platforms without raw
      input the whole request rejects rather than degrading — which is how
      free-look silently never engaged and visitors were left click-dragging.
@@ -2485,6 +2502,129 @@ function helpToggle(force){
     p.hidden = true; canvas.focus(); tryPointerLock();
   }
 }
+/* ————— the gallery plan —————
+   Every line of it comes from the seed layer, which is pure, so opening the
+   plan builds nothing, lights nothing and caches nothing — which is what lets
+   it draw halls nobody has walked and a whole storey nobody is standing on.
+   See src/ui/plan.js. */
+let planFloor = 0;              // the storey being drawn, which need not be yours
+/* How much museum to draw. A bounded gallery has a definite shape and the plan
+   frames the whole of it — that *is* the plan, and a guest should be handed all
+   of it at the door. The endless museum has no shape to frame, so it gets a
+   window that travels with the visitor. */
+function planFrame(gy){
+  const wide = innerWidth >= 560;
+  let cx = player.gx, cz = player.gz, n = wide ? 11 : 9;
+  if (BOUNDS){
+    let x0 = Infinity, x1 = -Infinity, z0 = Infinity, z1 = -Infinity, any = false;
+    for (const k of BOUNDS){
+      const c = parseRoomKey(k);
+      if (!c || c.gy !== gy) continue;
+      any = true;
+      if (c.gx < x0) x0 = c.gx;  if (c.gx > x1) x1 = c.gx;
+      if (c.gz < z0) z0 = c.gz;  if (c.gz > z1) z1 = c.gz;
+    }
+    if (any){
+      cx = Math.round((x0 + x1) / 2); cz = Math.round((z0 + z1) / 2);
+      /* Two halls of margin, so the far wall is visibly a wall and not the
+         edge of the paper. Square, because the cells are. */
+      n = Math.max(5, Math.min(wide ? 15 : 11,
+                               Math.max(x1 - x0, z1 - z0) + 3));
+    }
+  }
+  if (!(n & 1)) n++;            // odd, so the drawing has a middle
+  return { cx, cz, cols: n, rows: n };
+}
+/** Does this storey have anything on it to draw? */
+function planHasFloor(gy){
+  if (!BOUNDS) return true;     // halls without number, in every direction
+  for (const k of BOUNDS){
+    const c = parseRoomKey(k);
+    if (c && c.gy === gy) return true;
+  }
+  return false;
+}
+function planRender(){
+  const cv = document.getElementById('plan-cv');
+  if (!cv || document.getElementById('plan').hidden) return;
+  const dpr = Math.min(devicePixelRatio || 1, 2);
+  const w = Math.max(160, cv.clientWidth), h = Math.max(160, cv.clientHeight);
+  const bw = Math.round(w * dpr), bh = Math.round(h * dpr);
+  if (cv.width !== bw || cv.height !== bh){ cv.width = bw; cv.height = bh; }
+
+  /* One dot per work, per hall. Live placements only — a row whose image is
+     gone is not a work, on the wall or on the plan. */
+  const loans = new Map();
+  for (const k of livePlacements().keys()){
+    const rk = k.slice(0, k.lastIndexOf(':'));
+    loans.set(rk, (loans.get(rk) | 0) + 1);
+  }
+  const info = drawPlan(cv, {
+    ...planFrame(planFloor), gy: planFloor, dpr, visited, loans,
+    you: { gx: player.gx, gz: player.gz, gy: player.gy,
+           x: player.x, z: player.z, yaw: player.yaw },
+  });
+
+  const name = (gy) => gy === 0 ? 'Ground floor'
+    : gy > 0 ? ordinal(gy) + ' floor' : ordinal(-gy) + ' basement';
+  document.getElementById('plan-storey').textContent = name(planFloor);
+  const away = planFloor - player.gy;
+  document.getElementById('plan-where').textContent = away === 0
+    ? name(planFloor) + ' · you are here'
+    : name(planFloor) + ` · ${Math.abs(away)} storey${Math.abs(away) === 1 ? '' : 's'} `
+      + (away > 0 ? 'above you' : 'below you');
+  document.getElementById('plan-up').disabled = !planHasFloor(planFloor + 1);
+  document.getElementById('plan-down').disabled = !planHasFloor(planFloor - 1);
+
+  const halls = BOUNDS ? info.halls : null;
+  const summary =
+    (halls === null
+      ? `${info.seen} hall${info.seen === 1 ? '' : 's'} walked on this storey — `
+        + 'the museum carries on past every edge of this drawing'
+      : `${halls} hall${halls === 1 ? '' : 's'}, ${info.seen} walked`)
+    + (info.works ? ` · ${info.works} work${info.works === 1 ? '' : 's'} hanging` : '');
+  document.getElementById('plan-note').textContent = summary;
+  /* The drawing is the whole content of this panel and a canvas has none, so
+     the summary is also what it is called. */
+  document.getElementById('plan-cv').setAttribute('aria-label',
+    `Plan of the ${name(planFloor).toLowerCase()}. ` + summary);
+  /* A guest is looking at a plan of somebody's collection, not of the museum,
+     and the heading should be the same one the entrance card used. */
+  document.getElementById('plan-title').textContent =
+    cloud.viewing ? 'The Collection of ' + cloud.viewing.slug : 'The Gallery Plan';
+}
+function planToggle(force){
+  const p = document.getElementById('plan');
+  const show = force === undefined ? p.hidden : force;
+  if (show){
+    /* One plate at a time — the others hold the keyboard. */
+    if (!document.getElementById('modal').hidden
+        || !document.getElementById('curator').hidden
+        || !document.getElementById('confirm').hidden
+        || !document.getElementById('help').hidden) return;
+    planFloor = player.gy;
+    p.hidden = false; releaseInput(); releasePointer(); inspectOff();
+    /* After it is shown, never before: a hidden element has no width to size
+       the backing store from, and a zero-wide canvas draws nothing at all. */
+    planRender();
+  } else {
+    p.hidden = true; canvas.focus(); tryPointerLock();
+  }
+}
+function planStorey(d){
+  if (!planHasFloor(planFloor + d)) return;
+  planFloor += d;
+  planRender();
+}
+document.getElementById('plan-btn').addEventListener('click', () => planToggle(true));
+document.getElementById('plan-close').addEventListener('click', () => planToggle(false));
+document.getElementById('plan-up').addEventListener('click', () => planStorey(1));
+document.getElementById('plan-down').addEventListener('click', () => planStorey(-1));
+document.getElementById('plan').addEventListener('click', (e) => {
+  if (e.target === e.currentTarget) planToggle(false);
+});
+addEventListener('resize', () => planRender());
+
 document.getElementById('help-btn').addEventListener('click', () => helpToggle(true));
 document.getElementById('help-close').addEventListener('click', () => helpToggle(false));
 /* Click past the panel to return — the enlarged view already behaves this way. */
@@ -2982,6 +3122,7 @@ async function bootCloud(){
     const placed = spawnAtCollection(live);
     const halls = new Set([...live.keys()].map((k) => k.split(':')[0])).size;
     const n = live.size;
+    introVoice({ mode: 'guest', slug: data.slug, works: n, halls });
     flashHint(placed
       ? 'you are walking <b>' + data.slug + '</b>’s gallery — ' + n + ' work' + (n===1?'':'s')
         + ' across ' + halls + ' hall' + (halls===1?'':'s') + ', and the doors end where the hanging does'
@@ -2990,6 +3131,7 @@ async function bootCloud(){
   } else if (mode === 'missing'){
     guestWorld = true;                     // a dead link still is not an invitation to roam
     applyBounds();
+    introVoice({ mode: 'missing', slug: (data && data.slug) || arrivingAt() || 'that name' });
     flashHint('no gallery answers to that name');
   } else if (mode === 'unreachable'){
     /* Not the same as 'missing'. The seeded museum is entirely local, so this
@@ -3963,6 +4105,9 @@ window.DBG = {
     if (where) curator.placements.set(where, id);
     return { uploads: curator.uploads.size, placed: !!where };
   },
+  /** Drive the entrance card without a backend, so what a visitor at somebody
+   *  else's link is greeted with can be tested at all. */
+  introForTest(state){ introVoice(state); return document.getElementById('intro-hook').textContent; },
   /** Choose a work, as clicking its thumbnail in the office does. Hanging is
    *  gated on there being a selection, so without this the touch pill and the
    *  H key can only ever be tested as far as their refusal. */
@@ -4488,12 +4633,88 @@ canvas.addEventListener('webglcontextrestored', ()=>{
   ensureBuilt(); syncArtJobs(); refreshNear();
 });
 
+/* ————— arriving somewhere —————
+   The entrance card is written for the endless museum, and for eleven months
+   it was the card a guest at somebody's shared link got too: LUMIÈRE, The
+   Endless Gallery, and the promise that *no one else will ever see these
+   works* — printed to the one visitor who is looking at works somebody else
+   chose, hung, and sent them the key to. The single most important moment in
+   the whole sharing feature was greeting people with a sentence about it that
+   was false.
+
+   So the card knows where it is. It says so the instant the page loads, from
+   the name in the URL, long before the network has answered; and it says how
+   large the collection is once it knows. */
+const SLUG_SHAPE = /^[a-z0-9][a-z0-9-]{0,31}$/;
+/* Whether the question "whose gallery is this" has been answered yet. Not
+   `cloud.viewing`: a link naming a gallery that does not exist is answered
+   too, and would otherwise sit under a card saying it was still fetching. */
+let arrivalAnswered = false;
+/** The gallery this visit is a guest of, if any — read from the URL, not from
+ *  the network, so the door can be labelled before the collection arrives.
+ *  Anything that is not slug-shaped could not name a gallery, and is ignored
+ *  rather than printed: the card must never render a stranger's text. */
+function arrivingAt(){
+  try {
+    const q = new URLSearchParams(location.search).get('gallery');
+    const slug = (q || '').toLowerCase();
+    return SLUG_SHAPE.test(slug) ? slug : null;
+  } catch(e){ return null; }
+}
+/* Every one of these is written with textContent. The slug came out of a URL
+   somebody else composed, and the entrance card is not the place to find out
+   what happens when it contains markup. */
+function introVoice(state){
+  const set = (id, text) => { const el = document.getElementById(id); if (el) el.textContent = text; };
+  /* Checked here as well as at the URL, because a name can also arrive from
+     the backend's answer, and this is the boundary where it becomes something
+     a person reads. textContent already makes it inert; this keeps it from
+     being ugly as well. */
+  const slug = SLUG_SHAPE.test(state.slug || '') ? state.slug : 'that name';
+  arrivalAnswered = state.works !== undefined || state.mode === 'missing';
+  if (state.mode === 'missing'){
+    set('intro-kicker', 'Admission free');
+    set('enter', 'Enter the gallery');
+    set('intro-sub', 'No such collection');
+    set('intro-hook', `No gallery answers to the name ${slug}. Beyond this door is the endless `
+      + `museum instead — its halls are laid as you walk them, and every painting in it is `
+      + `made the moment you approach.`);
+    set('intro-fine', 'Wings without number · every visit hangs anew');
+    document.title = 'No such collection · LUMIÈRE';
+    return;
+  }
+  set('intro-kicker', 'A private collection · Admission free');
+  set('intro-sub', 'The Collection of ' + slug);
+  set('enter', 'Enter the collection');
+  set('intro-fine', 'Curated by ' + slug);
+  document.title = `${slug}’s collection · LUMIÈRE`;
+  if (state.works === undefined){
+    set('intro-hook', `You have been handed the key to ${slug}’s gallery. Every work in it was `
+      + `chosen and hung by hand.`);
+  } else if (!state.works){
+    set('intro-hook', `${slug} has not hung anything yet. The halls are here; the walls are bare.`);
+  } else {
+    const w = state.works, h = state.halls;
+    set('intro-hook', `${w} work${w === 1 ? '' : 's'} across ${h} hall${h === 1 ? '' : 's'}, `
+      + `chosen and hung by hand. You walk exactly the rooms ${slug} curated — the doors end `
+      + `where the hanging does.`);
+  }
+}
+{
+  const slug = arrivingAt();
+  if (slug) introVoice({ mode: 'guest', slug });
+}
+
 const introEl = document.getElementById('intro');
 {
   const noteEl = document.getElementById('intro-note');
   const noteTimer = setInterval(() => {
     if (introEl.hidden){ clearInterval(noteTimer); return; }
     const g = artState.jobs.size;
+    /* A guest is waiting on a network round trip, not on a painter, and saying
+       "the first wing is being hung" while fetching somebody's collection is
+       counting the wrong thing at them. */
+    if (arrivingAt() && !arrivalAnswered){ noteEl.textContent = 'fetching the collection…'; return; }
     noteEl.textContent =
       g > 0 ? `the first wing is being hung · ${g} work${g===1?'':'s'} remain` :
       (storageOK && persist.visits > 1 ? `the gallery remembers you · visit ${persist.visits}`
