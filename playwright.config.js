@@ -1,4 +1,5 @@
 import { defineConfig, devices } from '@playwright/test';
+import { cpus } from 'node:os';
 
 /* The determinism hashes are Canvas2D pixel hashes. They are stable across
    reloads within one origin but NOT across origins or GPU paths, so every
@@ -17,16 +18,30 @@ export default defineConfig({
      run in parallel — every worker would have re-run the same serial group.
      Files are the unit Playwright can actually spread.
 
-     Four, not eight. Every worker drives its own software-rendered browser and
-     SwiftShader spreads rasterisation across all cores by itself, so past
-     about half the cores they stop overlapping and start competing.
+     Half the *physical* cores, and no more than four. Every worker drives its
+     own software-rendered browser and SwiftShader spreads rasterisation across
+     all cores by itself, so past about half of them the workers stop
+     overlapping and start competing.
+
+     A quarter of `os.cpus().length`, because that counts logical CPUs and all
+     the hardware this runs on is two threads to a core — the divisor is the
+     hyperthreading, not a fudge factor.
+
+     This used to be the constant 4, written on a machine with cores to spare,
+     and it survived because five spec files never quite filled it. A sixth did:
+     on a four-core laptop that is sixteen render threads on four cores, and
+     what it produced was not a slow suite but three *timeouts* — a boot that
+     takes 15 s alone did not finish inside 240. Both renderer tests and the
+     whole light group failed together and every one of them passed
+     one-at-a-time, which is the signature. Derived, so the number is right on
+     the machine it runs on rather than on the one it was written on.
 
      `inside the gallery` is the long pole, so it is two files rather than one:
      the ~15s entry is paid twice to halve a group that had grown to most of
      the run. Both stay `serial` internally — they share one page, which is the
-     whole reason entering is affordable. */
+     whole reason entering is affordable, and `in one hand` does the same. */
   fullyParallel: false,
-  workers: process.env.CI ? 2 : 4,
+  workers: process.env.CI ? 2 : Math.max(2, Math.min(4, Math.round(cpus().length / 4))),
   reporter: [['list']],
   /* Headless CI runs on SwiftShader, where entering the gallery (25 room
      meshes + the first wing of artwork) costs ~12s at 720x405 and ~32s at

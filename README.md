@@ -71,6 +71,30 @@ Edge, or Firefox.
 The wall switches at the lower right — lights, shutters, music, rain, curator —
 answer to touch as well as keys.
 
+### On a phone
+
+A shared gallery is a link somebody sends you, and a link gets opened on a
+phone. There is no cursor to lock and no `W` to hold, so the museum answers to
+three gestures and no more:
+
+| gesture | action |
+|---|---|
+| drag anywhere | look around |
+| the ring, lower left | walk — analogue, so a half lean is a stroll and a full one the ordinary pace |
+| tap | see the work you face, larger |
+| tap the ring | jump |
+
+Everything else on a phone is a switch you can already press. When the office
+is unlocked, a **hang here** pill appears under the reticle whenever you face a
+frame — the `H` and `U` keys, for a hand that has neither.
+
+The layout follows: the corner readouts stack under the nav, the wall switches
+become a column at the right, and the notices lift clear of the ring. The
+quality dial also opens a tier lower on a touch device — a phone reports eight
+cores and has the GPU of a phone, so core count argues for full quality on
+exactly the hardware least able to hold it. It climbs back within seconds on a
+tablet that can take it.
+
 ## Themes
 
 A theme is not a colour swap — it is the whole room agreeing to serve one kind

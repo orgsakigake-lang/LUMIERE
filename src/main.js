@@ -17,6 +17,7 @@ import { ALGO_NAMES, ALGOS, makeTitle, finishArt, resetGrain,
 import { mat4, perspective, mulM, mulT, viewMatrix, extractPlanes, boxVisible } from './render/mat4.js';
 import { storageOK, persist, savePersist } from './persist.js';
 import { flashHint, toggleLegend } from './ui/hint.js';
+import { initTouch, touchWalk } from './ui/touch.js';
 import { audio, initAudio, footstep, toggleMute, setAudioActive, suspendAudio,
          cycleMusic, musicName, setMusic, randomMusic, PIECES,
          setRain, rainActive, rainSounding } from './audio.js';
@@ -758,12 +759,13 @@ function evict(){
 /* ————— §8 Controls & collision ————— */
 const keys = new Set();
 let entered = false, locked = false, dragging = false, lastMX = 0, lastMY = 0;
+let finger = null;                    // the touch layer, once it is wired
 
 /* Drop every held key and any in-progress drag. Anything that steals focus —
    the Curator's Office, a modal — calls this rather than reaching in and
    assigning `dragging` itself, which is how a walk key stayed stuck down
    behind an open panel. */
-function releaseInput(){ keys.clear(); dragging = false; }
+function releaseInput(){ keys.clear(); dragging = false; if (finger) finger.release(); }
 
 addEventListener('keydown', (e)=>{
   if (e.repeat) return;
@@ -846,8 +848,33 @@ addEventListener('keyup', (e)=>{ keys.delete(e.code); });
 addEventListener('blur', ()=>{ keys.clear(); dragging = false; });
 
 let unlockHinted = false;
+/* ————— the warp —————
+   Locking the pointer moves the cursor to the middle of the screen, and the
+   browser reports that move like any other: one `mousemove` carrying the whole
+   distance from wherever the visitor last had it. Measured entering from the
+   centred entrance button: a single event of movementX −359, which at this
+   sensitivity is 45° of yaw nobody asked for, delivered at the exact instant
+   they walk in.
+
+   Whether it lands at all is a race between two browser events. If the warp
+   arrives before `pointerlockchange`, `locked` is still false and the handler
+   below already ignores it; if it arrives after, the view spins. Under a loaded
+   machine the second ordering is the common one — it turned up as a museum
+   facing 45° off in a test that had nothing to do with looking, and would turn
+   up for a visitor as an occasional lurch on entry.
+
+   So: for one report after the lock engages, a jump this large is read as the
+   warp and discarded. Not simply "the first report" — a locked pointer emits a
+   steady stream of zero-delta moves, and any of those would have spent the
+   guard before the warp arrived. Non-zero, and over 80 px in a single event:
+   the observed warp was 426, while a fast flick at 60 Hz is about 25 px a
+   report, so nothing a hand can do in the quarter-second after clicking gets
+   near it. A genuine small movement passes straight through and disarms it. */
+let warpPending = false;
+const WARP_PX = 80;
 document.addEventListener('pointerlockchange', ()=>{
   locked = document.pointerLockElement === canvas;
+  if (locked) warpPending = true;
   document.body.classList.toggle('locked', locked);
   /* The first time the cursor comes free in the open gallery, say what it is
      now for — once. Not when a panel took the pointer on purpose: the office,
@@ -870,7 +897,13 @@ addEventListener('mouseup', ()=>{ dragging = false; });
 addEventListener('mousemove', (e)=>{
   if (!entered || inspect.on) return;
   let dx = 0, dy = 0;
-  if (locked){ dx = e.movementX; dy = e.movementY; }
+  if (locked){
+    if (warpPending && (e.movementX || e.movementY)){
+      warpPending = false;
+      if (Math.hypot(e.movementX, e.movementY) > WARP_PX) return;   // the jump to centre
+    }
+    dx = e.movementX; dy = e.movementY;
+  }
   else if (dragging){ dx = e.clientX - lastMX; dy = e.clientY - lastMY; lastMX = e.clientX; lastMY = e.clientY; }
   else return;
   const sens = locked ? 0.0022 : 0.0034;
@@ -900,6 +933,23 @@ function releasePointer(){
   try { if (document.pointerLockElement) document.exitPointerLock(); } catch(e){}
 }
 canvas.addEventListener('click', ()=>{ if (entered && !locked) tryPointerLock(); });
+
+/* ————— the same gallery, in a thumb —————
+   Every panel here takes the pointer for itself and holds the gallery
+   still, so the walk must be deaf while one is open — otherwise a scroll
+   through the collection is also a stroll into a wall. */
+const panelsClosed = () => document.getElementById('modal').hidden
+  && document.getElementById('help').hidden
+  && document.getElementById('curator').hidden
+  && document.getElementById('confirm').hidden;
+finger = initTouch(canvas, {
+  active: () => entered && !inspect.on && panelsClosed(),
+  /* A tap is how a phone asks to see something. viewWork says so itself
+     when there is nothing under the reticle, which is how the gesture
+     teaches itself on the first try. */
+  tap: () => viewWork(),
+  jump: () => doJump(),
+});
 
 /* collider gather: 3×3 rooms → anchor-local AABBs (preallocated).
    192, not 128: the potted plants brought each room to ~13 boxes and nine
@@ -1062,9 +1112,22 @@ function step(dt){
   if (keys.has('KeyS')) { mx -= fwdX; mz -= fwdZ; }
   if (keys.has('KeyD')) { mx += rgtX; mz += rgtZ; }
   if (keys.has('KeyA')) { mx -= rgtX; mz -= rgtZ; }
+  /* The ring, when a thumb is on it. Screen space through the same basis the
+     keys use: up the glass is forward, right is a sidestep. */
+  if (touchWalk.on){
+    mx += rgtX * touchWalk.x - fwdX * touchWalk.z;
+    mz += rgtZ * touchWalk.x - fwdZ * touchWalk.z;
+  }
   let mlen = Math.hypot(mx, mz);
   const speed = (keys.has('ShiftLeft') || keys.has('ShiftRight')) ? 3.6 : 2.0;
-  if (mlen > 0){ mx = mx/mlen*speed; mz = mz/mlen*speed; }
+  /* Analogue, so a ring leaned half way walks at half pace — a thumb has no
+     Shift and a museum is not walked at one speed. A key is all or nothing and
+     always measures at least 1, so `min` leaves the keyboard path arithmetically
+     identical to what it was. */
+  if (mlen > 0){
+    const gain = Math.min(1, mlen) * speed / mlen;
+    mx *= gain; mz *= gain;
+  }
   if (auto.on){
     if (!auto.wp) autoPick();
     const ax = (auto.wp.gx - player.gx)*S + auto.wp.ox - player.x;
@@ -2957,10 +3020,30 @@ let stalled = false, badRuns = 0, goodRuns = 0;
 const tierBlock   = [0, 0, 0];
 const tierPenalty = [30_000, 30_000, 30_000];
 let lastFaced = null, aimEl = null;
+/* ————— H and U, for a hand that has neither —————
+   A phone visitor who unlocks the office can add works to a collection and
+   then has no key to hang any of them with — an invitation into a dead end.
+   The pill is that key: same gate, same two functions, same hints. It says
+   nothing to anyone the office is shut to, which is nearly everyone. */
+let hangEl = null, hangState = '';
+function hangPill(A){
+  if (!document.body.classList.contains('touch')) return;   // a keyboard has H
+  const open = !cloud.viewing && !guestWorld && (curator.unlocked || !!cloud.sess);
+  const state = (A && open) ? (A.overrideKey ? 'down' : 'up') : '';
+  if (state === hangState) return;
+  hangState = state;
+  const el = hangEl || (hangEl = document.getElementById('hang-btn'));
+  if (!el) return;
+  el.hidden = !state;
+  if (state) el.textContent = state === 'down' ? 'take it down' : 'hang here';
+}
 /* The yaw the paint queue was last ordered against. */
 let lastSyncYaw = 0;
 let shadowsOn = true;
 let probeRequest = null, rafId = 0, forceDt = null;
+/* Set only by DBG.pause, and read at all three points the loop re-arms
+   itself. The gallery never pauses itself. */
+let loopPaused = false;
 const probeBuf = new Uint8Array(32*32*4);
 
 let acqModalEl = null;
@@ -3186,7 +3269,7 @@ function frame(t){
   if (!gl) return;
   if (gl.isContextLost()){
     cancelAnimationFrame(rafId);
-    rafId = requestAnimationFrame(frame);
+    if (!loopPaused) rafId = requestAnimationFrame(frame);
     return;
   }
   resize();
@@ -3198,7 +3281,7 @@ function frame(t){
   if (!acqModalHidden()){
     lastT = t;
     cancelAnimationFrame(rafId);
-    rafId = requestAnimationFrame(frame);
+    if (!loopPaused) rafId = requestAnimationFrame(frame);
     return;
   }
 
@@ -3245,6 +3328,7 @@ function frame(t){
       const dot = aimEl || (aimEl = document.getElementById('aim'));
       if (dot) dot.classList.toggle('live', !!now);
     }
+    hangPill(now);
   }
 
   const usePost = post.on;
@@ -3775,7 +3859,7 @@ function frame(t){
     probeRequest = null;
   }
   cancelAnimationFrame(rafId);          // manual DBG.frame steps must not fork the chain
-  rafId = requestAnimationFrame(frame);
+  if (!loopPaused) rafId = requestAnimationFrame(frame);
 }
 
 /* ————— §12 DBG hooks (quiet; for scripted verification) ————— */
@@ -3835,6 +3919,11 @@ window.DBG = {
     return {
       room: [player.gx, player.gz],
       pos: [+player.x.toFixed(2), +player.z.toFixed(2)],
+      /* Frame-count independent, which distance is not: a scripted test steps
+         frames by hand while the real loop keeps running between round trips,
+         so "how far did they get" is contaminated and "how fast are they
+         going" is not. */
+      vel: +Math.hypot(player.vx, player.vz).toFixed(3),
       py: +player.py.toFixed(2), jumps: player.jumps,
       lights: lightsOn, shutters: WIN.on,
       yaw: +player.yaw.toFixed(2),
@@ -3874,6 +3963,10 @@ window.DBG = {
     if (where) curator.placements.set(where, id);
     return { uploads: curator.uploads.size, placed: !!where };
   },
+  /** Choose a work, as clicking its thumbnail in the office does. Hanging is
+   *  gated on there being a selection, so without this the touch pill and the
+   *  H key can only ever be tested as far as their refusal. */
+  selectForTest(id){ curator.sel = id || null; return curator.sel; },
   /** The single writer both captions go through, exposed so a test can prove
    *  the wall label and the enlarged view render a description identically. */
   fillCaptionForTest(root, d){ fillCaption(root, d); return true; },
@@ -4116,6 +4209,27 @@ if (DBG_FULL) Object.assign(window.DBG, {
     forceDt = null;
     return { stepped: n, avgMs: +(acc/n).toFixed(2), maxMs: +mx.toFixed(1), worstFrame: worst };
   },
+  /** Stop the real animation loop, leaving DBG.frame the only thing that
+   *  steps the gallery.
+   *
+   *  For scripted verification, where the loop running on its own is not
+   *  background noise but the measurement. Two ways it lies: distance walked
+   *  counts frames the script did not ask for, and — the reason this exists —
+   *  on a software rasteriser a frame costs hundreds of milliseconds, so two
+   *  input events dispatched back to back arrive 667 ms apart and a *tap*
+   *  registers as a long press. Pause the loop and the same two events land
+   *  4 ms apart, which is what a thumb actually does. */
+  pause(on = true){
+    loopPaused = !!on;
+    cancelAnimationFrame(rafId);
+    if (!loopPaused) rafId = requestAnimationFrame(frame);
+    return loopPaused;
+  },
+  /** What the thumb on the ring is asking for, before the walk acts on it:
+   *  a screen-space vector with the dead zone already rescaled away. The one
+   *  place the touch mapping can be checked exactly. */
+  ring(){ return { on: touchWalk.on, x: +touchWalk.x.toFixed(3), z: +touchWalk.z.toFixed(3),
+                   mag: +Math.hypot(touchWalk.x, touchWalk.z).toFixed(3) }; },
   autopilot(on = true){
     auto.on = !!on;
     if (auto.on){ auto.wp = null; inspectOff(); }
@@ -4392,6 +4506,12 @@ document.getElementById('enter').addEventListener('click', ()=>{
   document.body.classList.add('entered');
   introEl.style.transition = REDUCED ? 'none' : 'opacity 1.1s ease';
   introEl.style.opacity = '0';
+  /* Deaf on the way out. For the 1.1 s of the fade the plate was still a
+     full-screen click target sitting invisibly over the gallery: a first
+     drag-look in that window went to the entrance card, and on a phone — where
+     entering and reaching for the glass is one continuous motion — that is the
+     ordinary case rather than an edge one. */
+  introEl.style.pointerEvents = 'none';
   setTimeout(()=>{ introEl.hidden = true; }, REDUCED ? 0 : 1100);
   canvas.focus();
   tryPointerLock();          // inside the gesture; drag-look if it declines
@@ -4406,12 +4526,23 @@ function leaveGallery(){
   releaseInput();
   if (inspect.on) inspectOff();
   entered = false; setAudioActive(false); suspendAudio();
+  /* hangPill only runs while `entered`, so without this the last thing it was
+     told stays on screen behind the entrance card. */
+  hangPill(null);
   document.body.classList.remove('entered');
   document.getElementById('intro-note').textContent = 'the halls remain as you left them';
   introEl.hidden = false;
+  introEl.style.pointerEvents = '';      // it takes the clicks again
   requestAnimationFrame(()=>{ introEl.style.opacity = '1'; });
 }
 document.getElementById('back-btn').addEventListener('click', leaveGallery);
+/* Deliberately reads the frame *now* rather than the one the pill was drawn
+   for: the two are the same unless the visitor turned away mid-tap, and if
+   they did, acting on what they are facing is the honest answer. */
+document.getElementById('hang-btn').addEventListener('click', () => {
+  const A = inspect.on ? inspect.A : (facedArtwork() || {}).A;
+  if (A && A.overrideKey) curatorUnhang(); else curatorHang();
+});
 
 if (gl){
   initPrograms();

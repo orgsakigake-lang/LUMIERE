@@ -12,10 +12,24 @@
     --brass:#C9A96A; --brass-faint:rgba(201,169,106,.38);
     --serif: Georgia, 'Iowan Old Style', 'Palatino Linotype', 'Times New Roman', serif;
   }
-  html,body{height:100%;}
-  body{margin:0; background:var(--ink); color:var(--bone); font-family:var(--serif); overflow:hidden;}
-  #gl{position:fixed; inset:0; width:100%; height:100%; display:block; outline:none; cursor:crosshair;}
+  html,body{height:100%; overscroll-behavior:none;}
+  body{margin:0; background:var(--ink); color:var(--bone); font-family:var(--serif); overflow:hidden;
+       -webkit-tap-highlight-color:transparent;}
+  /* touch-action:none on the canvas and nowhere else. It is what stops the
+     double-tap zoom, the pinch and the pull-to-refresh from firing on top of
+     a walk — and scoping it here rather than to <body> leaves the guide and
+     the office scrollable, which they have to be on a phone. */
+  #gl{position:fixed; inset:0; width:100%; height:100%; display:block; outline:none; cursor:crosshair;
+      touch-action:none;}
   body.locked #gl{cursor:none;}
+  body.touch #gl{cursor:default;}
+
+  /* Two voices for the same instructions. Nothing about the keyboard stops
+     working when a finger arrives — the swap is about what a visitor is told
+     to try first. */
+  .by-touch{display:none;}
+  body.touch .by-touch{display:block;}
+  body.touch .by-key{display:none;}
 
   /* `hidden` has to outrank the display rules further down. .row{display:flex}
      was silently beating the UA sheet, which leaked the six-digit OTP field
@@ -200,6 +214,45 @@
   .sw:focus-visible{outline:none; color:var(--bone);
                     box-shadow:0 -2px 0 0 var(--brass-faint) inset;}
 
+  /* ——— the walking ring ———
+     Present only once a finger has landed. Deliberately faint and deliberately
+     always there: a control that appears when you touch where it is cannot be
+     found by anyone who does not already know it is there. */
+  #stick{position:fixed; left:1.4rem; bottom:1.4rem; width:6.6rem; height:6.6rem;
+         border-radius:50%; border:1px solid rgba(201,169,106,.2);
+         background:radial-gradient(circle, rgba(20,17,13,.42), rgba(20,17,13,.14) 68%, transparent);
+         pointer-events:auto; touch-action:none; z-index:8; display:none;
+         transition:border-color .3s ease, background-color .3s ease;}
+  body.touch #stick{display:block;}
+  #stick.live{border-color:rgba(201,169,106,.52);}
+  #stick-knob{position:absolute; left:50%; top:50%; width:2.4rem; height:2.4rem;
+              margin:-1.2rem 0 0 -1.2rem; border-radius:50%;
+              border:1px solid rgba(201,169,106,.42); background:rgba(201,169,106,.13);
+              transition:background-color .25s ease;}
+  #stick.live #stick-knob{background:rgba(201,169,106,.28);}
+  /* The reticle is the tap target on a phone, so it stops being a hint and
+     starts being a control. */
+  body.touch.entered #aim{opacity:.6;}
+  /* Under the reticle: it acts on whatever the reticle is on, and saying so by
+     position costs no words. Never shown to a visitor who has no office open —
+     the same gate H answers to. */
+  #hang-btn{position:fixed; left:50%; top:calc(50% + 2.4rem); transform:translateX(-50%);
+            pointer-events:auto; z-index:8; cursor:pointer;
+            background:rgba(20,17,13,.72); border:1px solid rgba(201,169,106,.45);
+            border-radius:1.1rem; padding:.5rem 1.2rem; font-family:var(--serif);
+            font-size:.62rem; letter-spacing:.26em; text-transform:uppercase;
+            color:var(--brass); transition:border-color .3s ease, color .3s ease;}
+  #hang-btn:active{background:var(--brass); color:var(--ink);}
+  body:not(.touch) #hang-btn{display:none;}
+
+  /* Whatever the width: the ring owns the lower left, so everything that used
+     to live along the bottom edge lifts above it. A landscape phone is 851 px
+     wide and would clear any width-only breakpoint with the legend printed
+     straight through the ring. */
+  body.touch #hud-toast{bottom:8.6rem; white-space:normal; max-width:min(88vw, 34rem);}
+  body.touch #hud-legend{bottom:10.6rem;}
+  body.touch #lt{bottom:9rem;}
+
   /* ——— the one-question plate ——— */
   #confirm{z-index:18; cursor:default;}
   #confirm .panel{width:min(88vw, 30rem); background:#14110D;
@@ -352,6 +405,41 @@
   .cur-note{margin-top:1.2rem; font-size:.62rem; letter-spacing:.18em; text-transform:uppercase;
             color:rgba(169,159,140,.55); line-height:2;}
   .key{color:var(--brass); font-weight:400;}
+
+  /* ——— a screen held in one hand ———
+     Everything above is laid out for a desktop's four corners, and on a 393 px
+     phone three of those corners collide: "Wing 0 · Hall 0" printed through
+     "1 room · 6 works", and the five wall switches ran off both edges of the
+     glass at once. The corners become a stack and the switches a column.
+
+     Two conditions, because a phone turned sideways is 851 x 393 — all the
+     width in the world and no height at all — and it is the same layout
+     problem either way. */
+  @media (max-width:34rem), (max-height:30rem){
+    .card{padding:2.2rem 1.3rem;}
+    .hook{font-size:.94rem;}
+    .legend{margin-top:1.8rem; font-size:.66rem; letter-spacing:.12em;}
+    .hud-corner{font-size:.6rem; letter-spacing:.16em;}
+    /* Under the corner nav rather than beside it: on a phone the pointer is
+       never locked, so those buttons are always the wide labelled pills and
+       there is no room left on that line for anywhere the visitor might be. */
+    #hud-loc, body.entered:not(.locked) #hud-loc{left:1.2rem; top:4.1rem;}
+    #hud-stat{left:1.2rem; right:auto; top:5.5rem; text-align:left;}
+    #switches{right:1.1rem; bottom:1.2rem; flex-direction:column;
+              align-items:flex-end; gap:.85rem;}
+    #hud-legend{font-size:.6rem; letter-spacing:.14em; max-width:90vw;}
+    #lt{max-width:92vw;}
+    #lt .t{font-size:1.1rem;}
+    #modal img, #modal img:not([src]){max-width:88vw; max-height:52vh;}
+    #curator .panel, #help .panel{padding:1.6rem 1.2rem; max-height:88vh;}
+    #curator input:not([type=file]){width:100%; box-sizing:border-box;}
+    /* Four columns of review controls do not survive a phone. Stack them. */
+    .rv-row{grid-template-columns:3.4rem 1fr; gap:.55rem;}
+    .rv-row img{width:3.4rem; height:3.4rem;}
+    .rv-side{grid-column:1 / -1;}
+    .rv-nm, .rv-or{grid-column:1 / -1;}
+    #cur-grid{grid-template-columns:repeat(auto-fill, minmax(5.6rem, 1fr)); gap:.7rem;}
+  }
 
   @media (prefers-reduced-motion: reduce){
     *{transition:none !important;}

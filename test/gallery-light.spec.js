@@ -17,11 +17,34 @@ test.describe.serial('inside the gallery — light and loans', () => {
        on what the camera happens to be pointed at. Whole-frame statistics are
        what tell you the lamps did something, so the darkness check uses those
        and luma is left to carry the daylight comparison. */
-    const luma = async () => {
+    /* Both readings step until they stop moving, rather than assuming twelve
+       frames is enough. Working the shutters calls rebuildRooms(), which drops
+       every room's mesh, and the rebuild is budgeted in *milliseconds per
+       frame* — so how much of the museum has its windows back after a fixed
+       number of frames is a question about how loaded the machine is, not
+       about the museum. Measured here: `day` read 90.2 with the suite to
+       itself and 38.7 under a full run, the same room caught at two different
+       stages of coming back, and the second one failed an assertion about
+       daylight that has nothing to do with meshing.
+
+       Capped at eight rounds. The comment on DBG.histogram is right that
+       stepping hundreds of frames will kill a software rasteriser; in practice
+       this settles in two or three. */
+    const settle = async (read) => {
+      let prev = null, cur = null;
+      for (let i = 0; i < 8; i++){
+        cur = await read();
+        const now = typeof cur === 'number' ? cur : cur.mean;
+        if (prev !== null && Math.abs(now - prev) <= Math.max(0.2, Math.abs(now) * 0.005)) break;
+        prev = now;
+      }
+      return cur;
+    };
+    const luma = () => settle(async () => {
       await page.evaluate(() => window.DBG.frame(12, 16.7));
       return page.evaluate(() => window.DBG.luma());
-    };
-    const frame = async () => page.evaluate(() => window.DBG.histogram(12));
+    });
+    const frame = () => settle(() => page.evaluate(() => window.DBG.histogram(12)));
 
     const lit = await luma(), litH = await frame();
     expect(lit).toBeGreaterThan(0);

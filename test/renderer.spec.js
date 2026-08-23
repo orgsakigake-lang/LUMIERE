@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test';
-import { boot, enter, hashes, WORKS, ROOMS, ENTER_MS } from './helpers.js';
+import { boot, hashes } from './helpers.js';
 
 test.describe('the renderer', () => {
   /* `antialias: true` was set on the context for months and did nothing,
@@ -103,12 +103,18 @@ test.describe('the renderer', () => {
 
        So: reserve two, cap three. The invariant underneath both moves is the
        one asserted last — the pool never takes the whole machine. */
+    /* Four boots, and deliberately no `enter`. The pool is already up by the
+       time DBG exists — the first wing starts being painted at the door, which
+       is what the entrance card's "N works remain" is counting — so entering
+       four times was buying nothing and costing four 30-second walks through
+       it. This was the most expensive test in the suite and the one that timed
+       out under load; without the entries the four cases take about six
+       seconds between them. */
     for (const [cores, want] of [[4, 2], [8, 3], [2, 1], [16, 3]]){
       await page.addInitScript((n) => {
         Object.defineProperty(navigator, 'hardwareConcurrency', { get: () => n, configurable: true });
       }, cores);
       await boot(page);
-      await enter(page);
       await page.evaluate(() => window.DBG.frame(4, 16.7));
       const n = await page.evaluate(() => window.DBG.stats().painters);
       console.log(`    ${cores} cores → ${n} painter(s)`);

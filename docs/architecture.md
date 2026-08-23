@@ -72,6 +72,7 @@ src/
     styles.css         spliced into the template at build
     body.html          spliced into the template at build
     hint.js            flashHint
+    touch.js           the three gestures: drag to look, the ring, tap
 tools/
   scope.mjs            extraction helper — see below
   verify-sql.sh        runs supabase-setup.sql against Dockerised PostgreSQL
@@ -342,6 +343,46 @@ on the museum's height.
   rectangles describe apertures in *walls*), so they are marked visible by a
   frustum test against their own box a storey up.
 
+## Touch
+
+`ui/touch.js` is the whole of it. Three gestures — drag to look, an analogue
+ring in the lower left to walk, tap to open the work you face — and no fourth.
+
+- **It installs unconditionally.** A laptop with a touchscreen is an ordinary
+  machine, so asking `(pointer: coarse)` at boot and deciding once for the
+  session would have been wrong for it. The listeners always exist; `body.touch`
+  is added the moment a finger actually lands (and at boot when the pointer is
+  coarse, so a phone reads the right instructions rather than discovering the
+  wrong ones do not work). Nothing here runs on a machine nobody touches:
+  `touchWalk.on` is false and the walk reads zeroes.
+- **The walk joins the keyboard path rather than forking it.** `step()` adds the
+  ring's screen-space vector through the same basis `W A S D` use, then scales
+  by `min(1, |m|)`. A key always measures at least 1, so the keyboard path is
+  arithmetically what it was; the ring, at magnitude ≤ 1, is analogue for free.
+  The dead zone is rescaled away rather than merely cut out, so the first
+  millimetre of travel is a first step and not a lurch to a fifth of pace.
+- **Touches are dispatched by identifier**, with move and end on the window. A
+  touch belongs to whatever it started on for as long as it lasts, which is what
+  makes walking with one thumb while looking with the other the ordinary case.
+- **`touch-action: none` is on the canvas and nowhere else** — enough to stop
+  double-tap zoom, pinch and pull-to-refresh from firing on top of a walk, and
+  narrow enough to leave the guide and the office scrollable, which on a phone
+  they have to be.
+- **Curating needs a key a phone has not got.** Hanging is `H` and taking down
+  is `U`, so a phone visitor could unlock the office, add works from the photo
+  picker, and then find no way to place any of them — an invitation into a dead
+  end. `#hang-btn` is that key: a pill under the reticle, calling the same two
+  functions through the same gate, shown only on touch and only to someone the
+  office is actually open to. It re-decides itself from `facedArtwork()` every
+  eighth frame, alongside the reticle, and caches its own state so it touches
+  the DOM only when the answer changes.
+- **Testing it needs `DBG.pause`.** Under a software rasteriser a frame costs
+  hundreds of milliseconds, so two CDP input events dispatched back to back land
+  667 ms apart and a *tap* registers as a long press. Stopping the rAF chain puts
+  them 4 ms apart. For the same reason `test/touch.spec.js` asserts velocity and
+  `DBG.ring()`, never distance walked: distance counts frames the script did not
+  ask for, and read 2.87 m for one second of a 2.0 m/s walk.
+
 ## Extracting more from main.js
 
 Run the scope tool first, always:
@@ -385,7 +426,7 @@ a tree.
 
 ## Testing
 
-`test/lumiere.spec.js` drives the app through `window.DBG`, which exposes a
+`test/` drives the app through `window.DBG`, which exposes a
 deliberate test surface: `DBG.frame(n, dtMs)` steps frames synchronously with an
 injectable delta and works in hidden tabs where rAF is paused, and
 `DBG.artHash(gx,gz,i)` runs a generator to completion and hashes the pixels.
@@ -421,3 +462,27 @@ about 12 seconds at 720×405 and 32 at 720p. Hence the small viewport, the 150s
 timeout, and one shared page for the in-gallery group. Nothing waits for the art
 queue to drain — the 3.5 ms/frame generation budget never empties it under
 software rendering.
+
+**And it is slow enough to change what an input event means.** A frame under the
+software rasteriser costs hundreds of milliseconds, so two CDP input events
+dispatched back to back arrive 667 ms apart in page time — long enough that a
+*tap* is judged a long press and nothing opens. `DBG.pause(true)` stops the rAF
+chain, and the same two events then land 4 ms apart. For the same reason nothing
+in `touch.spec.js` measures distance walked: the loop keeps running between the
+round trips a scripted test is made of, and it read 2.87 m for one second of a
+2.0 m/s walk. Velocity (`DBG.stats().vel`) and the ring's own vector
+(`DBG.ring()`) are both independent of how many frames went by.
+
+**The worker count is derived, not chosen.** A quarter of `os.cpus().length`,
+capped at four — that is half the physical cores on anything hyperthreaded.
+Four was a constant that had been right on a bigger machine and survived because
+five spec files never quite filled it; a sixth turned it into three timeouts on
+a four-core laptop, all of which passed one-at-a-time.
+
+**Playwright's `tap()` is not always the way to tap.** Its hit-target check
+reports the canvas as the interceptor for the touch pill, at a point that
+`document.elementFromPoint` gives to the pill and that the browser itself
+delivers to the pill — verified by listening: `pointerdown`, `touchstart`,
+`mousedown` and `click` all arrive on `#hang-btn`, and the gallery answers
+correctly. `touch.spec.js` dispatches touches over CDP and asserts what is under
+the finger itself, which is the part that was ever worth asserting anyway.

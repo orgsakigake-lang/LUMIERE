@@ -47,7 +47,14 @@ const pinned = /[?&]q=([0-2])\b/.exec(location.search);
    machine that happens to have four cores is back at full quality within a
    few seconds. Guessing low costs some sharpness briefly; guessing high costs
    the first thing anyone sees. */
-const startQ = (navigator.hardwareConcurrency || 8) <= 4 ? 1 : 2;
+/* A phone reports eight cores and has the GPU of a phone, so core count is
+   worse than useless there — it argues for full quality on exactly the
+   hardware least able to hold it, and a 3x display asks for the pixels to
+   prove it. A coarse pointer is the one signal that reliably means "battery,
+   thermal limit, tile-based GPU". Same ratchet as everywhere else: a fast
+   tablet climbs back to full within seconds. */
+const coarse = typeof matchMedia !== 'undefined' && matchMedia('(pointer: coarse)').matches;
+const startQ = coarse || (navigator.hardwareConcurrency || 8) <= 4 ? 1 : 2;
 
 export const PERF = { q: pinned ? +pinned[1] : startQ, lastChange: 0, pinned: !!pinned };
 

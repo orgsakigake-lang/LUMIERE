@@ -17,10 +17,26 @@
   <div class="hud-corner" id="hud-stat">1 room</div>
   <div class="hud-corner" id="hud-toast"></div>
   <div id="hud-legend" class="show">
-    <b>W A S D</b> walk<span>·</span><b>mouse</b> look<span>·</span><b>Space</b> jump<span>·</span><b>F</b> inspect<span>·</span><b>V</b>/<b>E</b> view larger<br>
-    <b>L</b> lights<span>·</span><b>O</b> shutters<span>·</span><b>T</b> theme<span>·</span><b>C</b> curator<span>·</span><b>M</b> sound<span>·</span><b>N</b> music<span>·</span><b>H</b>/<b>U</b> hang, take down
+    <div class="by-key">
+      <b>W A S D</b> walk<span>·</span><b>mouse</b> look<span>·</span><b>Space</b> jump<span>·</span><b>F</b> inspect<span>·</span><b>V</b>/<b>E</b> view larger<br>
+      <b>L</b> lights<span>·</span><b>O</b> shutters<span>·</span><b>T</b> theme<span>·</span><b>C</b> curator<span>·</span><b>M</b> sound<span>·</span><b>N</b> music<span>·</span><b>H</b>/<b>U</b> hang, take down
+    </div>
+    <!-- The same gallery, said in gestures. Shown instead of the keys the
+         moment a finger lands, because a phone visitor reading about W A S D
+         is a phone visitor who thinks nothing works. -->
+    <div class="by-touch">
+      <b>drag</b> to look<span>·</span>the <b>ring</b> walks<span>·</span><b>tap</b> a work to see it larger<br>
+      the switches at the right<span>·</span><b>?</b> for the guide
+    </div>
     <div class="dismiss"><b>?</b> opens the full visitor’s guide</div>
   </div>
+  <!-- The walking ring. In #hud so it fades in with everything else when the
+       visitor enters, and out again at the entrance. -->
+  <div id="stick" aria-hidden="true"><div id="stick-knob"></div></div>
+  <!-- H and U, for a hand that has neither. Under the reticle, because what it
+       acts on is whatever the reticle is on; shown only on touch, and only
+       once the office is open to this visitor. -->
+  <button id="hang-btn" type="button" hidden>hang here</button>
   <div id="switches">
     <button class="sw on" id="sw-lights" title="L">lights</button>
     <button class="sw" id="sw-shutters" title="O">shutters</button>
@@ -176,6 +192,16 @@
           nothing multiplies behind their backs. Close the boundary in the office to stand
           in the same walls a visitor does; a shut door then asks before any new room is
           born, and opening the switch again gives you back the halls without number.</span></div>
+        <div class="help-h by-touch">By hand</div>
+        <div class="help-row by-touch"><span>On a phone or a tablet there is no cursor to lock,
+          so the museum answers to three gestures and no more: <b class="key">drag</b> anywhere
+          to look around, lean the <b class="key">ring</b> at the lower left to walk — the
+          further you lean it the quicker you go — and <b class="key">tap</b> a work to see it
+          larger. A tap on the ring itself is a jump. Everything else is a switch you can
+          already press — and once the office is open to you, a
+          <b class="key">hang here</b> pill appears under the reticle whenever you face a
+          frame, which is <b class="key">H</b> and <b class="key">U</b> for a hand that has
+          neither.</span></div>
       </div>
     </div>
     <div class="cur-note">The switches at the lower right — lights, shutters, music, rain, curator —
@@ -195,10 +221,14 @@
     <p class="hook">Every artwork here is painted into being the moment you approach it —
       seeded, singular, unrepeatable. <em>No one else will ever see these works.</em></p>
     <button id="enter" autofocus>Enter the gallery</button>
-    <div class="legend">
+    <div class="legend by-key">
       <b>W&thinsp;A&thinsp;S&thinsp;D</b> walk · <b>mouse</b> look · <b>Space</b> jump, twice ·
       <b>F</b> inspect · <b>V</b> view larger · <b>M</b> sound<br>
       <b>L</b> lights · <b>O</b> shutters · <b>N</b> music · <b>C</b> curator
+    </div>
+    <div class="legend by-touch">
+      <b>drag</b> to look · the <b>ring</b> walks<br>
+      <b>tap</b> a work to see it larger
     </div>
     <div class="fine">Wings without number · every visit hangs anew</div>
     <div id="intro-note"></div>
