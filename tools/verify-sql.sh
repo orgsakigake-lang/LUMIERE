@@ -144,7 +144,13 @@ check "visitor cannot steal a slug"      0 "$(rows_changed "update public.profil
 check "visitor cannot hang in your wing" f "$(try_insert "public.placements (owner,k,upload_id) values ('$OWNER','5,5:1','aaaaaaaa-0000-0000-0000-000000000001')" $VISITOR)"
 check "visitor cannot remove your file"  0 "$(rows_changed "delete from storage.objects where bucket_id='loans'" $VISITOR)"
 check "visitor cannot overwrite a file"  0 "$(rows_changed "update storage.objects set name='x.jpg' where bucket_id='loans'" $VISITOR)"
-check "the owner still can rehang"       1 "$(rows_changed "update public.placements set k='3,-4:2' where owner='$OWNER'" $OWNER)"
+# Scoped to one row, and to a key nothing else holds. `placements` is keyed
+# (owner, k), and this used to move *every* row the owner had to the same key —
+# which was fine while they had exactly one and became a primary-key violation
+# the moment the floors checks above started leaving two more behind. The check
+# is about whether an owner may move their own work; it should not also be a
+# statement about how many works the script happens to have hung by now.
+check "the owner still can rehang"       1 "$(rows_changed "update public.placements set k='9,9:0' where owner='$OWNER' and k='3,-4:2'" $OWNER)"
 
 # ————— what a work says —————
 # `note` holds the description shown beside a work. It arrived after some
