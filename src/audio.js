@@ -69,7 +69,7 @@ function makeHall(ctx){
 }
 
 export function initAudio(){
-  if (audio.ctx){ audio.ctx.resume().catch(()=>{}); return; }
+  if (audio.ctx){ audio.ctx.resume().catch(()=>{}); startSchedulers(); return; }
   try {
     const AC = window.AudioContext || window.webkitAudioContext;
     if (!AC) return;
@@ -189,11 +189,19 @@ export function initAudio(){
 
     audio.ok = true;
     startPiece(audio.piece);
-    setInterval(noteScheduler, 120);        // lookahead scheduler
-    setInterval(murmurScheduler, 250);
-    setInterval(rainScheduler, 150);
+    startSchedulers();
     if (audio.rainOn) startRain();          // asked for before the context existed
   } catch(e){ /* a silent museum is still a museum */ }
+}
+
+// Audio has its own clock; a hidden or inactive visit owes no scheduler work.
+let schedulerTimers = [];
+function startSchedulers(){
+  if (schedulerTimers.length || !audio.ok || !audio.active || audio.muted || document.hidden) return;
+  schedulerTimers = [setInterval(noteScheduler, 120), setInterval(murmurScheduler, 250), setInterval(rainScheduler, 150)];
+}
+function stopSchedulers(){
+  schedulerTimers.forEach(clearInterval); schedulerTimers = [];
 }
 
 /* ————— the pad —————
@@ -532,19 +540,24 @@ export function setRain(on){
 
 document.addEventListener('visibilitychange', () => {
   if (!audio.ctx) return;
-  if (document.hidden) audio.ctx.suspend().catch(()=>{});
-  else if (audio.active && !audio.muted) audio.ctx.resume().catch(()=>{});
+  if (document.hidden) suspendAudio();
+  else if (audio.active && !audio.muted) initAudio();
 });
 export function toggleMute(){
   if (!audio.ok){ flashHint('this browser keeps the museum silent'); return; }
   audio.muted = !audio.muted;
   audio.master.gain.value = audio.muted ? 0 : 0.9;
+  if (audio.muted) suspendAudio();
+  else if (audio.active) initAudio();
   flashHint(audio.muted ? 'sound off' : 'sound on');
 }
 
 /** The visitor has entered (or left); gates audio resume on tab focus. */
-export function setAudioActive(v){ audio.active = !!v; }
+export function setAudioActive(v){
+  audio.active = !!v;
+  if (audio.active) startSchedulers(); else suspendAudio();
+}
 
 /** Stepping back out to the entrance — the hall falls silent until the next
     entry, when initAudio's resume picks everything up where it left off. */
-export function suspendAudio(){ if (audio.ctx) audio.ctx.suspend().catch(()=>{}); }
+export function suspendAudio(){ stopSchedulers(); if (audio.ctx) audio.ctx.suspend().catch(()=>{}); }

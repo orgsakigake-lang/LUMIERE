@@ -10,7 +10,7 @@ name: ci
 
 on:
   push:
-    branches: [main, next-level]
+    branches: [main, next-level, 'feat/**']
   pull_request:
   workflow_dispatch:
 
@@ -46,9 +46,18 @@ jobs:
         with: { node-version: '22', cache: npm }
       - run: npm ci
       - run: npx playwright install --with-deps chromium
+      - run: npm run typecheck
+      - run: npm run test:unit
       # The suite renders on SwiftShader, which is slow but real: it has caught
       # every module-extraction mistake so far, usually on the boot test.
       - run: npm test
+      - run: npm run test:curated
+      - run: npm run build:site
+      - uses: actions/upload-artifact@v4
+        with:
+          name: gallery-site
+          path: site/
+          retention-days: 7
       - uses: actions/upload-artifact@v4
         if: failure()
         with:

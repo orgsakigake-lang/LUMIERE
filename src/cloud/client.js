@@ -12,7 +12,8 @@
    write is guarded server-side by row level security. When unconfigured
    the whole module stays dormant and the gallery is purely local.
    ═══════════════════════════════════════════════════════════════════ */
-import { CLOUD_URL, CLOUD_KEY } from '../config.js';
+import { CLOUD_URL, CLOUD_KEY, PRIVATE_SHARING } from '../config.js';
+import { galleryLink, SLUG_SHAPE } from './gallery-link.js';
 
 export const cloud = (() => {
   let url = CLOUD_URL, key = CLOUD_KEY;
@@ -20,8 +21,8 @@ export const cloud = (() => {
     const o = JSON.parse(localStorage.getItem('lumiere_cloud') || 'null');
     if (o && o.url && o.key){ url = o.url; key = o.key; }
   } catch(e){}
-  return { url: url.replace(/\/+$/, ''), key, on: !!(url && key),
-           sess: null, viewing: null, slug: null, published: false };
+  return { url: url.replace(/\/+$/, ''), key, on: !!(url && key), privateSharing: PRIVATE_SHARING,
+           sess: null, viewing: null, slug: null, published: false, shareToken: null, shareLink: null };
 })();
 
 /* Injection seam. cfetch used to close over the global fetch, which made the
@@ -54,6 +55,7 @@ async function cloudRefresh(){
   try {
     rs = await _fetch(cloud.url + '/auth/v1/token?grant_type=refresh_token', {
       method: 'POST',
+      signal: AbortSignal.timeout(15000),
       headers: { apikey: cloud.key, 'Content-Type': 'application/json' },
       body: JSON.stringify({ refresh_token: cloud.sess.refresh_token }),
     });
@@ -86,7 +88,8 @@ async function cfetch(path, opts = {}, retry = true){
     apikey: cloud.key,
     Authorization: 'Bearer ' + (cloud.sess ? cloud.sess.access_token : cloud.key),
   }, opts.headers || {});
-  const rs = await _fetch(cloud.url + path, Object.assign({}, opts, { headers }));
+  const signal = opts.signal || ((!opts.method || opts.method === 'GET') ? AbortSignal.timeout(15000) : undefined);
+  const rs = await _fetch(cloud.url + path, Object.assign({}, opts, { headers, signal }));
   if (rs.status === 401 && cloud.sess && retry && await cloudRefresh())
     return cfetch(path, opts, false);
   return rs;
@@ -226,6 +229,17 @@ export function cloudPublicURL(path){
   return cloud.url + '/storage/v1/object/public/loans/' + path;
 }
 
+async function cloudPrivateURL(path){
+  const rs = await cfetch('/storage/v1/object/sign/private_loans/' + path, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ expiresIn: 3600 }),
+  });
+  const data = await rs.json().catch(() => ({}));
+  if (!rs.ok || typeof data.signedURL !== 'string') throw new Error('could not load private artwork');
+  return data.signedURL.startsWith('http') ? data.signedURL
+    : cloud.url + (data.signedURL.startsWith('/storage/v1/') ? '' : '/storage/v1') + data.signedURL;
+}
+
 /* `note` is newer than some galleries. A project whose owner has not re-run
    supabase-setup.sql has no such column, and PostgREST rejects the whole write
    rather than ignoring the field — which would turn "your description did not
@@ -257,17 +271,21 @@ export async function cloudUploadBlob(name, blob, note = ''){
      and paying it every time they come back. The free tier is 5 GB a month and
      a collection of lossless drawings is tens of megabytes a visit, so this is
      most of the arithmetic. */
-  const rs0 = await cfetch('/storage/v1/object/loans/' + path, {
+  const bucket = cloud.privateSharing ? 'private_loans' : 'loans';
+  const rs0 = await cfetch('/storage/v1/object/' + bucket + '/' + path, {
     method: 'POST',
-    headers: { 'Content-Type': 'image/jpeg',
+    headers: { 'Content-Type': blob.type || 'image/jpeg',
                'cache-control': 'max-age=31536000, immutable' },
     body: blob,
   });
   if (!rs0.ok) throw new Error('image upload failed');
   const rs = await writeUpload('/rest/v1/uploads',
-    { id, owner: cloud.sess.uid, name, path, note });
-  if (!rs.ok) throw new Error('could not record the upload');
-  return { id, path };
+    { id, owner: cloud.sess.uid, name, path, note, ...(cloud.privateSharing ? { bucket } : {}) });
+  if (!rs.ok) {
+    await cfetch('/storage/v1/object/' + bucket + '/' + path, { method: 'DELETE' }).catch(() => {});
+    throw new Error('could not record the upload');
+  }
+  return { id, path, bucket };
 }
 
 /** Replace a work's image with an edited one — same row, same id, so every
@@ -277,9 +295,10 @@ export async function cloudUploadBlob(name, blob, note = ''){
  *  deleted. That order is the whole design: fail at any step and the gallery
  *  still renders — either the untouched original, or the finished edit —
  *  never a path with nothing behind it. */
-export async function cloudReplaceBlob(id, oldPath, blob){
+export async function cloudReplaceBlob(id, oldPath, blob, bucket = 'loans'){
+  if (!['loans', 'private_loans'].includes(bucket)) throw new Error('unknown artwork bucket');
   const path = cloud.sess.uid + '/' + crypto.randomUUID() + '.jpg';
-  const rs0 = await cfetch('/storage/v1/object/loans/' + path, {
+  const rs0 = await cfetch('/storage/v1/object/' + bucket + '/' + path, {
     method: 'POST',
     headers: { 'Content-Type': blob.type || 'image/jpeg',
                'cache-control': 'max-age=31536000, immutable' },
@@ -289,10 +308,10 @@ export async function cloudReplaceBlob(id, oldPath, blob){
   const upd = await cloudUpdateUpload(id, { path });
   if (!upd.ok){
     /* The row still names the old object; the orphan is ours to sweep. */
-    cfetch('/storage/v1/object/loans/' + path, { method: 'DELETE' }).catch(() => {});
+    cfetch('/storage/v1/object/' + bucket + '/' + path, { method: 'DELETE' }).catch(() => {});
     return { ok: false };
   }
-  cfetch('/storage/v1/object/loans/' + oldPath, { method: 'DELETE' }).catch(() => {});
+  cfetch('/storage/v1/object/' + bucket + '/' + oldPath, { method: 'DELETE' }).catch(() => {});
   return { ok: true, path };
 }
 
@@ -318,8 +337,10 @@ export async function cloudUpdateUpload(id, patch){
    delete leaves the row and the object disagreeing, and the caller is the
    only one that can decide whether to keep the local record. */
 export async function cloudDeleteUpload(rec){
+  const bucket = rec.bucket || 'loans';
+  if (!['loans', 'private_loans'].includes(bucket)) throw new Error('unknown artwork bucket');
   const [obj, row] = await Promise.allSettled([
-    cfetch('/storage/v1/object/loans/' + rec.path, { method: 'DELETE' }),
+    cfetch('/storage/v1/object/' + bucket + '/' + rec.path, { method: 'DELETE' }),
     cfetch('/rest/v1/uploads?id=eq.' + rec.id, { method: 'DELETE' }),
   ]);
   const good = (r) => r.status === 'fulfilled' && r.value.ok;
@@ -348,11 +369,31 @@ export async function cloudDelPlacement(k){
 export async function cloudSetPublished(on){
   const rs = await cfetch('/rest/v1/profiles?id=eq.' + cloud.sess.uid, {
     method: 'PATCH',
-    headers: { 'Content-Type': 'application/json', Prefer: 'return=minimal' },
+    headers: { 'Content-Type': 'application/json', Prefer: 'return=representation' },
     body: JSON.stringify({ published: !!on }),
   });
   if (!rs.ok) throw new Error('could not change who can see this gallery — has supabase-setup.sql been re-run?');
+  const rows = await rs.json();
+  if (!Array.isArray(rows) || rows.length !== 1 || rows[0].id !== cloud.sess.uid || rows[0].published !== !!on)
+    throw new Error('sharing was not saved — check your sign-in and database policies');
   cloud.published = !!on;
+  return { ok: true };
+}
+
+/** Manage the one active bearer link for the signed-in curator. The raw token
+ * is returned only to the caller so it can be copied into a link; it is never
+ * persisted by this module. */
+export async function cloudManageShareLink(action){
+  if (!cloud.privateSharing) throw new Error('private sharing is not enabled on this gallery');
+  if (!cloud.sess) throw new Error('sign in before managing a private link');
+  if (!['create', 'rotate', 'revoke'].includes(action)) throw new TypeError('invalid share action');
+  const rs = await cfetch('/functions/v1/manage-share-link', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ action }),
+  });
+  const data = await rs.json().catch(() => ({}));
+  if (!rs.ok) throw new Error(data.error || 'could not change the private link');
+  return data;
 }
 
 /** The gallery theme travels with the profile, so a guest at the shared link
@@ -389,10 +430,16 @@ export async function cloudClaimSlug(slug){
    `note` is absent from any project whose owner has not re-run the schema, and
    naming a column PostgREST does not have fails the whole request — which would
    empty a visitor's collection rather than merely omit their descriptions. */
-const asUpload = (row) => ({ id: row.id, name: row.name, path: row.path,
+const asUpload = (row, url = null) => ({ id: row.id, name: row.name, path: row.path,
                              note: row.note || '',
-                             url: cloudPublicURL(row.path), cloudRec: true });
-const rowsOf = async (rs) => (rs.ok ? rs.json() : []);
+                             bucket: row.bucket || 'loans',
+                             url: url || row.url || (row.bucket === 'private_loans' ? null : cloudPublicURL(row.path)), cloudRec: true });
+const rowsOf = async (rs) => {
+  if (!rs.ok) throw new Error(`collection request failed (${rs.status})`);
+  const rows = await rs.json();
+  if (!Array.isArray(rows)) throw new Error('invalid collection response');
+  return rows;
+};
 
 /** The signed-in visitor's own collection. */
 export async function cloudLoadMine(){
@@ -402,13 +449,17 @@ export async function cloudLoadMine(){
     cfetch('/rest/v1/placements?owner=eq.' + cloud.sess.uid + '&select=k,upload_id'),
     cfetch('/rest/v1/profiles?id=eq.' + cloud.sess.uid + '&select=*'),
   ]);
-  const me = (await rowsOf(sr))[0];
+  const [uploads, placements, profiles] = await Promise.all([rowsOf(ur), rowsOf(pr), rowsOf(sr)]);
+  const me = profiles[0];
+  const records = await Promise.all(uploads.map(async row => asUpload(row,
+    row.bucket === 'private_loans' ? await cloudPrivateURL(row.path) : null)));
+  for (const record of records) if (record.bucket === 'private_loans') record.urlExpiresAt = Date.now() + 3_590_000;
   cloud.slug = me ? me.slug : null;
   /* Absent before the RLS migration is applied; absent means not published. */
   cloud.published = !!(me && me.published);
   return {
-    uploads: (await rowsOf(ur)).map(asUpload),
-    placements: (await rowsOf(pr)).map((row) => [row.k, row.upload_id]),
+    uploads: records,
+    placements: placements.map((row) => [row.k, row.upload_id]),
     slug: cloud.slug, published: cloud.published,
     theme: me ? me.theme || null : null,
   };
@@ -416,23 +467,84 @@ export async function cloudLoadMine(){
 
 /** Somebody else's gallery, read-only. Returns null if no such name. */
 export async function cloudLoadGallery(slug){
+  cloud.viewing = null;
+  if (!SLUG_SHAPE.test(slug)) return null;
+  // Published links must behave identically for every visitor, even when this
+  // browser holds an unrelated or expired owner session. Never refresh it here.
+  const read = path => _fetch(cloud.url + path, {
+    headers: { apikey: cloud.key, Authorization: 'Bearer ' + cloud.key },
+    signal: AbortSignal.timeout(15000),
+  });
   /* select=* for the same schema-tolerance reason as everywhere else: `theme`
      is newer than some projects, and naming an absent column fails the whole
      request — which would read as "no such gallery". */
-  const rows = await rowsOf(await cfetch(
+  const rows = await rowsOf(await read(
     '/rest/v1/profiles?slug=eq.' + encodeURIComponent(slug) + '&select=*'));
   if (!rows[0]) return null;
   const owner = rows[0].id;
   const [ur, pr] = await Promise.all([
-    cfetch('/rest/v1/uploads?owner=eq.' + owner + '&select=*'),
-    cfetch('/rest/v1/placements?owner=eq.' + owner + '&select=k,upload_id'),
+    read('/rest/v1/uploads?owner=eq.' + owner + '&select=*'),
+    read('/rest/v1/placements?owner=eq.' + owner + '&select=k,upload_id'),
   ]);
-  cloud.viewing = { slug, owner };
-  return {
+  const [uploads, placements] = await Promise.all([rowsOf(ur), rowsOf(pr)]);
+  const publicUploads = uploads.filter(row => !row.bucket || row.bucket === 'loans');
+  const publicIds = new Set(publicUploads.map(row => row.id));
+  const data = {
     slug, owner, theme: rows[0].theme || null,
-    uploads: (await rowsOf(ur)).map(asUpload),
-    placements: (await rowsOf(pr)).map((row) => [row.k, row.upload_id]),
+    uploads: publicUploads.map(row => asUpload(row)),
+    placements: placements.filter(row => publicIds.has(row.upload_id)).map((row) => [row.k, row.upload_id]),
   };
+  cloud.viewing = { slug, owner };
+  return data;
+}
+
+async function cloudLoadShare(token, ids){
+  const rs = await _fetch(cloud.url + '/functions/v1/share-gallery', {
+    method: 'POST',
+    headers: { apikey: cloud.key, Authorization: 'Bearer ' + cloud.key, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ token, ...(ids ? { ids } : {}) }),
+    signal: AbortSignal.timeout(15000),
+  });
+  const body = await rs.json().catch(() => ({}));
+  if ([401, 403, 404, 410].includes(rs.status)) return null;
+  if (!rs.ok) throw new Error(`private collection request failed (${rs.status})`);
+  if (!body.gallery || !Array.isArray(body.gallery.uploads) || !Array.isArray(body.gallery.placements))
+    throw new Error('invalid private collection response');
+  const gallery = body.gallery;
+  const urlExpiresAt = Date.now() + Math.max(0, Math.min(60, Number(body.expiresIn) || 60) - 5) * 1000;
+  if (gallery.uploads.some(row => !row || typeof row.url !== 'string' || !/^https?:\/\//.test(row.url)))
+    throw new Error('invalid private artwork response');
+  const data = {
+    slug: gallery.slug || 'private collection', owner: null,
+    theme: gallery.theme || null,
+    uploads: gallery.uploads.map(row => ({ ...asUpload(row, row.url), urlExpiresAt })),
+    placements: (gallery.placements || []).map(row => Array.isArray(row) ? row : [row.k, row.upload_id]),
+  };
+  cloud.viewing = { slug: data.slug, owner: null, private: true };
+  cloud.shareToken = token;
+  return data;
+}
+
+const renewingArt = new WeakMap();
+/** Resolve private assets just before use; no timer or token persistence. */
+export async function cloudArtworkURL(record) {
+  if (!record.cloudRec && !record.urlExpiresAt || record.url?.startsWith('blob:')) return record.url;
+  if (!record.urlExpiresAt || record.urlExpiresAt > Date.now()) return record.url;
+  if (renewingArt.has(record)) return renewingArt.get(record);
+  const renewal = (async () => {
+    if (cloud.shareToken) {
+      const data = await cloudLoadShare(cloud.shareToken, [record.id]);
+      const fresh = data?.uploads.find(row => row.id === record.id);
+      if (!fresh) throw new Error('this artwork is no longer shared');
+      record.url = fresh.url; record.urlExpiresAt = fresh.urlExpiresAt;
+    } else if (cloud.sess && record.bucket === 'private_loans') {
+      record.url = await cloudPrivateURL(record.path);
+      record.urlExpiresAt = Date.now() + 3_590_000;
+    } else throw new Error('private artwork is unavailable');
+    return record.url;
+  })();
+  renewingArt.set(record, renewal);
+  try { return await renewal; } finally { renewingArt.delete(record); }
 }
 
 /** Restore a session and load whatever this URL asks for.
@@ -441,7 +553,30 @@ export async function cloudLoadGallery(slug){
  *  Never throws: the seeded gallery does not need any of this, and an outage
  *  must not stop the Curator's Office from initialising. */
 export async function cloudBoot(){
+  cloud.viewing = null;
+  const link = galleryLink(location.search, location.hash);
+  const shareToken = link.private ? link.token : cloud.shareToken;
+  if (link.requested && !(link.private ? link.token : link.slug)) return { mode: 'missing', data: { slug: null } };
   if (!cloud.on) return { mode: 'off', data: null };
+  if (shareToken){
+    cloud.sess = null;
+    cloud.shareToken = shareToken;
+    try {
+      const data = await cloudLoadShare(shareToken);
+      try { history.replaceState(null, '', location.pathname + location.search); } catch(e){ location.hash = ''; }
+      return data ? { mode: 'guest', data } : { mode: 'missing', data: { slug: null } };
+    } catch (error) {
+      return { mode: 'unreachable', data: null, error: String(error.message || error) };
+    }
+  }
+  if (link.requested) {
+    try {
+      const data = await cloudLoadGallery(link.slug);
+      return data ? { mode: 'guest', data } : { mode: 'missing', data: { slug: link.slug } };
+    } catch (error) {
+      return { mode: 'unreachable', data: null, error: String(error.message || error) };
+    }
+  }
   /* Before the stored session, because a fragment means the visitor has just
      come back from a provider and that is newer than whatever is on disk. */
   const viaRedirect = takeHashSession();
@@ -452,11 +587,6 @@ export async function cloudBoot(){
   try {
     if (cloud.sess && Date.now() > cloud.sess.expires_at) await cloudRefresh();
 
-    const gallery = new URLSearchParams(location.search).get('gallery');
-    if (gallery){
-      const data = await cloudLoadGallery(gallery.toLowerCase());
-      return data ? { mode: 'guest', data } : { mode: 'missing', data: { slug: gallery.toLowerCase() } };
-    }
     if (cloud.sess) return { mode: 'mine', data: await cloudLoadMine() };
     return { mode: 'none', data: null };
   } catch (e){

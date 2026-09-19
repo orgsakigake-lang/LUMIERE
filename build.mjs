@@ -149,6 +149,9 @@ async function emit() {
     readFile(join(ROOT, 'src/index.template.html'), 'utf8'),
   ]);
 
+  // Standalone museum files have no sibling room. The combined site packager
+  // installs this invitation only when it also publishes the curated assets.
+  body = body.replace(/<!-- CURATED_LINK_START -->[\s\S]*?<!-- CURATED_LINK_END -->/, '');
   if (MINIFY) {
     css = (await esbuild.transform(css, { loader: 'css', minify: true })).code;
     body = minifyHTML(body);

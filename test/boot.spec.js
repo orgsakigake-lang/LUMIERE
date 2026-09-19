@@ -428,13 +428,13 @@ test.describe('the card at the door', () => {
     expect(guest.enter).toBe('Enter the collection');
     expect(guest.title).toContain('marguerite');
 
-    /* A name nothing answers to is its own answer, and hands the visitor back
-       the museum they can have. */
+    /* A failed shared link must never offer entry into an unrelated museum. */
     await page.evaluate(() => window.DBG.introForTest({ mode: 'missing', slug: 'nobody' }));
     const gone = await card(page);
     expect(gone.sub).toBe('No such collection');
     expect(gone.hook).toContain('nobody');
-    expect(gone.enter).toBe('Enter the gallery');
+    expect(gone.enter).toBe('Collection unavailable');
+    await expect(page.locator('#enter')).toBeDisabled();
   });
 
   test('will not print a name that could not be a gallery', async ({ page }) => {

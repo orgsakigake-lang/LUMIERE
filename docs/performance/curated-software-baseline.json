@@ -1,0 +1,238 @@
+{
+  "protocol": "curated-reference-v1",
+  "environment": {
+    "browser": "151.0.7922.34",
+    "viewport": [
+      1280,
+      720
+    ],
+    "renderer": "ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero) (0x0000C0DE)), SwiftShader driver)",
+    "rendering": "software",
+    "network": "unthrottled localhost"
+  },
+  "coverMs": 124.3,
+  "entryMs": 1061.6,
+  "rendererLoadedAtCover": false,
+  "viewerFrames": 0,
+  "idleFrames": 0,
+  "metrics": {
+    "frames": 49,
+    "drawCalls": 31,
+    "triangles": 948,
+    "cpuMs": 1.9,
+    "frameP95Ms": 216.7,
+    "frameSamples": 40,
+    "renderWidth": 1280,
+    "renderHeight": 720,
+    "geometryBytes": 66500,
+    "textureBytes": 17225046,
+    "estimatedGpuBytes": 50977050,
+    "textures": 19,
+    "geometries": 32,
+    "quality": "auto",
+    "paused": false,
+    "missingArt": 0,
+    "renderer": "ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero) (0x0000C0DE)), SwiftShader driver)",
+    "position": [
+      5.7,
+      2.3,
+      7.5
+    ],
+    "onDemand": true
+  },
+  "route": [
+    {
+      "frames": 8,
+      "drawCalls": 10,
+      "triangles": 834,
+      "cpuMs": 1.3,
+      "frameP95Ms": 166.7,
+      "frameSamples": 6,
+      "renderWidth": 1280,
+      "renderHeight": 720,
+      "geometryBytes": 66500,
+      "textureBytes": 17225046,
+      "estimatedGpuBytes": 50977050,
+      "textures": 18,
+      "geometries": 31,
+      "quality": "auto",
+      "paused": false,
+      "missingArt": 0,
+      "renderer": "ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero) (0x0000C0DE)), SwiftShader driver)",
+      "position": [
+        -3.5,
+        1.7,
+        -4.2
+      ],
+      "onDemand": true
+    },
+    {
+      "frames": 14,
+      "drawCalls": 10,
+      "triangles": 834,
+      "cpuMs": 0.7,
+      "frameP95Ms": 166.8,
+      "frameSamples": 11,
+      "renderWidth": 1280,
+      "renderHeight": 720,
+      "geometryBytes": 66500,
+      "textureBytes": 17225046,
+      "estimatedGpuBytes": 50977050,
+      "textures": 18,
+      "geometries": 31,
+      "quality": "auto",
+      "paused": false,
+      "missingArt": 0,
+      "renderer": "ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero) (0x0000C0DE)), SwiftShader driver)",
+      "position": [
+        3.5,
+        1.7,
+        -4.2
+      ],
+      "onDemand": true
+    },
+    {
+      "frames": 21,
+      "drawCalls": 10,
+      "triangles": 834,
+      "cpuMs": 0.8,
+      "frameP95Ms": 166.8,
+      "frameSamples": 17,
+      "renderWidth": 1280,
+      "renderHeight": 720,
+      "geometryBytes": 66500,
+      "textureBytes": 17225046,
+      "estimatedGpuBytes": 50977050,
+      "textures": 18,
+      "geometries": 31,
+      "quality": "auto",
+      "paused": false,
+      "missingArt": 0,
+      "renderer": "ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero) (0x0000C0DE)), SwiftShader driver)",
+      "position": [
+        -3.8,
+        1.7,
+        -3.6
+      ],
+      "onDemand": true
+    },
+    {
+      "frames": 27,
+      "drawCalls": 12,
+      "triangles": 848,
+      "cpuMs": 0.8,
+      "frameP95Ms": 183.4,
+      "frameSamples": 22,
+      "renderWidth": 1280,
+      "renderHeight": 720,
+      "geometryBytes": 66500,
+      "textureBytes": 17225046,
+      "estimatedGpuBytes": 50977050,
+      "textures": 18,
+      "geometries": 31,
+      "quality": "auto",
+      "paused": false,
+      "missingArt": 0,
+      "renderer": "ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero) (0x0000C0DE)), SwiftShader driver)",
+      "position": [
+        -3.8,
+        1.7,
+        3.9999999999999996
+      ],
+      "onDemand": true
+    },
+    {
+      "frames": 34,
+      "drawCalls": 10,
+      "triangles": 834,
+      "cpuMs": 0.7,
+      "frameP95Ms": 216.6,
+      "frameSamples": 28,
+      "renderWidth": 1280,
+      "renderHeight": 720,
+      "geometryBytes": 66500,
+      "textureBytes": 17225046,
+      "estimatedGpuBytes": 50977050,
+      "textures": 18,
+      "geometries": 31,
+      "quality": "auto",
+      "paused": false,
+      "missingArt": 0,
+      "renderer": "ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero) (0x0000C0DE)), SwiftShader driver)",
+      "position": [
+        3.8,
+        1.7,
+        -3.6
+      ],
+      "onDemand": true
+    },
+    {
+      "frames": 41,
+      "drawCalls": 12,
+      "triangles": 848,
+      "cpuMs": 1.1,
+      "frameP95Ms": 216.7,
+      "frameSamples": 34,
+      "renderWidth": 1280,
+      "renderHeight": 720,
+      "geometryBytes": 66500,
+      "textureBytes": 17225046,
+      "estimatedGpuBytes": 50977050,
+      "textures": 19,
+      "geometries": 32,
+      "quality": "auto",
+      "paused": false,
+      "missingArt": 0,
+      "renderer": "ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero) (0x0000C0DE)), SwiftShader driver)",
+      "position": [
+        3.8,
+        1.7,
+        3.9999999999999996
+      ],
+      "onDemand": true
+    },
+    {
+      "frames": 48,
+      "drawCalls": 31,
+      "triangles": 948,
+      "cpuMs": 0.9,
+      "frameP95Ms": 216.7,
+      "frameSamples": 40,
+      "renderWidth": 1280,
+      "renderHeight": 720,
+      "geometryBytes": 66500,
+      "textureBytes": 17225046,
+      "estimatedGpuBytes": 50977050,
+      "textures": 19,
+      "geometries": 32,
+      "quality": "auto",
+      "paused": false,
+      "missingArt": 0,
+      "renderer": "ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero) (0x0000C0DE)), SwiftShader driver)",
+      "position": [
+        5.7,
+        2.3,
+        7.5
+      ],
+      "onDemand": true
+    }
+  ],
+  "bundles": [
+    {
+      "file": "curated/app.js",
+      "bytes": 5454,
+      "gzipBytes": 2086
+    },
+    {
+      "file": "curated/scene-RJXUOK5G.js",
+      "bytes": 551827,
+      "gzipBytes": 141279
+    },
+    {
+      "file": "curated/chunk-24VY3Y47.js",
+      "bytes": 4019,
+      "gzipBytes": 1855
+    }
+  ],
+  "limitations": "Single warm-host local run, software-rendered if reported. Different scene/content from the legacy route; not a matched renderer speed comparison or a physical-device acceptance result."
+}

@@ -1,0 +1,53 @@
+{
+  "generatorVersion": "lumiere-v2-curated-1",
+  "works": [
+    {
+      "id": "quiet-current",
+      "canonical": [
+        768,
+        960
+      ],
+      "seed": 481516
+    },
+    {
+      "id": "a-place-between",
+      "canonical": [
+        768,
+        960
+      ],
+      "seed": 271828
+    },
+    {
+      "id": "slow-earth",
+      "canonical": [
+        1024,
+        768
+      ],
+      "seed": 20260918
+    },
+    {
+      "id": "the-shape-of-silence",
+      "canonical": [
+        768,
+        960
+      ],
+      "seed": 314159
+    },
+    {
+      "id": "small-infinities",
+      "canonical": [
+        768,
+        960
+      ],
+      "seed": 1106376628
+    },
+    {
+      "id": "after-the-rain",
+      "canonical": [
+        1024,
+        768
+      ],
+      "seed": 577215
+    }
+  ]
+}

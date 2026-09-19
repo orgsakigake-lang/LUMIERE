@@ -230,7 +230,18 @@ test.describe.serial('in one hand', () => {
     await expect(pill, 'a pill was offered to a visitor with no office').toBeHidden();
 
     // open the office to them, and it appears
-    await page.evaluate(() => { window.DBG.cloudSessForTest(true); });
+    await page.evaluate(() => {
+      // A synthetic login needs a synthetic transport too. A real network
+      // failure otherwise replaces the hanging confirmation with an outbox
+      // warning; cloud.spec.js covers that offline path separately.
+      window.__touchPlacements = [];
+      window.DBG.cloudFetch(async (url, options) => {
+        if (url.endsWith('/rest/v1/placements') && options.method === 'POST')
+          window.__touchPlacements.push(JSON.parse(options.body));
+        return { ok: true, status: 200, json: async () => [] };
+      });
+      window.DBG.cloudSessForTest(true);
+    });
     await step(8);
     await expect(pill).toBeVisible();
     expect((await pill.textContent()).trim()).toBe('hang here');
@@ -260,10 +271,17 @@ test.describe.serial('in one hand', () => {
     });
     await tapPill();
     await expect.poll(toast, { timeout: 10_000 }).toContain('hung');
+    await expect.poll(() => page.evaluate(() => window.__touchPlacements))
+      .toEqual([{ owner: 'test', k: expect.any(String), upload_id: 'touch-1' }]);
     console.log(`    hung from a thumb, standing at ${at.map((n) => n.toFixed ? +n.toFixed(1) : n)}`);
 
     // and put the gallery back the way the rest of the file expects it
-    await page.evaluate(() => { window.DBG.cloudSessForTest(false); window.DBG.selectForTest(null); });
+    await page.evaluate(() => {
+      window.DBG.cloudFetch(null);
+      delete window.__touchPlacements;
+      window.DBG.cloudSessForTest(false);
+      window.DBG.selectForTest(null);
+    });
     await step(8);
   });
 

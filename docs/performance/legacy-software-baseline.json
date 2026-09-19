@@ -1,0 +1,106 @@
+{
+  "protocol": "legacy-renderer-baseline-v1",
+  "url": "http://127.0.0.1:8000/?q=0&metrics",
+  "durationSeconds": 16,
+  "environment": {
+    "browser": "chromium",
+    "viewport": {
+      "width": 1280,
+      "height": 720
+    },
+    "renderer": {
+      "api": "WebGL 2.0 (OpenGL ES 3.0 Chromium)",
+      "vendor": "Google Inc. (Google)",
+      "name": "ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero) (0x0000C0DE)), SwiftShader driver)",
+      "unmasked": true
+    },
+    "rendering": "software"
+  },
+  "coldEntryMs": 1185.94,
+  "enterMs": 5169.73,
+  "route": {
+    "description": "Enter the legacy gallery, then dwell in a four-room clockwise loop using DBG.tp.",
+    "stages": [
+      { "room": [0, 0], "yaw": 0, "description": "entrance hall" },
+      { "room": [1, 0], "yaw": 1.5707963267948966, "description": "east doorway" },
+      { "room": [1, -1], "yaw": 3.141592653589793, "description": "north gallery" },
+      { "room": [0, -1], "yaw": -1.5707963267948966, "description": "return hall" }
+    ]
+  },
+  "frame": {
+    "samples": 55,
+    "p50Ms": 399.9,
+    "p95Ms": 648.34,
+    "p99Ms": 706.3,
+    "cpu": {
+      "samples": 56,
+      "p50Ms": 1.1,
+      "p95Ms": 2.55,
+      "p99Ms": 8.05
+    }
+  },
+  "diagnostics": {
+    "frames": {
+      "samples": 55,
+      "p50Ms": 399.9,
+      "p95Ms": 648.34,
+      "p99Ms": 706.3,
+      "cpu": {
+        "samples": 56,
+        "p50Ms": 1.1,
+        "p95Ms": 2.55,
+        "p99Ms": 8.05
+      }
+    },
+    "rooms": {
+      "samples": 63,
+      "p50Ms": 1,
+      "p95Ms": 3.85,
+      "built": 63,
+      "totalMs": 89.3,
+      "cached": 40
+    },
+    "renderer": {
+      "api": "WebGL 2.0 (OpenGL ES 3.0 Chromium)",
+      "vendor": "Google Inc. (Google)",
+      "name": "ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero) (0x0000C0DE)), SwiftShader driver)",
+      "unmasked": true
+    },
+    "viewport": {
+      "css": [1280, 720],
+      "drawingBuffer": [960, 540],
+      "dpr": 1
+    },
+    "quality": {
+      "tier": 0,
+      "pinned": true,
+      "dprCap": 0.75,
+      "reflections": false
+    },
+    "art": {
+      "jobs": 23,
+      "queued": 0,
+      "active": false,
+      "uploadReady": false,
+      "painted": 22,
+      "placards": 53,
+      "painters": 3,
+      "pools": {
+        "L": 18,
+        "P": 14,
+        "S": 13,
+        "W": 9,
+        "placards": 0
+      }
+    },
+    "gpu": {
+      "frameMs": null,
+      "status": "unavailable: no asynchronous GPU timer query is collected"
+    },
+    "memory": {
+      "gpuBytes": null,
+      "status": "unavailable: WebGL has no portable GPU memory accounting API",
+      "jsHeapBytes": 35100000
+    }
+  }
+}

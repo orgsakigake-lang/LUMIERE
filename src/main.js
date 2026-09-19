@@ -32,10 +32,13 @@ import { cloud, setFetch, cloudSaveSess, cloudSendCode, cloudVerify, cloudPublic
          cloudUploadBlob, cloudDeleteUpload, cloudUpdateUpload, cloudReplaceBlob,
          cloudSetPlacement, cloudDelPlacement,
          cloudClaimSlug, cloudSetPublished, cloudSetTheme,
+         cloudManageShareLink, cloudArtworkURL,
          cloudLoadMine, cloudLoadGallery, cloudBoot } from './cloud/client.js';
+import { galleryLink, SLUG_SHAPE } from './cloud/gallery-link.js';
 import { SCHEMES, applyScheme, buildRoomMesh, assembleLights, MAX_LIGHTS } from './world/geometry.js';
 import { canvas, gl, compile, program } from './render/gl.js';
 import { PERF, dprCap } from './render/perf.js';
+import { Metrics } from './render/metrics.js';
 import { post, postCaps, wantSamples, setForcedSamples, allocPost, runPost,
          setPostPrograms, setPostTime, uBright, uBlur, uComp, GRADE } from './render/post.js';
 import { plasterTex, parquetTex, plasterNrm, parquetNrm, shadowTex, skyTex, makeSurfaceTextures,
@@ -45,7 +48,7 @@ import { player, M_P, M_V, M_MV, M_PV, vpW, vpH, setViewport,
 import { setLoanProvider, setShadowProgram, releaseSlot, freeAllArtSlots, discardPainted, preemptArtJobs, artJobKey,
          syncArtJobs, pumpArt, updateHudStat, markSeen, paintBasis, makeRoomVAO,
          dropRoomGL, TEX_SIZES, LOAN_SIZES, POOLS, PPOOL, scratch, sctx, pscratch, pctx,
-         artState, PB, SHA } from './art/scheduler.js';
+         artState, artDiagnostics, PB, SHA } from './art/scheduler.js';
 
 import VS_SHADOW from './render/shaders/shadow.vert';
 import FS_SHADOW from './render/shaders/shadow.frag';
@@ -564,7 +567,9 @@ function gatherIntoWing(){
    and the curator walks an endless museum unless they deliberately ask to see
    what a visitor sees. */
 let boundOn = false;                // the curator's switch
-let guestWorld = false;             // a ?gallery visit — bounded, no exceptions
+const guestVisit = galleryLink(location.search, location.hash);
+if (guestVisit.requested) document.getElementById('curated-invitation')?.setAttribute('hidden', '');
+let guestWorld = guestVisit.requested; // guest isolation starts before the network answers
 const boundExtra = new Set();       // rooms opened by hand, door by door
 function loadBoundPrefs(){
   if (!storageOK) return;
@@ -731,7 +736,7 @@ function ensureBuilt(){
          out of bounds degrades to an island instead of a void. */
       if (!inBounds(player.gx + di, player.gz + dj, player.gy) && !(di === 0 && dj === 0)) continue;
       const r = getRoom(player.gx + di, player.gz + dj, player.gy);
-      if (!r.vao) makeRoomVAO(r, WIN.on);
+      if (!r.vao) buildRoom(r);
     }
   /* The two rooms a stair joins to this one, so the well is never an opening
      onto an unbuilt storey. Admitted on the same terms as a hall through a
@@ -740,8 +745,13 @@ function ensureBuilt(){
   for (const [has, dgy] of [[here.stairUp, 1], [here.stairDown, -1]]){
     if (!has || !inBounds(player.gx, player.gz, player.gy + dgy)) continue;
     const nb = getRoom(player.gx, player.gz, player.gy + dgy);
-    if (!nb.vao) makeRoomVAO(nb, WIN.on);
+    if (!nb.vao) buildRoom(nb);
   }
+}
+function buildRoom(r){
+  const t0 = metricsOn ? performance.now() : 0;
+  makeRoomVAO(r, WIN.on);
+  if (metricsOn) renderMetrics.roomBuilt(performance.now() - t0);
 }
 function evict(){
   for (const [k, r] of rooms){
@@ -1550,6 +1560,8 @@ function idbOpen(){
   });
 }
 async function curatorBoot(){
+  // A shared visit never opens this browser's private collection or outbox.
+  if (guestVisit.requested) { curator.mode = 'guest'; return; }
   curator.db = await idbOpen();
   loadFills();
   /* Anything that did not reach the cloud last time is still owed. */
@@ -1739,7 +1751,11 @@ function turnBitmap(src, op){
  *  image cannot land remotely, nothing changes locally either, so what the
  *  sheet shows is always what a returning visitor will see. */
 async function transformWork(rec, op){
-  if (!rec.blob && rec.url) rec.blob = await (await fetch(rec.url)).blob();
+  if (!rec.blob && rec.url) {
+    const response = await fetch(await cloudArtworkURL(rec));
+    if (!response.ok) throw new Error('artwork could not load');
+    rec.blob = await response.blob();
+  }
   const src = await createImageBitmap(rec.blob);
   const c = turnBitmap(src, op);
   src.close();
@@ -1747,7 +1763,7 @@ async function transformWork(rec, op){
   if (!blob) return false;
   if (rec.cloudRec){
     if (!cloud.sess){ flashHint('sign in again to edit a cloud work'); return false; }
-    const r = await cloudReplaceBlob(rec.id, rec.path, blob);
+    const r = await cloudReplaceBlob(rec.id, rec.path, blob, rec.bucket || 'loans');
     if (!r.ok){ flashHint('the edit could not reach the cloud — nothing was changed'); return false; }
     rec.path = r.path;
   }
@@ -1793,7 +1809,7 @@ function curatorReview(recs, reopened = false){
   for (const rec of recs){
     const row = document.createElement('div');
     row.className = 'rv-row';
-    const im = document.createElement('img'); im.src = rec.url; im.alt = '';
+    const im = document.createElement('img'); setArtworkImage(im, rec); im.alt = '';
 
     /* The title starts as the filename because that is the only thing known
        about the work, not because it is a good title. It is an editable field
@@ -1920,8 +1936,8 @@ async function curatorAddFiles(files){
          there is a row to answer about, since an upload that failed because
          the visitor had not written a description yet would be absurd. */
       if (cloud.on && cloud.sess){
-        const { id, path } = await cloudUploadBlob(name, blob, '');
-        const rec = { id, name, note: '', blob, path, cloudRec: true, url: URL.createObjectURL(blob) };
+        const { id, path, bucket } = await cloudUploadBlob(name, blob, '');
+        const rec = { id, name, note: '', blob, path, bucket, cloudRec: true, url: URL.createObjectURL(blob) };
         curator.uploads.set(id, rec);
         noteShape(rec, shape); added.push(rec);
       } else {
@@ -2145,7 +2161,7 @@ async function applyPlacement(r, A, i){
     if (!rec.blob && rec.url){
       /* fetch resolves on HTTP errors, and an error body cached as the blob
          poisons every later attempt — the frame stays empty with no clue. */
-      const rs = await fetch(rec.url);
+      const rs = await fetch(await cloudArtworkURL(rec));
       if (!rs.ok) throw new Error('image fetch failed: ' + rs.status);
       rec.blob = await rs.blob();
     }
@@ -2267,6 +2283,11 @@ function boundUI(){
   b.textContent = boundOn ? 'closed — you are walking it as a visitor does'
                           : 'open — endless halls, as the curator';
 }
+function setArtworkImage(image, record) {
+  cloudArtworkURL(record).then(url => { if (url) image.src = url; })
+    .catch(() => { image.alt = `${record.name || 'Artwork'} — currently unavailable`; });
+}
+
 function curatorGrid(){
   wingUI();
   const grid = document.getElementById('cur-grid');
@@ -2276,7 +2297,7 @@ function curatorGrid(){
     const d = document.createElement('div');
     d.className = 'cur-item' + (curator.sel === rec.id ? ' sel' : '')
                 + (placed.has(rec.id) ? ' hung' : '');
-    const im = document.createElement('img'); im.src = rec.url; im.alt = rec.name;
+    const im = document.createElement('img'); setArtworkImage(im, rec); im.alt = rec.name;
     const nm = document.createElement('div'); nm.className = 'nm'; nm.textContent = rec.name;
     d.append(im, nm);
     /* A guest is browsing somebody else's collection: no cross to remove a
@@ -2392,7 +2413,7 @@ function showGuestOffice(){
     const n = live.size;
     note.hidden = false;
     note.textContent =
-      `You are walking ${cloud.viewing.slug}’s gallery — ${n} work${n === 1 ? '' : 's'} `
+      `You are walking ${cloud.viewing?.slug || guestVisit.slug || 'this curator'}’s gallery — ${n} work${n === 1 ? '' : 's'} `
       + `across ${halls} hall${halls === 1 ? '' : 's'}, and the doors end where the `
       + `hanging does. Nothing here is yours to move. Open the gallery without the `
       + `link to walk a museum of your own.`;
@@ -2401,13 +2422,13 @@ function showGuestOffice(){
 }
 
 function curatorRefresh(){
-  const guest = !!cloud.viewing;
+  const guest = !!cloud.viewing || guestVisit.requested;
   const open = !guest && (cloud.on ? !!cloud.sess : curator.unlocked);
   document.getElementById('cur-lock').hidden = open || guest || cloud.on ? true : false;
   const showCloudLock = cloud.on && !open && !guest;
   document.getElementById('cur-cloud-lock').hidden = !showCloudLock;
   /* Ask the project what it will do before the visitor finds out by waiting. */
-  if (showCloudLock) warnAboutConfirmation();
+  if (showCloudLock && !document.getElementById('curator').hidden) warnAboutConfirmation();
   /* ————— what a guest sees —————
      Nothing, until now. Every section of the office is gated on being signed
      in, so somebody following a shared link opened the Curator's Office onto a
@@ -2424,7 +2445,7 @@ function curatorRefresh(){
   else for (const id of ['cur-themes', 'cur-hint', 'cur-add-row', 'cur-gather'])
     { const el = document.getElementById(id); if (el) el.hidden = false; }
   document.getElementById('cur-state').textContent =
-    guest ? 'guest of ' + cloud.viewing.slug
+    guest ? 'guest of ' + (cloud.viewing?.slug || guestVisit.slug || 'an unavailable collection')
     : open ? (cloud.sess ? 'signed in · loans open everywhere' : 'unlocked · loans open')
     : cloud.on ? 'signed out'
     : (curator.rekey ? 'set a new key' : 'locked');
@@ -2444,14 +2465,14 @@ function curatorRefresh(){
       const pub = document.getElementById('cur-publish');
       pub.hidden = !cloud.slug;
       pub.classList.toggle('on', !!cloud.published);
-      pub.textContent = cloud.published ? 'anyone with the link can walk it'
-                                        : 'private — only you can see it';
+      pub.textContent = cloud.published ? 'public collection visible'
+                                        : 'public collection hidden';
       const linkEl = document.getElementById('cur-share-link');
       if (!cloud.slug){
         linkEl.textContent = 'claim a name, then decide who can see it';
       } else if (cloud.published){
         const link = location.origin + location.pathname + '?gallery=' + cloud.slug;
-        linkEl.textContent = 'share: ' + link + ' — click to copy';
+        linkEl.textContent = (cloud.privateSharing ? 'legacy public works: ' : 'share: ') + link + ' — click to copy';
         linkEl.style.cursor = 'pointer';
         linkEl.onclick = () => {
           navigator.clipboard && navigator.clipboard.writeText(link)
@@ -2465,6 +2486,22 @@ function curatorRefresh(){
       let hasLocal = false;
       for (const rec of curator.uploads.values()) if (!rec.cloudRec && rec.blob){ hasLocal = true; break; }
       document.getElementById('cur-migrate').hidden = !hasLocal;
+      const privateRow = document.getElementById('cur-private-share');
+      if (privateRow) {
+        privateRow.hidden = !cloud.privateSharing;
+        const privateLink = document.getElementById('cur-private-link');
+        const create = document.getElementById('cur-private-create');
+        const rotate = document.getElementById('cur-private-rotate');
+        const revoke = document.getElementById('cur-private-revoke');
+        const raw = cloud.shareLink;
+        create.hidden = !!raw;
+        rotate.hidden = false;
+        revoke.hidden = false;
+        privateLink.textContent = raw ? 'private link: ' + raw + ' — click to copy'
+          : 'Existing links remain active after you leave. Rotate to get a new link, or revoke to disable access.';
+        privateLink.style.cursor = raw ? 'pointer' : '';
+        privateLink.onclick = raw ? () => navigator.clipboard?.writeText(raw).then(() => flashHint('the private link is copied')).catch(() => flashHint('Copy the displayed link manually.')) : null;
+      }
     }
     curatorGrid();
   }
@@ -2912,14 +2949,26 @@ document.getElementById('curator').addEventListener('keydown', (e) => {
     catch(e){ ok = false; }
     if (ok){
       curatorRefresh();
-      flashHint(next ? 'published — anyone with the link can walk your gallery'
-                     : 'unpublished — the gallery is yours alone again');
+      flashHint(next ? 'public collection published — private uploads use the private link'
+                     : 'public collection hidden — any private links are managed separately');
     } else {
       enqueue('setPublished', 'published', [next]);
       flashHint(next ? 'the cloud did not answer — publishing when it does'
                      : 'the cloud did not answer — <b>still public</b> until it does');
     }
   });
+  const privateAction = async action => {
+    try {
+      const result = await cloudManageShareLink(action);
+      if (action === 'revoke') cloud.shareLink = null;
+      else if (result.token) cloud.shareLink = location.origin + location.pathname + '#share=' + result.token;
+      curatorRefresh();
+      flashHint(action === 'revoke' ? 'private link revoked' : 'private link ready — copy it from the office');
+    } catch(e){ flashHint(String(e.message || e)); }
+  };
+  document.getElementById('cur-private-create')?.addEventListener('click', () => privateAction('create'));
+  document.getElementById('cur-private-rotate')?.addEventListener('click', () => privateAction('rotate'));
+  document.getElementById('cur-private-revoke')?.addEventListener('click', () => privateAction('revoke'));
   document.getElementById('cur-migrate').addEventListener('click', async () => {
     if (!cloud.sess) return;
     const btn = document.getElementById('cur-migrate');
@@ -2928,9 +2977,9 @@ document.getElementById('curator').addEventListener('keydown', (e) => {
     for (const [oldId, rec] of [...curator.uploads]){
       if (rec.cloudRec || !rec.blob) continue;
       try {
-        const { id, path } = await cloudUploadBlob(rec.name, rec.blob, rec.note || '');
+        const { id, path, bucket } = await cloudUploadBlob(rec.name, rec.blob, rec.note || '');
         curator.uploads.delete(oldId);
-        curator.uploads.set(id, { id, name: rec.name, blob: rec.blob, path,
+        curator.uploads.set(id, { id, name: rec.name, note: rec.note || '', blob: rec.blob, path, bucket,
                                   cloudRec: true, url: rec.url });
         for (const [k, uid] of [...curator.placements])
           if (uid === oldId){
@@ -3000,7 +3049,7 @@ const OUTBOX_SEND = {
 };
 async function outboxFlush(){
   if (outbox.sending || !outbox.items.length) return;
-  if (!cloud.on || !cloud.sess || cloud.viewing) return;   // nothing to talk to
+  if (!cloud.on || !cloud.sess || cloud.viewing || guestVisit.requested) return;
   outbox.sending = true;
   clearTimeout(outbox.timer); outbox.timer = 0;
   try {
@@ -3098,13 +3147,20 @@ async function loadMyCollection(){
 }
 async function bootCloud(){
   const { mode, data } = await cloudBoot();
-  if (mode === 'off') return;
+  if (mode === 'off') {
+    if (guestVisit.requested) {
+      introVoice({ mode: 'unreachable', slug: arrivingAt() });
+      curatorRefresh();
+    }
+    return;
+  }
   /* A signed-in session is the first moment there is anywhere to send what
      the outbox is holding — including anything left over from a previous
      visit that ended before the network came back. */
   if (cloud.sess) outboxFlush();
   if (mode === 'guest'){
     guestWorld = true;                     // a shared gallery has a far wall
+    curator.uploads.clear();               // install one collection, never merge visitors
     curator.placements.clear();            // a guest sees only their host's hanging
     applyCloudUploads(data.uploads);
     applyCloudPlacements(data.placements);
@@ -3136,7 +3192,8 @@ async function bootCloud(){
   } else if (mode === 'unreachable'){
     /* Not the same as 'missing'. The seeded museum is entirely local, so this
        is worth saying plainly rather than pretending the gallery is empty. */
-    flashHint('the collection is offline — the seeded gallery is all yours tonight');
+    if (guestVisit.requested) introVoice({ mode: 'unreachable', slug: arrivingAt() });
+    else flashHint('the collection is offline — the seeded gallery is all yours tonight');
   } else if (mode === 'mine' && data){
     applyCloudUploads(data.uploads);
     applyCloudPlacements(data.placements);
@@ -3183,6 +3240,8 @@ function hangPill(A){
 let lastSyncYaw = 0;
 let shadowsOn = true;
 let probeRequest = null, rafId = 0, forceDt = null;
+const renderMetrics = DBG_FULL ? new Metrics() : null;
+let metricsOn = DBG_FULL && /[?&]metrics\b/.test(location.search);
 /* Set only by DBG.pause, and read at all three points the loop re-arms
    itself. The gallery never pauses itself. */
 let loopPaused = false;
@@ -3409,6 +3468,7 @@ function judgeQuality(fpsAvg, t){
 
 function frame(t){
   if (!gl) return;
+  const metricsStart = metricsOn ? performance.now() : 0;
   if (gl.isContextLost()){
     cancelAnimationFrame(rafId);
     if (!loopPaused) rafId = requestAnimationFrame(frame);
@@ -4000,6 +4060,7 @@ function frame(t){
     probeRequest.resolve(luma);
     probeRequest = null;
   }
+  if (metricsOn) renderMetrics.frame(t, performance.now() - metricsStart);
   cancelAnimationFrame(rafId);          // manual DBG.frame steps must not fork the chain
   if (!loopPaused) rafId = requestAnimationFrame(frame);
 }
@@ -4143,6 +4204,36 @@ window.DBG = {
    and esbuild drops this whole block, which is what keeps that artifact
    under the 100 KiB free-upload threshold. See docs/permanence.md. */
 if (DBG_FULL) Object.assign(window.DBG, {
+  /** Enable bounded renderer diagnostics with DBG.metrics(true), then read
+   *  them with DBG.metrics(). GPU timing and GPU memory are not guessed: WebGL
+   *  exposes neither portably, and this hook never performs a readback. */
+  metrics(on){
+    if (on === true){ metricsOn = true; renderMetrics.reset(); }
+    else if (on === false){ metricsOn = false; }
+    else if (on === 'reset') renderMetrics.reset();
+    const debug = gl.getExtension('WEBGL_debug_renderer_info');
+    const heap = performance.memory;
+    const snapshot = renderMetrics.snapshot();
+    return {
+      ...snapshot,
+      renderer: {
+        api: gl.getParameter(gl.VERSION),
+        vendor: gl.getParameter(debug ? debug.UNMASKED_VENDOR_WEBGL : gl.VENDOR),
+        name: gl.getParameter(debug ? debug.UNMASKED_RENDERER_WEBGL : gl.RENDERER),
+        unmasked: !!debug,
+      },
+      viewport: { css: [canvas.clientWidth, canvas.clientHeight], drawingBuffer: [vpW, vpH], dpr: devicePixelRatio },
+      quality: { tier: PERF.q, pinned: PERF.pinned, dprCap: dprCap(), reflections: reflecting() },
+      rooms: { ...snapshot.rooms, cached: rooms.size },
+      art: artDiagnostics(),
+      gpu: { frameMs: null, status: 'unavailable: no asynchronous GPU timer query is collected' },
+      memory: {
+        gpuBytes: null,
+        status: 'unavailable: WebGL has no portable GPU memory accounting API',
+        jsHeapBytes: heap && Number.isFinite(heap.usedJSHeapSize) ? heap.usedJSHeapSize : null,
+      },
+    };
+  },
   tp(gx, gz, yaw = 0, gy = 0){
     goToRoom(gx, gz, yaw, gy);
     return `room (${player.gx},${player.gz},${player.gy}) yaw=${yaw}`;
@@ -4645,7 +4736,6 @@ canvas.addEventListener('webglcontextrestored', ()=>{
    So the card knows where it is. It says so the instant the page loads, from
    the name in the URL, long before the network has answered; and it says how
    large the collection is once it knows. */
-const SLUG_SHAPE = /^[a-z0-9][a-z0-9-]{0,31}$/;
 /* Whether the question "whose gallery is this" has been answered yet. Not
    `cloud.viewing`: a link naming a gallery that does not exist is answered
    too, and would otherwise sit under a card saying it was still fetching. */
@@ -4655,11 +4745,7 @@ let arrivalAnswered = false;
  *  Anything that is not slug-shaped could not name a gallery, and is ignored
  *  rather than printed: the card must never render a stranger's text. */
 function arrivingAt(){
-  try {
-    const q = new URLSearchParams(location.search).get('gallery');
-    const slug = (q || '').toLowerCase();
-    return SLUG_SHAPE.test(slug) ? slug : null;
-  } catch(e){ return null; }
+  return guestVisit.slug;
 }
 /* Every one of these is written with textContent. The slug came out of a URL
    somebody else composed, and the entrance card is not the place to find out
@@ -4670,23 +4756,29 @@ function introVoice(state){
      the backend's answer, and this is the boundary where it becomes something
      a person reads. textContent already makes it inert; this keeps it from
      being ugly as well. */
-  const slug = SLUG_SHAPE.test(state.slug || '') ? state.slug : 'that name';
-  arrivalAnswered = state.works !== undefined || state.mode === 'missing';
-  if (state.mode === 'missing'){
-    set('intro-kicker', 'Admission free');
-    set('enter', 'Enter the gallery');
-    set('intro-sub', 'No such collection');
-    set('intro-hook', `No gallery answers to the name ${slug}. Beyond this door is the endless `
-      + `museum instead — its halls are laid as you walk them, and every painting in it is `
-      + `made the moment you approach.`);
-    set('intro-fine', 'Wings without number · every visit hangs anew');
-    document.title = 'No such collection · LUMIÈRE';
+  const slug = SLUG_SHAPE.test(state.slug || '') ? state.slug : guestVisit.private ? 'your host' : 'that name';
+  const failed = state.mode === 'missing' || state.mode === 'unreachable';
+  arrivalAnswered = state.works !== undefined || failed;
+  document.getElementById('enter').disabled = failed || state.works === undefined;
+  document.getElementById('retry-collection').hidden = !failed;
+  document.getElementById('leave-collection').hidden = !failed;
+  if (failed){
+    set('intro-kicker', 'The curator’s collection');
+    set('enter', 'Collection unavailable');
+    set('intro-sub', state.mode === 'missing' ? 'No such collection' : 'Collection unavailable');
+    set('intro-hook', state.mode === 'missing'
+      ? `The collection ${slug} is not available. It may be unpublished or the link may be incorrect. Check the link with its curator, or try again.`
+      : `We could not load ${slug}’s collection. Your connection or the gallery service may be unavailable. Please try again.`);
+    set('intro-fine', 'No other collection has been loaded');
+    set('intro-note', 'Retry this collection, or explicitly open a separate museum below.');
+    document.title = 'Collection unavailable · LUMIÈRE';
     return;
   }
   set('intro-kicker', 'A private collection · Admission free');
   set('intro-sub', 'The Collection of ' + slug);
   set('enter', 'Enter the collection');
   set('intro-fine', 'Curated by ' + slug);
+  set('intro-note', state.works === undefined ? 'fetching the collection…' : 'the collection is ready');
   document.title = `${slug}’s collection · LUMIÈRE`;
   if (state.works === undefined){
     set('intro-hook', `You have been handed the key to ${slug}’s gallery. Every work in it was `
@@ -4701,9 +4793,15 @@ function introVoice(state){
   }
 }
 {
-  const slug = arrivingAt();
-  if (slug) introVoice({ mode: 'guest', slug });
+  if (guestVisit.requested) introVoice({ mode: guestVisit.slug || guestVisit.token ? 'guest' : 'missing', slug: arrivingAt() });
 }
+
+document.getElementById('leave-collection').href = location.pathname;
+document.getElementById('retry-collection').addEventListener('click', async () => {
+  introVoice({ mode: 'guest', slug: arrivingAt() });
+  try { await bootCloud(); }
+  catch { introVoice({ mode: 'unreachable', slug: arrivingAt() }); }
+});
 
 const introEl = document.getElementById('intro');
 {
@@ -4714,7 +4812,10 @@ const introEl = document.getElementById('intro');
     /* A guest is waiting on a network round trip, not on a painter, and saying
        "the first wing is being hung" while fetching somebody's collection is
        counting the wrong thing at them. */
-    if (arrivingAt() && !arrivalAnswered){ noteEl.textContent = 'fetching the collection…'; return; }
+    if (guestVisit.requested){
+      if (!arrivalAnswered) noteEl.textContent = 'fetching the collection…';
+      return;
+    }
     noteEl.textContent =
       g > 0 ? `the first wing is being hung · ${g} work${g===1?'':'s'} remain` :
       (storageOK && persist.visits > 1 ? `the gallery remembers you · visit ${persist.visits}`
@@ -4722,6 +4823,7 @@ const introEl = document.getElementById('intro');
   }, 350);
 }
 document.getElementById('enter').addEventListener('click', ()=>{
+  if (guestVisit.requested && (!arrivalAnswered || !cloud.viewing)) return;
   entered = true; setAudioActive(true);
   initAudio();               // inside the gesture — autoplay policy satisfied
   document.body.classList.add('entered');
@@ -4793,6 +4895,7 @@ if (gl){
     .then(bootCloud)
     .catch((e) => {
       console.warn('[boot] cloud unreachable — the seeded gallery is unaffected', e);
+      if (guestVisit.requested) introVoice({ mode: 'unreachable', slug: arrivingAt() });
       curatorRefresh();
     })
     .finally(() => { cloudSettled(); });

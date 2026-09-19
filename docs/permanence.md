@@ -1,5 +1,10 @@
 # Keeping LUMIÈRE online forever, for nothing
 
+> **Build-size update, 20 September 2026:** the current archive is 231,935 bytes
+> (226.5 KiB), above the 100 KiB threshold discussed below. Older size examples
+> and claims that this artifact fits that tier no longer apply. Check the
+> provider's current terms before uploading.
+
 > **Read this first: none of this stores your drawings.**
 >
 > What Arweave and IPFS preserve here is the *gallery software* — one HTML file

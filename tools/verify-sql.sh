@@ -37,6 +37,7 @@ echo "→ creating anon / authenticated roles"
 psql_q -v ON_ERROR_STOP=1 <<'SQL' >/dev/null
 create role anon nologin;
 create role authenticated nologin;
+create role service_role nologin bypassrls;
 grant usage on schema public, storage, auth to anon, authenticated;
 alter default privileges in schema public grant all on tables to anon, authenticated;
 SQL
@@ -178,6 +179,38 @@ echo
 echo "bucket limits"
 check "file size limit is set"                   12582912 "$(psql_q -c "select file_size_limit from storage.buckets where id='loans'")"
 check "mime allowlist is set"                    "{image/jpeg,image/png,image/webp}" "$(psql_q -c "select allowed_mime_types from storage.buckets where id='loans'")"
+
+echo "→ applying private-link migration twice (idempotence)"
+for _ in 1 2; do
+  docker exec -i "$C" psql -U postgres -d lumiere -v ON_ERROR_STOP=1 --single-transaction -q \
+    < supabase-secret-links.sql >/dev/null
+done
+psql_q -v ON_ERROR_STOP=1 <<'SQL' >/dev/null
+grant all on public.share_links to anon, authenticated;
+insert into public.uploads (id, owner, name, path, bucket) values
+  ('cccccccc-0000-0000-0000-000000000003','22222222-2222-2222-2222-222222222222','private despite public profile','22222222-2222-2222-2222-222222222222/private.jpg','private_loans');
+insert into public.placements (owner,k,upload_id) values
+  ('22222222-2222-2222-2222-222222222222','8,8:0','cccccccc-0000-0000-0000-000000000003');
+insert into public.share_links (owner,token_hash) values
+  ('22222222-2222-2222-2222-222222222222',repeat('a',64));
+SQL
+check "private bucket is not public" f "$(psql_q -c "select public from storage.buckets where id='private_loans'")"
+check "public profile does not disclose private uploads" 0 "$(as_anon "count(*) from public.uploads where bucket='private_loans'")"
+check "private placements stay hidden" 0 "$(as_anon "count(*) from public.placements where k='8,8:0'")"
+check "owner still reads private uploads" 1 "$(as_user "count(*) from public.uploads where bucket='private_loans'" 22222222-2222-2222-2222-222222222222)"
+check "anonymous visitors cannot enumerate link hashes" 0 "$(as_anon "count(*) from public.share_links")"
+check "other owners cannot enumerate link hashes" 0 "$(as_user "count(*) from public.share_links" 11111111-1111-1111-1111-111111111111)"
+check "link owner reads their link metadata" 1 "$(as_user "count(*) from public.share_links" 22222222-2222-2222-2222-222222222222)"
+check "owner cannot repoint an upload to another owner's image" ERR \
+  "$(rows_changed "update public.uploads set path='11111111-1111-1111-1111-111111111111/stolen.jpg' where bucket='private_loans'" 22222222-2222-2222-2222-222222222222)"
+check "authenticated callers cannot invoke privileged rotation" f \
+  "$(psql_q -c "select has_function_privilege('authenticated','public.rotate_gallery_share_link(uuid,text)','execute')")"
+psql_q -c "select public.rotate_gallery_share_link('22222222-2222-2222-2222-222222222222','invalid')" >/dev/null 2>&1 || true
+check "failed rotation preserves the working link" 1 \
+  "$(psql_q -c "select count(*) from public.share_links where revoked_at is null and token_hash=repeat('a',64)")"
+psql_q -v ON_ERROR_STOP=1 -c "select public.rotate_gallery_share_link('22222222-2222-2222-2222-222222222222',repeat('b',64))" >/dev/null
+check "successful rotation replaces exactly one active link" 1 \
+  "$(psql_q -c "select count(*) from public.share_links where revoked_at is null and token_hash=repeat('b',64)")"
 
 echo
 [ "$fail" = 0 ] && echo "ALL CHECKS PASSED" || { echo "SOME CHECKS FAILED"; exit 1; }

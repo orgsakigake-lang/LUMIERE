@@ -1,5 +1,48 @@
 # LUMIÈRE — The Endless Gallery
 
+## Curated exhibition preview
+
+The new **A Study in Stillness** experience is available as a local preview alongside
+the original gallery. It includes a light-filled reference room, six pre-generated works,
+guided viewpoints, free walking, a collection browser, and a full-size artwork
+viewer. The renderer loads only when you enter and stops drawing while idle or
+covered by a dialog.
+
+Room Settings now includes the original synthesized music programmes, rain-on-the-roof
+audio with overcast lighting, and volume. Sound is opt-in. Curator-specific links
+opened under this preview route to the original full gallery, preserving their identity.
+
+```sh
+npm install
+npm run dev:curated
+# Open http://127.0.0.1:8018/curated/
+```
+
+`npm run build:curated` creates the separate `curated/` static build. It leaves
+the committed legacy `index.html` and the `archive` workflow unchanged. The
+curated preview is a new reference exhibition; it does not migrate or replace
+existing local/cloud collections. Use **Explore endlessly** to reach the
+original experience.
+
+The generated `curated/` directory is ignored by git. Run `npm run build:site`
+to produce a deployable `site/` containing both entries. CI runs both browser
+suites and uploads this directory as the `gallery-site` artifact. The original
+entrance links to the Light Room in this combined build. Existing branch-based
+GitHub Pages hosting still serves only committed files; publish the combined
+artifact to make `/curated/` available. The standalone archive omits that link.
+
+Checks: `npm run typecheck`, `npm run test:unit`, `npm run test:curated`.
+The [implementation status](docs/performance/renderer-decision.md) distinguishes
+completed preview work from renderer comparison and physical-device gates.
+See [sharing and ambience status](docs/sharing-and-ambience-status.md) for the
+compatibility fixes and the separately proposed secret-link privacy migration.
+The secret-link backend is disabled by default (`PRIVATE_SHARING = false` in
+`src/config.js`) until its migration and Edge Functions have been deployed.
+Existing installations continue using their original upload bucket. See
+[private sharing rollout](docs/private-sharing-rollout.md) for activation steps.
+
+## Original gallery
+
 A first-person walk through an endless, procedurally generated art gallery.
 Every painting is a unique generative artwork, painted into being the moment you
 approach it — and between the seeded works, you may hang your own.

@@ -127,6 +127,19 @@ export const pctx = pscratch.getContext('2d', { alpha: false, willReadFrequently
 
 export const artState = { jobs: new Map(), queue: [], active: null, uploadReady: null,
                    painted: [], placards: [], beheld: 0 };
+export function artDiagnostics(){
+  const used = (pool) => pool.slots.filter((slot) => slot.used).length;
+  return {
+    jobs: artState.jobs.size,
+    queued: artState.queue.length,
+    active: !!artState.active,
+    uploadReady: !!artState.uploadReady,
+    painted: artState.painted.length,
+    placards: artState.placards.length,
+    painters: artState.painters ?? null,
+    pools: { L: used(POOLS.L), P: used(POOLS.P), S: used(POOLS.S), W: used(POOLS.W), placards: used(PPOOL) },
+  };
+}
 /** Drop every off-thread result still waiting for a texture. An ImageBitmap
  *  holds its pixels until closed, so a teardown that forgets these leaks a
  *  few megabytes every time the world is rebuilt. */
@@ -672,4 +685,3 @@ export function dropRoomGL(r){
   r.vao = r.vbo = r.ibo = null; r.nIdx = 0;
   r.flameVAO = r.flameVBO = null; r.nFlames = 0;
 }
-

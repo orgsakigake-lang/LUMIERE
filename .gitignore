@@ -7,3 +7,5 @@ blob-report/
 # built by npm run archive; upload it, don't commit it
 archive/
 dev/
+/curated/
+/site/

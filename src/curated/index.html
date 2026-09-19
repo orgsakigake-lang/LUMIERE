@@ -1,0 +1,93 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#f4f2ec">
+  <meta name="description" content="A little space for a closer look. Explore six generative artworks in LUMIÈRE's quiet, light-filled exhibition.">
+  <title>A Study in Stillness — LUMIÈRE</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='3' fill='%233d4b3d'/%3E%3Cpath d='M10 8v16h13' fill='none' stroke='%23f4f2ec' stroke-width='2'/%3E%3C/svg%3E">
+  <link rel="stylesheet" href="./styles.css">
+</head>
+<body data-mode="entrance">
+  <a class="skip-link" href="#main">Skip to exhibition</a>
+  <header class="site-header">
+    <a class="brand" href="./" aria-label="Lumière home"><span class="brand-mark" aria-hidden="true">L</span>LUMIÈRE<span class="brand-caption">A GALLERY WITHOUT HURRY</span></a>
+    <nav aria-label="Main navigation">
+      <button class="nav-link active" data-open="entrance" aria-current="page">The exhibition</button>
+      <button class="nav-link" data-open="browse">The collection <span class="count">06</span></button>
+    </nav>
+    <a class="endless-link" href="../index.html">Explore endlessly <span aria-hidden="true">↗</span></a>
+  </header>
+
+  <main id="main" tabindex="-1">
+    <section id="entrance" aria-labelledby="cover-title">
+      <div class="exhibition-bar"><span><i class="live-dot" aria-hidden="true"></i> THE CURRENT EXHIBITION</span><span>VOL. 001 <span class="bar-separator">/</span> OPEN TO EVERYONE</span></div>
+      <div class="cover">
+        <div class="cover-copy">
+          <div class="eyebrow">A STUDY IN STILLNESS</div>
+          <h1 id="cover-title">The art of<br><em>slowing down.</em></h1>
+          <p class="cover-description">Six works. A room filled with light.<br>A little space to see things differently.</p>
+          <div class="entry-actions">
+            <button class="primary" id="enter-exhibition">Enter the exhibition <span aria-hidden="true">↗</span></button>
+            <button class="text-button" id="browse-works">Browse the works <span aria-hidden="true">→</span></button>
+          </div>
+          <p class="visit-note"><span class="small-sun" aria-hidden="true">✳</span> Take your time. There is no right way to visit.</p>
+          <p id="status" role="status" aria-live="polite"></p>
+        </div>
+        <figure class="cover-image">
+          <img src="./cover.webp" width="1400" height="1000" alt="A sunlit gallery with pale stone walls, framed abstract artworks, and a warm oak bench." fetchpriority="high">
+          <div class="image-label"><span class="label-square" aria-hidden="true"></span> A SPACE FOR CURIOSITY</div>
+          <figcaption><span>THE LIGHT ROOM</span><span>Walk in. Look closer. Stay a while.</span></figcaption>
+        </figure>
+      </div>
+      <div class="collection-preview">
+        <div><span class="eyebrow">IN THIS EXHIBITION</span><h2>Different ways<br>of paying attention.</h2></div>
+        <div id="preview-works" class="preview-works"></div>
+        <button class="round-button" data-open="browse" aria-label="See all six artworks">↗</button>
+      </div>
+    </section>
+
+    <section id="collection" hidden aria-labelledby="collection-title">
+      <div class="collection-heading"><div><p class="eyebrow">A STUDY IN STILLNESS / THE COLLECTION</p><h1 id="collection-title" tabindex="-1">Six ways of seeing</h1></div><p>Follow a line. Find a rhythm.<br>Let something unexpected catch your eye.</p></div>
+      <div id="works-grid" class="works-grid"></div>
+    </section>
+
+    <section id="tour" hidden aria-label="Interactive exhibition">
+      <div id="scene-host"></div>
+      <div class="tour-top"><button class="surface-button" id="leave-tour" aria-label="Back to exhibition cover">← <span>Exhibition</span></button><div class="room-name"><span class="eyebrow">A STUDY IN STILLNESS</span><strong>The Light Room</strong></div><button class="surface-button" id="tour-settings" aria-haspopup="dialog">Settings</button></div>
+      <div id="tour-hint" class="tour-hint">Drag to look · W A S D to walk · or follow the works below</div>
+      <div class="tour-bottom">
+        <div class="tour-location"><span class="live-dot" aria-hidden="true"></span><span>ROOM 01 <span class="muted">/ THE LIGHT ROOM</span></span></div>
+        <div class="tour-guide"><button class="round-button" id="previous-view" aria-label="Previous viewpoint">←</button><div><span id="view-counter" class="eyebrow">01 / 07</span><strong id="view-name">The main gallery</strong></div><button class="round-button" id="next-view" aria-label="Next viewpoint">→</button></div>
+        <button class="primary" id="inspect-work" aria-label="View artwork">View artwork <span aria-hidden="true">↗</span></button>
+      </div>
+    </section>
+  </main>
+
+  <footer class="site-footer"><span>LUMIÈRE <span class="footer-divider">/</span> Art, space & a slower pace.</span><span>PROCEDURALLY MADE. THOUGHTFULLY ARRANGED.</span></footer>
+
+  <dialog id="art-viewer" aria-labelledby="art-title">
+    <div class="viewer-toolbar"><span class="eyebrow">A CLOSER LOOK</span><button class="close-button" id="close-viewer" aria-label="Close artwork">×</button></div>
+    <div class="viewer-content">
+    <div class="art-image-wrap"><img id="art-image" alt="" width="768" height="960"><p id="image-error" hidden>This image could not load. <button id="retry-image">Try again</button></p></div>
+    <div class="art-details"><p class="eyebrow" id="art-number"></p><h2 id="art-title"></h2><p class="art-medium" id="art-medium"></p><p class="art-description" id="art-description"></p><div class="art-meta"><span>FROM THE EXHIBITION</span><strong>A Study in Stillness</strong><span>PROCESS</span><strong>Deterministic generative art</strong></div><div class="art-navigation"><button class="round-button" id="previous-art" aria-label="Previous artwork">←</button><span id="art-position"></span><button class="round-button" id="next-art" aria-label="Next artwork">→</button></div></div>
+    </div>
+  </dialog>
+
+  <dialog id="settings" aria-labelledby="settings-title">
+    <button class="close-button" id="close-settings" aria-label="Close settings">×</button>
+    <p class="eyebrow">MAKE YOURSELF AT HOME</p><h2 id="settings-title">Your visit</h2>
+    <label for="quality">Display quality</label><select id="quality"><option value="auto">Automatic</option><option value="low">Battery saver</option><option value="high">High detail</option></select>
+    <p>Automatic adapts the scene resolution to your device. The artworks stay the same at every setting.</p>
+    <label for="soundscape">Soundscape</label><select id="soundscape" aria-describedby="sound-note"></select>
+    <label for="sound-volume">Sound volume</label><input id="sound-volume" type="range" min="0" max="1" step="0.05" value="0.5">
+    <p id="sound-note" role="status"></p>
+    <label class="check-label"><input id="motion" type="checkbox"> Gentle viewpoint transitions</label>
+    <p>Drag to look around. Use W A S D or the arrow keys to walk. The viewpoint buttons offer a guided visit without walking.</p>
+    <button class="text-button" id="browse-from-tour">Open the artwork collection →</button>
+  </dialog>
+  <noscript><p class="noscript">This interactive exhibition needs JavaScript. You can still view <a href="./art/quiet-current-full.webp">Quiet Current</a> or <a href="./art/slow-earth-full.webp">Slow Earth</a> directly.</p></noscript>
+  <script type="module" src="./app.js"></script>
+</body>
+</html>

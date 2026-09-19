@@ -117,4 +117,6 @@ export const trace = DEV ? console.log.bind(console) : () => {};
    fully-local mode (nothing else changes). The anon key is safe to
    publish; security lives in the row-level-security policies. */
 export const CLOUD_URL = 'https://forflzkfuiacglhwehmd.supabase.co';
+// Enable only after deploying supabase-secret-links.sql and both Edge Functions.
+export const PRIVATE_SHARING = false;
 export const CLOUD_KEY = 'sb_publishable_FHgh198QYe6iPX5NbLM1ZA_RfC6bCIR';

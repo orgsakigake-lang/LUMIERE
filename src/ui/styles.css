@@ -63,6 +63,10 @@
          font-size:.8rem; letter-spacing:.34em; text-transform:uppercase; cursor:pointer;
          transition:background .35s ease, color .35s ease, border-color .35s ease;}
   #enter:hover, #enter:focus-visible{background:var(--brass); color:var(--ink); border-color:var(--brass); outline:none;}
+  #enter:disabled{opacity:.45; cursor:wait; pointer-events:none;}
+  .collection-recovery{display:flex; flex-direction:column; align-items:center; gap:8px;}
+  .collection-recovery button,.collection-recovery a{font:inherit; color:var(--brass); background:none; border:0; padding:12px; min-height:44px; cursor:pointer;}
+  .collection-recovery [hidden]{display:none;}
 
   .legend{margin-top:2.4rem; font-size:.72rem; letter-spacing:.16em; color:var(--bone-dim);
           text-transform:uppercase; line-height:2.1;}
@@ -507,3 +511,18 @@
   @media (prefers-reduced-motion: reduce){
     *{transition:none !important;}
   }
+
+/* The office is a workspace: readable labels, generous targets, clear groups. */
+#curator .panel { border-radius: 4px; width: min(90vw, 52rem); }
+#curator .sub { font-size: .78rem; line-height: 1.65; letter-spacing: .06em; text-transform: none; }
+#curator .btn, #curator .sw { min-height: 44px; letter-spacing: .08em; font-size: .78rem; }
+#curator input:not([type=file]) { min-height: 44px; box-sizing: border-box; }
+#curator .sharing-explanation { flex-basis: 100%; margin: 0; color: var(--bone-dim); font-size: .9rem; line-height: 1.6; }
+#cur-private-share { padding: 1.2rem 0; border-top: 1px solid var(--brass-faint); border-bottom: 1px solid var(--brass-faint); }
+#cur-private-link, #cur-share-link { overflow-wrap: anywhere; }
+.curated-invitation { display: inline-flex; align-items: center; justify-content: center; flex-wrap: wrap; gap: .5rem 1rem; min-height: 44px; margin-top: 1.25rem; padding: .6rem 1.1rem; border: 1px solid var(--brass-faint); color: var(--bone); font-size: .9rem; text-decoration: none; }
+.curated-invitation > span:first-child { color: var(--bone-dim); font-size: .72rem; letter-spacing: .08em; }
+.curated-invitation:hover { background: rgba(201,169,106,.12); }
+.curated-invitation:focus-visible { outline: 2px solid var(--brass); outline-offset: 4px; }
+#intro { overflow-y: auto; }
+@media (max-height: 640px) { #intro { align-items: flex-start; } #intro .card { padding-top: 1.5rem; padding-bottom: 1.5rem; } }

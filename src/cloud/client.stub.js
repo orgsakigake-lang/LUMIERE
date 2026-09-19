@@ -29,6 +29,8 @@ export const cloudSignUp = unreachable;
 export const cloudUploadBlob = unreachable;
 export const cloudClaimSlug = unreachable;
 export const cloudSetPublished = unreachable;
+export const cloudManageShareLink = unreachable;
+export async function cloudArtworkURL(record){ return record.url; }
 
 /* Writes report failure rather than throwing: the curator calls these
    fire-and-forget, and an archive copy should stay quiet, not nag. */

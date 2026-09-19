@@ -7,6 +7,7 @@ import { cpus } from 'node:os';
    Never hard-code a golden hash recorded elsewhere. */
 export default defineConfig({
   testDir: './test',
+  testIgnore: ['**/unit/**', '**/curated.spec.js'],
   /* The suite is split by group across spec files, and Playwright gives each
      file its own worker. That is what makes concurrency work here: the groups
      have genuinely different shapes — determinism runs generators with no
