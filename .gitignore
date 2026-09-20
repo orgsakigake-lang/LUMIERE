@@ -9,3 +9,4 @@ archive/
 dev/
 /curated/
 /site/
+.worktrees/
