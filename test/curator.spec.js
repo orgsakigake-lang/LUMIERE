@@ -18,10 +18,25 @@ test.describe('the local-first curator', () => {
     await expect(page.locator('#cur-gather')).toBeVisible();
     await expect(page.locator('#cur-state')).toContainText(/On this device|This visit only/);
     await expect(page.locator('#cur-sync')).toBeVisible();
-    await expect(page.locator('#cur-cloud-lock')).toBeHidden();
-
-    await page.locator('#cur-sync summary').click();
+    await expect(page.locator('#cur-sync')).toHaveAttribute('open', '');
     await expect(page.locator('#cur-cloud-lock')).toBeVisible();
+    await expect(page.locator('#cur-cloud-lock')).toContainText('claim a gallery name');
+  });
+
+
+  test('a signed-in curator sees claim name without opening another drawer', async ({ page }) => {
+    await boot(page);
+    await page.evaluate(() => window.DBG.cloudReady());
+    await page.evaluate(() => {
+      window.DBG.cloudSessForTest(true);
+      document.getElementById('sw-curator').click();
+    });
+
+    await expect(page.locator('#cur-sync')).toHaveAttribute('open', '');
+    await expect(page.locator('#cur-share')).toBeVisible();
+    await expect(page.locator('#cur-slug')).toBeVisible();
+    await expect(page.locator('#cur-slug-save')).toBeVisible();
+    await expect(page.locator('#cur-share-link')).toContainText('claim a name');
   });
 
   test('a signed-out batch persists valid works and isolates a corrupt file', async ({ page }) => {

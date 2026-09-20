@@ -51,7 +51,7 @@ import { player, M_P, M_V, M_MV, M_PV, vpW, vpH, setViewport,
 import { setLoanProvider, setShadowProgram, releaseSlot, freeAllArtSlots, discardPainted, preemptArtJobs, artJobKey,
          syncArtJobs, pumpArt, updateHudStat, markSeen, paintBasis, makeRoomVAO,
          dropRoomGL, TEX_SIZES, LOAN_SIZES, POOLS, PPOOL, scratch, sctx, pscratch, pctx,
-         artState, artDiagnostics, PB, SHA } from './art/scheduler.js';
+         artState, artDiagnostics, placardTextFor, PB, SHA } from './art/scheduler.js';
 
 import VS_SHADOW from './render/shaders/shadow.vert';
 import FS_SHADOW from './render/shaders/shadow.frag';
@@ -2142,12 +2142,21 @@ function saveWorkText(rec){
   /* A work already on a wall keeps its placard in sync with the sheet. The old
      plaque texture has to go back to the pool first, or the frame keeps
      rendering the filename it was hung under. */
-  for (const A of artState.placards) if (A.overrideKey
-      && curator.placements.get(A.overrideKey) === rec.id){
+  const refreshed = new Set();
+  const refresh = (A) => {
+    if (refreshed.has(A)) return;
+    refreshed.add(A);
     A.title = rec.name;
+    A.overrideNote = rec.note || '';
     if (A.ptex){ releaseSlot(A.ptex); A.ptex = null; }
-    if (!A.mini) A.ptexWanted = true;
-  }
+    if (!A.mini && !A.ptexWanted){ A.ptexWanted = true; artState.placards.push(A); }
+  };
+  for (const [, o] of curator.overrides)
+    if (o.A.overrideKey && curator.placements.get(o.A.overrideKey) === rec.id)
+      refresh(o.A);
+  for (const A of artState.placards) if (A.overrideKey
+      && curator.placements.get(A.overrideKey) === rec.id)
+    refresh(A);
 }
 
 /** Record what an upload's own proportions imply, and pre-fill its answer. */
@@ -2195,7 +2204,7 @@ function curatorClearPlacement(k){
   const o = curator.overrides.get(k);
   if (o){
     gl.deleteTexture(o.tex);
-    o.A.override = null; o.A.overrideName = false; o.A.overrideKey = null;
+    o.A.override = null; o.A.overrideName = false; o.A.overrideNote = ''; o.A.overrideKey = null;
     o.A.title = null;                             // the seeded title returns
     if (o.A.ptex){ releaseSlot(o.A.ptex); o.A.ptex = null; }
     if (!o.A.mini){ o.A.ptexWanted = true; artState.placards.push(o.A); }
@@ -2372,7 +2381,7 @@ async function applyPlacement(r, A, i){
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
     if (window.__aniso)
       gl.texParameterf(gl.TEXTURE_2D, window.__aniso.ext.TEXTURE_MAX_ANISOTROPY_EXT, window.__aniso.max);
-    A.override = tex; A.overrideKey = k; A.overrideName = true;
+    A.override = tex; A.overrideKey = k; A.overrideName = true; A.overrideNote = rec.note || '';
     A.title = rec.name; A.fadeAt = performance.now();
     setFixture(r, i, true);
     if (A.ptex){ releaseSlot(A.ptex); A.ptex = null; }
@@ -2669,6 +2678,11 @@ function curatorRefresh(){
   const sync = document.getElementById('cur-sync');
   sync.hidden = !cloud.on || guest;
   const showCloudLock = cloud.on && !cloud.sess && !guest;
+  /* Share controls used to live behind a closed details drawer. That made the
+     deployed office look as if Claim name and link sharing did not exist.
+     Open the drawer whenever cloud sharing is relevant: signed-out curators see
+     the sign-in path, signed-in curators see Claim name immediately. */
+  sync.open = cloud.on && !guest;
   document.getElementById('cur-cloud-lock').hidden = !showCloudLock;
   /* Ask the project what it will do before the visitor finds out by waiting. */
   if (showCloudLock && !document.getElementById('curator').hidden) warnAboutConfirmation();
@@ -4695,6 +4709,7 @@ window.DBG = {
   reviewForTest(recs, reopened){ curatorReview(recs, reopened); return true; },
   /** What a placard and the enlarged view would print for a frame. One call,
    *  because the whole point of describeWork is that they cannot disagree. */
+  placardTextForTest(A){ return placardTextFor(A); },
   caption(gx, gz, i){
     const r = getRoom(gx, gz);
     const A = r && r.artworks && r.artworks[i];

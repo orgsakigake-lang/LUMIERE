@@ -369,45 +369,60 @@ const MAKERS = ['The Lumière Press', 'Atelier Nocturne', 'The Vermilion Worksho
 const MEDIA  = ['ink and flow on rag', 'density study, iterated', 'glazed tile, relaid',
                 'fractured glass, releaded', 'cut paper and gouache', 'dithered graphite'];
 
+function wrapPlacardText(g, text, maxWidth, maxLines){
+  const words = String(text || '').trim().split(/\s+/).filter(Boolean);
+  const lines = [];
+  let line = '';
+  for (const word of words){
+    const next = line ? line + ' ' + word : word;
+    if (g.measureText(next).width <= maxWidth || !line) line = next;
+    else { lines.push(line); line = word; if (lines.length === maxLines) break; }
+  }
+  if (lines.length < maxLines && line) lines.push(line);
+  const last = lines.length - 1;
+  if (last >= 0 && g.measureText(lines[last]).width > maxWidth){
+    while (g.measureText(lines[last] + '…').width > maxWidth && lines[last].length > 4)
+      lines[last] = lines[last].slice(0, -1);
+    lines[last] += '…';
+  }
+  return lines;
+}
+
+export function placardTextFor(A){
+  const title = String(A.title || 'Untitled').trim() || 'Untitled';
+  if (A.overrideName){
+    const note = String(A.overrideNote || '').trim();
+    return { title, note, loan: true, meta: 'private loan · the curator’s collection' };
+  }
+  const i = A.algo % ALGOS.length;
+  const year = 1870 + (h2(A.seed, 0x9999, WORLD_SEED) % 200);
+  return { title, note: '', loan: false,
+    meta: `${MAKERS[h2(A.seed, 0x5AFE, WORLD_SEED) % MAKERS.length]}, ${year}`,
+    detail: `${MEDIA[i]} · edition 1 of 1` };
+}
+
 function renderPlacard(A){
   const g = pctx;
   g.fillStyle = '#E9E2D2'; g.fillRect(0, 0, 256, 128);
   g.fillStyle = '#D6CDB8'; g.fillRect(0, 0, 256, 3);
   g.textBaseline = 'alphabetic';
 
-  /* Wrap to two lines, and only then give up and clip. Most titles fit one. */
+  const text = placardTextFor(A);
   g.fillStyle = '#1F1C18';
   g.font = 'italic 19px Georgia, serif';
-  const words = String(A.title || 'Untitled').split(' ');
-  const lines = [];
-  let line = '';
-  for (const word of words){
-    const next = line ? line + ' ' + word : word;
-    if (g.measureText(next).width <= 228 || !line) line = next;
-    else { lines.push(line); line = word; if (lines.length === 2) break; }
-  }
-  if (lines.length < 2 && line) lines.push(line);
-  if (lines.length === 2 && g.measureText(lines[1]).width > 228){
-    while (g.measureText(lines[1] + '…').width > 228 && lines[1].length > 4)
-      lines[1] = lines[1].slice(0, -1);
-    lines[1] += '…';
-  }
-  const twoLine = lines.length > 1;
-  lines.forEach((l, i) => g.fillText(l, 14, 34 + i*22));
+  const titleLines = wrapPlacardText(g, text.title, 228, 2);
+  titleLines.forEach((l, i) => g.fillText(l, 14, 31 + i*21));
 
-  const y0 = twoLine ? 78 : 64;
-  if (A.overrideName){
-    g.font = '13px Georgia, serif'; g.fillStyle = '#5D574C';
-    g.fillText('from the curator’s own hand', 14, y0);
-    g.font = '12px Georgia, serif'; g.fillStyle = '#837C6E';
-    g.fillText('private loan · not for sale', 14, y0 + 22);
+  const y0 = titleLines.length > 1 ? 71 : 56;
+  g.font = '12px Georgia, serif'; g.fillStyle = '#5D574C';
+  g.fillText(text.meta, 14, y0);
+
+  g.font = '11px Georgia, serif'; g.fillStyle = '#837C6E';
+  if (text.loan && text.note){
+    const noteLines = wrapPlacardText(g, text.note, 228, 2);
+    noteLines.forEach((l, i) => g.fillText(l, 14, y0 + 18 + i*16));
   } else {
-    const i = A.algo % ALGOS.length;
-    const year = 1870 + (h2(A.seed, 0x9999, WORLD_SEED) % 200);
-    g.font = '13px Georgia, serif'; g.fillStyle = '#5D574C';
-    g.fillText(`${MAKERS[h2(A.seed, 0x5AFE, WORLD_SEED) % MAKERS.length]}, ${year}`, 14, y0);
-    g.font = '12px Georgia, serif'; g.fillStyle = '#837C6E';
-    g.fillText(`${MEDIA[i]} · edition 1 of 1`, 14, y0 + 22);
+    g.fillText(text.detail || 'private loan · not for sale', 14, y0 + 20);
   }
 }
 
@@ -465,6 +480,7 @@ export function pumpArt(budgetMs = 3.5){
         gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, gl.RGBA, gl.UNSIGNED_BYTE, pscratch);
         gl.generateMipmap(gl.TEXTURE_2D);
         A.ptex = slot;
+        A.ptexWanted = false;
       } else artState.placards.push(A);
     }
   }

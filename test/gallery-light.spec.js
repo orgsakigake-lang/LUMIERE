@@ -251,6 +251,17 @@ test.describe.serial('inside the gallery — light and loans', () => {
     expect(r.loan.medium, 'a loan gets no fabricated year or medium').not.toMatch(/\d{4}/);
   });
 
+  test('a private-loan wall placard carries the curator title and description', async () => {
+    const r = await page.evaluate(() => window.DBG.placardTextForTest({
+      title: 'Study of a Hand', overrideName: true,
+      overrideNote: 'Graphite on cartridge paper, 2026. Drawn from life.',
+    }));
+    expect(r.loan).toBe(true);
+    expect(r.title).toBe('Study of a Hand');
+    expect(r.meta).toContain('private loan');
+    expect(r.note).toContain('Graphite on cartridge paper');
+  });
+
   test('the wall label and the enlarged view cannot disagree', async () => {
     /* Two places print the same work. They were two copies of the same string
        building, which is how a placard and a caption drift apart. Both now go
