@@ -50,6 +50,30 @@ test.describe('the local-first curator', () => {
     await expect(page.locator('#cur-grid .cur-item .nm')).toHaveText('sunrise');
   });
 
+  test('a signed-in cloud outage still keeps a new upload locally', async ({ page }) => {
+    await boot(page);
+    await page.evaluate(() => {
+      window.DBG.cloudSessForTest(true);
+      window.DBG.cloudFetch(() => Promise.reject(new TypeError('Failed to fetch')));
+      document.getElementById('sw-curator').click();
+    });
+    await page.locator('#cur-file').setInputFiles([
+      { name: 'offline.jpg', mimeType: 'image/jpeg', buffer: image },
+    ]);
+
+    await expect(page.locator('#cur-upload-list [data-state="saved"]')).toHaveCount(1, { timeout: 60_000 });
+    await expect(page.locator('#cur-grid .cur-item')).toHaveCount(1);
+    await expect(page.locator('#cur-storage-label')).toHaveText('Needs attention');
+    const state = await page.evaluate(async () => ({
+      works: window.DBG.collectionForTest(),
+      local: await window.DBG.localRecordsForTest(),
+    }));
+    expect(state.works).toHaveLength(1);
+    expect(state.works[0].cloudRec).toBe(false);
+    expect(state.works[0].hasBlob).toBe(true);
+    expect(state.local).toEqual([state.works[0].id]);
+  });
+
   test('automatic arrangement preserves manual work and undo restores the exact map', async ({ page }) => {
     await boot(page);
     const original = await page.evaluate(() => {

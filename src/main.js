@@ -2075,17 +2075,22 @@ async function addCuratorFile(file, item){
     const refused = quotaRefusal(blob);
     if (refused) throw new Error(refused);
     const name = file.name.replace(/\.[^.]+$/, '');
-    let record;
+    const orientation = orientationOf(shape.w, shape.h);
+    const localId = 'u' + crypto.randomUUID();
+    const localRecord = { id: localId, name, note: '', blob, orientation, lineArt };
+    if (curator.db) await putLocalWork(curator.db, localRecord);
+    let record = { ...localRecord, url: URL.createObjectURL(blob) };
     if (cloud.sess){
-      const saved = await cloudUploadBlob(name, blob, '');
-      record = { ...saved, name, note: '', blob, cloudRec: true,
-                 url: URL.createObjectURL(blob) };
-    } else {
-      const id = 'u' + crypto.randomUUID();
-      record = { id, name, note: '', blob, url: URL.createObjectURL(blob) };
-      if (curator.db) await putLocalWork(curator.db, {
-        id, name, note: '', blob, orientation: orientationOf(shape.w, shape.h), lineArt,
-      });
+      try {
+        const saved = await cloudUploadBlob(name, blob, '');
+        if (curator.db) await markLocalWorksSynced(curator.db,
+          [{ local: localRecord, remote: saved }], cloud.sess.uid);
+        record = { ...record, ...saved, id: saved.id, cloudRec: true, localBackupId: localId };
+        curator.localToRemote.set(localId, saved.id);
+      } catch(error){
+        console.warn('[curator] cloud upload deferred', file.name, error);
+        curator.syncIssue = 'This image is saved here. The cloud could not be reached; add it to this account from Sync & share when the connection returns.';
+      }
     }
     noteShape(record, shape);
     curator.uploads.set(record.id, record);
@@ -2115,6 +2120,7 @@ async function curatorAddFiles(files){
     if (record) added.push(record);
   }
   curatorGrid();
+  curatorRefresh();
   if (added.length) curatorReview(added);
 }
 /** Persist a work's title and description wherever that work lives.
