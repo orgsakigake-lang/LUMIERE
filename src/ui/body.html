@@ -128,14 +128,21 @@
       </div>
       <!-- Shown only to somebody following a shared link. -->
       <div class="sub" id="cur-guest-note" hidden></div>
-      <div class="row" id="cur-add-row">
-        <label class="btn" for="cur-file">Add works…</label>
-        <input type="file" id="cur-file" accept="image/*" multiple hidden>
-        <button class="btn" id="cur-edit" hidden>Edit works…</button>
-        <button class="btn" id="cur-gather">Gather into a wing</button>
-        <button class="btn" id="cur-migrate" hidden>Send local works to the cloud</button>
-        <button class="btn" id="cur-close">Return to the gallery</button>
-        <button class="btn" id="cur-rekey">Change key</button>
+      <div id="cur-add-row">
+        <div id="cur-drop" role="button" tabindex="0" aria-controls="cur-file">
+          <strong>Add works</strong>
+          <span>Drop images here or choose several at once.</span>
+          <label class="btn" for="cur-file">Choose images</label>
+          <input type="file" id="cur-file" accept="image/*" multiple hidden>
+        </div>
+        <div id="cur-upload-list" aria-live="polite"></div>
+        <div class="row cur-add-actions">
+          <button class="btn" id="cur-edit" hidden>Edit works…</button>
+          <button class="btn" id="cur-gather">Gather into a wing</button>
+          <button class="btn" id="cur-migrate" hidden>Send local works to the cloud</button>
+          <button class="btn" id="cur-close">Return to the gallery</button>
+          <button class="btn" id="cur-rekey">Change key</button>
+        </div>
       </div>
       <div class="sub" id="cur-outbox" hidden></div>
       <div id="cur-grid"></div>

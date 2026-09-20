@@ -395,6 +395,32 @@
   .btn:focus-visible{outline:none; border-color:var(--brass);
       box-shadow:0 0 0 1px var(--brass);}
   #curator .row{display:flex; gap:.8rem; align-items:center; flex-wrap:wrap; margin-top:1rem;}
+  #cur-add-row{margin-top:1rem;}
+  #cur-drop{display:grid; grid-template-columns:1fr auto; align-items:center; gap:.25rem 1rem;
+            min-height:5.5rem; box-sizing:border-box; padding:1rem 1.1rem;
+            border:1px dashed rgba(201,169,106,.42); background:rgba(201,169,106,.025);
+            cursor:pointer; transition:border-color .2s ease, background-color .2s ease;}
+  #cur-drop strong{color:var(--bone); font-size:.9rem; font-weight:400;}
+  #cur-drop > span{color:var(--bone-dim); font-size:.75rem; line-height:1.5;}
+  #cur-drop .btn{grid-column:2; grid-row:1 / span 2; display:flex; align-items:center;
+                 justify-content:center; min-height:44px;}
+  #cur-drop:hover, #cur-drop:focus-visible, #cur-drop.dragging{border-color:var(--brass);
+                 background:rgba(201,169,106,.08); outline:none;}
+  #cur-drop:focus-visible{box-shadow:0 0 0 2px #14110D, 0 0 0 3px var(--brass);}
+  #cur-upload-list:not(:empty){display:grid; gap:.45rem; margin-top:.65rem;}
+  .cur-upload-item{display:grid; grid-template-columns:2.7rem minmax(0,1fr) auto;
+                   align-items:center; gap:.75rem; min-height:3.35rem; padding:.4rem .55rem;
+                   border:1px solid rgba(201,169,106,.16);}
+  .cur-upload-item[data-state="error"]{border-color:rgba(201,107,90,.55);}
+  .cur-upload-thumb{width:2.7rem; height:2.7rem; object-fit:cover; background:#0C0A08;}
+  .cur-upload-copy{min-width:0;}
+  .cur-upload-name{overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
+                   color:var(--bone); font-size:.76rem;}
+  .cur-upload-status{margin-top:.15rem; color:var(--bone-dim); font-size:.68rem; line-height:1.35;}
+  .cur-upload-item[data-state="saved"] .cur-upload-status{color:#9CB89A;}
+  .cur-upload-item[data-state="error"] .cur-upload-status{color:#D58A7C;}
+  .cur-upload-actions{display:flex; gap:.35rem;}
+  .cur-upload-actions .btn{min-height:44px; padding:.45rem .75rem; letter-spacing:.08em;}
   #cur-grid{display:grid; grid-template-columns:repeat(auto-fill, minmax(7.2rem, 1fr));
             gap:1rem; margin-top:1.3rem;}
   .cur-item{position:relative; cursor:pointer; border:1px solid rgba(201,169,106,.16);
@@ -514,6 +540,10 @@
     #plan-storeys{gap:.6rem; font-size:.6rem;}
     #plan-storey{min-width:7rem;}
     #curator input:not([type=file]){width:100%; box-sizing:border-box;}
+    #cur-drop{grid-template-columns:1fr;}
+    #cur-drop .btn{grid-column:1; grid-row:auto; margin-top:.45rem;}
+    .cur-upload-item{grid-template-columns:2.7rem minmax(0,1fr);}
+    .cur-upload-actions{grid-column:1 / -1; justify-content:flex-end;}
     /* Four columns of review controls do not survive a phone. Stack them. */
     .rv-row{grid-template-columns:3.4rem 1fr; gap:.55rem;}
     .rv-row img{width:3.4rem; height:3.4rem;}

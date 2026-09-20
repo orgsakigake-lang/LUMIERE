@@ -1546,6 +1546,7 @@ const curator = {
   overrides: new Map(),      // key → {tex, r, A}
   fills: new Map(),          // upload id → 'mount' | 'bleed'
   applying: new Set(),
+  uploadBatch: [],
   db: null, mode: 'memory',
 };
 function curKey(){ try { return localStorage.getItem('lumiere_key') || 'curator'; } catch(e){ return 'curator'; } }
@@ -1907,44 +1908,118 @@ function curatorReview(recs, reopened = false){
   paint();
 }
 
+let uploadBatchSerial = 0;
+function uploadAdvice(error){
+  const name = String(error?.name || '').toLowerCase();
+  const message = String(error?.message || error || '').trim();
+  const lower = message.toLowerCase();
+  if (name.includes('quota') || lower.includes('quota'))
+    return 'This browser is out of storage. Remove an older work or free device storage, then retry.';
+  if (lower.includes('collection holds') || lower.includes('gallery accepts')) return message;
+  if (lower.includes('upload') || lower.includes('cloud') || lower.includes('network'))
+    return 'The cloud could not save this image. Check the connection and retry.';
+  if (name.includes('encoding') || name.includes('notsupported') || lower.includes('decode'))
+    return 'This file does not contain an image the browser can read.';
+  return message && message !== 'The source image could not be decoded.'
+    ? message : 'This file does not contain an image the browser can read.';
+}
+function removeUploadItem(item){
+  const i = curator.uploadBatch.indexOf(item);
+  if (i >= 0) curator.uploadBatch.splice(i, 1);
+  if (item.previewURL) URL.revokeObjectURL(item.previewURL);
+  renderUploadBatch();
+}
+function renderUploadBatch(){
+  const list = document.getElementById('cur-upload-list');
+  if (!list) return;
+  list.textContent = '';
+  for (const item of curator.uploadBatch){
+    const row = document.createElement('div');
+    row.className = 'cur-upload-item'; row.dataset.state = item.state;
+    const image = document.createElement('img');
+    image.className = 'cur-upload-thumb'; image.alt = '';
+    if (item.previewURL) image.src = item.previewURL;
+    const copy = document.createElement('div'); copy.className = 'cur-upload-copy';
+    const name = document.createElement('div'); name.className = 'cur-upload-name';
+    name.textContent = item.file.name;
+    const status = document.createElement('div'); status.className = 'cur-upload-status';
+    status.textContent = item.message;
+    copy.append(name, status);
+    const actions = document.createElement('div'); actions.className = 'cur-upload-actions';
+    if (item.state === 'error'){
+      const retry = document.createElement('button');
+      retry.type = 'button'; retry.className = 'btn'; retry.textContent = 'Retry';
+      retry.addEventListener('click', async () => {
+        const rec = await addCuratorFile(item.file, item);
+        if (rec){ curatorGrid(); curatorReview([rec]); }
+      });
+      actions.append(retry);
+    } else if (item.state === 'saved'){
+      const dismiss = document.createElement('button');
+      dismiss.type = 'button'; dismiss.className = 'btn'; dismiss.textContent = 'Dismiss';
+      dismiss.setAttribute('aria-label', `Dismiss upload status for ${item.file.name}`);
+      dismiss.addEventListener('click', () => removeUploadItem(item));
+      actions.append(dismiss);
+    }
+    row.append(image, copy, actions);
+    list.append(row);
+  }
+}
+async function addCuratorFile(file, item){
+  item.state = 'processing'; item.message = 'Preparing image…';
+  renderUploadBatch();
+  let bitmap;
+  try {
+    if (!file.type.startsWith('image/')) throw new Error('Choose an image file.');
+    bitmap = await createImageBitmap(file);
+    const lineArt = looksLikeLineArt(bitmap);
+    const shape = { w: bitmap.width, h: bitmap.height, lineArt };
+    const blob = await encodeUpload(bitmap, lineArt);
+    if (!blob) throw new Error('This image could not be prepared.');
+    const refused = quotaRefusal(blob);
+    if (refused) throw new Error(refused);
+    const name = file.name.replace(/\.[^.]+$/, '');
+    let record;
+    if (cloud.sess){
+      const saved = await cloudUploadBlob(name, blob, '');
+      record = { ...saved, name, note: '', blob, cloudRec: true,
+                 url: URL.createObjectURL(blob) };
+    } else {
+      const id = 'u' + crypto.randomUUID();
+      record = { id, name, note: '', blob, url: URL.createObjectURL(blob) };
+      if (curator.db) await putLocalWork(curator.db, {
+        id, name, note: '', blob, orientation: orientationOf(shape.w, shape.h), lineArt,
+      });
+    }
+    noteShape(record, shape);
+    curator.uploads.set(record.id, record);
+    item.recordId = record.id;
+    item.state = 'saved';
+    item.message = curator.db || cloud.sess ? 'Saved' : 'Available for this visit';
+    return record;
+  } catch(error){
+    console.warn('[curator] could not add image', file.name, error);
+    item.state = 'error'; item.message = uploadAdvice(error);
+    return null;
+  } finally {
+    bitmap?.close();
+    renderUploadBatch();
+  }
+}
 async function curatorAddFiles(files){
+  const items = files.map((file) => ({
+    id: ++uploadBatchSerial, file, previewURL: URL.createObjectURL(file),
+    state: 'waiting', message: 'Waiting…',
+  }));
+  curator.uploadBatch.push(...items);
+  renderUploadBatch();
   const added = [];
-  for (const f of files){
-    if (!f.type.startsWith('image/')) continue;
-    try {
-      const bmp = await createImageBitmap(f);
-      const lineArt = looksLikeLineArt(bmp);
-      const shape = { w: bmp.width, h: bmp.height, lineArt };
-      const blob = await encodeUpload(bmp, lineArt);
-      bmp.close();
-      if (!blob) continue;
-      const refused = quotaRefusal(blob);
-      if (refused){ flashHint(refused); break; }
-      const name = f.name.replace(/\.[^.]+$/, '');
-      /* Uploaded with the filename as its title and nothing said about it. The
-         review sheet is where both get answered; this only has to make sure
-         there is a row to answer about, since an upload that failed because
-         the visitor had not written a description yet would be absurd. */
-      if (cloud.on && cloud.sess){
-        const { id, path, bucket } = await cloudUploadBlob(name, blob, '');
-        const rec = { id, name, note: '', blob, path, bucket, cloudRec: true, url: URL.createObjectURL(blob) };
-        curator.uploads.set(id, rec);
-        noteShape(rec, shape); added.push(rec);
-      } else {
-        const id = 'u' + Date.now().toString(36) + Math.floor(Math.random()*1e6).toString(36);
-        const rec = { id, name, note: '', blob, url: URL.createObjectURL(blob) };
-        if (curator.db)
-          await putLocalWork(curator.db, {
-            id, name: rec.name, note: '', blob,
-            orientation: orientationOf(shape.w, shape.h), lineArt,
-          });
-        curator.uploads.set(id, rec);
-        noteShape(rec, shape); added.push(rec);
-      }
-    } catch(e){ console.warn('[curator] could not add image', f.name, e); flashHint('that image could not be added'); }
+  for (const item of items){
+    const record = await addCuratorFile(item.file, item);
+    if (record) added.push(record);
   }
   curatorGrid();
-  curatorReview(added);
+  if (added.length) curatorReview(added);
 }
 /** Persist a work's title and description wherever that work lives.
  *  Local collections write straight to IndexedDB; cloud collections go through
@@ -2824,9 +2899,31 @@ document.getElementById('curator').addEventListener('keydown', (e) => {
   document.getElementById('confirm').addEventListener('click', (e) => {
     if (e.target === document.getElementById('confirm')) confirmAnswer(false);
   });
-  document.getElementById('cur-file').addEventListener('change', (e) => {
-    if (e.target.files && e.target.files.length) curatorAddFiles([...e.target.files]);
+  const fileInput = document.getElementById('cur-file');
+  const drop = document.getElementById('cur-drop');
+  const acceptFiles = (files) => {
+    if (files && files.length) curatorAddFiles([...files]);
+  };
+  fileInput.addEventListener('change', (e) => {
+    acceptFiles(e.target.files);
     e.target.value = '';
+  });
+  drop.addEventListener('click', (e) => {
+    if (!e.target.closest('label, button, input')) fileInput.click();
+  });
+  drop.addEventListener('keydown', (e) => {
+    if (e.key !== 'Enter' && e.key !== ' ') return;
+    e.preventDefault(); e.stopPropagation(); fileInput.click();
+  });
+  drop.addEventListener('dragover', (e) => {
+    e.preventDefault();
+    if (e.dataTransfer) e.dataTransfer.dropEffect = 'copy';
+    drop.classList.add('dragging');
+  });
+  drop.addEventListener('dragleave', () => drop.classList.remove('dragging'));
+  drop.addEventListener('drop', (e) => {
+    e.preventDefault(); drop.classList.remove('dragging');
+    acceptFiles(e.dataTransfer?.files);
   });
   /* The same sheet the batch review uses, opened over the whole collection —
      titles, descriptions, fills and turns for works added any time, not only
