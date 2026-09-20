@@ -377,6 +377,13 @@
                     outline:1px solid var(--brass); outline-offset:2px;}
   #cur-sync[open] summary{border-bottom:1px solid rgba(201,169,106,.18);}
   #cur-sync > div{padding:0 1rem 1rem;}
+  #cur-layout{margin-top:1rem; border-top:1px solid rgba(201,169,106,.18);
+              border-bottom:1px solid rgba(201,169,106,.18);}
+  #cur-layout summary{display:flex; align-items:center; min-height:44px; padding:0 .2rem;
+                      color:var(--bone-dim); cursor:pointer; font-size:.72rem;
+                      letter-spacing:.12em; text-transform:uppercase;}
+  #cur-layout summary:hover, #cur-layout summary:focus-visible{color:var(--brass); outline:none;}
+  #cur-layout[open]{padding-bottom:.8rem;}
   /* every input, not just password/text — the sign-in field is type=email and
      was rendering as a stock white browser box in the middle of the panel. */
   #curator input:not([type=file]){
@@ -392,6 +399,7 @@
       padding:.55rem 1.3rem; cursor:pointer;
       transition:background-color .3s ease, color .3s ease, border-color .3s ease;}
   .btn:hover{background:var(--brass); color:var(--ink);}
+  .btn:disabled, .sw:disabled{cursor:not-allowed; opacity:.42; background:none; color:var(--bone-dim);}
   .btn:focus-visible{outline:none; border-color:var(--brass);
       box-shadow:0 0 0 1px var(--brass);}
   #curator .row{display:flex; gap:.8rem; align-items:center; flex-wrap:wrap; margin-top:1rem;}
@@ -406,6 +414,7 @@
                  justify-content:center; min-height:44px;}
   #cur-drop:hover, #cur-drop:focus-visible, #cur-drop.dragging{border-color:var(--brass);
                  background:rgba(201,169,106,.08); outline:none;}
+  #cur-drop.locked{pointer-events:none; opacity:.55;}
   #cur-drop:focus-visible{box-shadow:0 0 0 2px #14110D, 0 0 0 3px var(--brass);}
   #cur-upload-list:not(:empty){display:grid; gap:.45rem; margin-top:.65rem;}
   .cur-upload-item{display:grid; grid-template-columns:2.7rem minmax(0,1fr) auto;
@@ -548,6 +557,8 @@
     #cur-drop .btn{grid-column:1; grid-row:auto; margin-top:.45rem;}
     .cur-upload-item{grid-template-columns:2.7rem minmax(0,1fr);}
     .cur-upload-actions{grid-column:1 / -1; justify-content:flex-end;}
+    #curator #cur-wing, #curator #cur-floors{display:grid;
+      grid-template-columns:3.5rem 44px minmax(0,1fr) 44px; gap:.55rem;}
     /* Four columns of review controls do not survive a phone. Stack them. */
     .rv-row{grid-template-columns:3.4rem 1fr; gap:.55rem;}
     .rv-row img{width:3.4rem; height:3.4rem;}

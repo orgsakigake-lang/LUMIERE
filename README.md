@@ -214,10 +214,12 @@ combinations are valid moods. Both switches are remembered between visits.
 
 The gallery accepts *private loans* — your own images:
 
-- **Local mode (default):** enter the curator's key (first visit: `curator` —
-  change it inside). Images live in this browser's IndexedDB; placements
-  survive reloads; nothing ever leaves your machine.
-- **Add works…** — upload images. Drawings are kept lossless at 2048 px, since
+- **Local mode (default):** open the office and start curating; no account or
+  key is required. Images live in this browser's IndexedDB, placements survive
+  reloads, and nothing leaves the device unless you choose to sync it.
+- **Add works** accepts a whole batch by picker or drag and drop. Each file
+  reports its own progress, so a broken image can be retried without losing the
+  rest. Drawings are kept lossless at 2048 px, since
   JPEG ringing gathers around exactly the hard strokes a pencil or pen makes;
   photographs, which gain nothing from that and would cost tens of megabytes,
   keep a JPEG at the same resolution.
@@ -236,8 +238,13 @@ The gallery accepts *private loans* — your own images:
   work on the wall and in full in the enlarged view. Both are editable later,
   and a title changed in the office redraws the placard already hanging.
 - The grid shows the collection — click to select, the cross to remove.
-- Walk to *any* frame in the infinite gallery and press **H** to hang the
-  selected work there. It is **mounted, not cropped**: the sheet keeps its own
+- **Arrange automatically** fills suitable empty frames while preserving every
+  work you already placed by hand. **Undo arrangement** restores the exact
+  earlier map. **Place manually** takes you into the gallery with the selected
+  title beside **Hang here**; place it, continue with the next unplaced work,
+  or press **Esc** to finish.
+- You can also walk to *any* frame and press **H** to hang the selected work
+  there. It is **mounted, not cropped**: the sheet keeps its own
   proportions on a cream rag mount with a bevelled window, however the frame is
   shaped, and it is lit by its own fixture — neutral and dim, the way a museum
   lights works on paper — beside the warm tungsten on the paintings. A *private
@@ -313,6 +320,10 @@ hanging read-only. The gallery **theme travels with the account** too, so a
 guest stands in the same light the works were curated under — that column is
 new; **re-run `supabase-setup.sql` once** in the project's SQL editor to gain
 it (the client tolerates its absence in the meantime).
+
+Cloud access lives under **Sync & share** and is optional. Signing in offers to
+copy the complete local collection only after every image and placement can be
+saved; if any step fails, the local IDs, files, and walls stay untouched.
 
 **[docs/setup.md](docs/setup.md) walks the whole thing** — project, schema,
 config, publishing, hosting, and how to *prove* the privacy applied rather than

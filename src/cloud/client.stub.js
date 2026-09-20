@@ -43,6 +43,7 @@ export function cloudOAuthURL(){ return ''; }
 export const cloudOAuth = unreachable;
 export function takeHashSession(){ return false; }
 export async function cloudSetPlacement(){ return { ok: false }; }
+export async function cloudInsertPlacement(){ return { ok: false }; }
 export async function cloudDelPlacement(){ return { ok: false }; }
 export async function cloudSetTheme(){ return { ok: false }; }
 

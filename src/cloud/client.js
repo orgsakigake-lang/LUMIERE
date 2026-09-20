@@ -357,6 +357,18 @@ export async function cloudSetPlacement(k, uploadId){
   return { ok: rs.ok };
 }
 
+/** Insert a placement only if its frame is still empty. Migration uses this
+ * instead of the normal upsert so a cloud hanging created on another device
+ * can never be overwritten by a stale local snapshot. */
+export async function cloudInsertPlacement(k, uploadId){
+  const rs = await cfetch('/rest/v1/placements', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Prefer: 'return=minimal' },
+    body: JSON.stringify({ owner: cloud.sess.uid, k, upload_id: uploadId }),
+  });
+  return { ok: rs.ok, status: rs.status };
+}
+
 export async function cloudDelPlacement(k){
   const rs = await cfetch('/rest/v1/placements?owner=eq.' + cloud.sess.uid +
                           '&k=eq.' + encodeURIComponent(k), { method: 'DELETE' });

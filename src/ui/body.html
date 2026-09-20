@@ -113,19 +113,6 @@
       </details>
       <div class="row cur-themes" id="cur-themes" role="group" aria-label="Gallery theme"></div>
       <div id="cur-review" hidden></div>
-      <div class="row" id="cur-wing" hidden>
-        <span class="sub">The wing ·</span>
-        <button class="btn" id="cur-wing-minus" type="button" title="one room fewer — the works are laid again, snugly">−</button>
-        <span class="sub" id="cur-wing-n"></span>
-        <button class="btn" id="cur-wing-plus" type="button" title="one more room, empty, ready for new work">+</button>
-      </div>
-      <!-- Outward is not the only direction a gallery can grow. -->
-      <div class="row" id="cur-floors" hidden>
-        <span class="sub">The floors ·</span>
-        <button class="btn" id="cur-floor-minus" type="button" title="one storey fewer — the works come back down">−</button>
-        <span class="sub" id="cur-floor-n"></span>
-        <button class="btn" id="cur-floor-plus" type="button" title="one storey more — the works are shared out over the floors, joined by the stair">+</button>
-      </div>
       <!-- Shown only to somebody following a shared link. -->
       <div class="sub" id="cur-guest-note" hidden></div>
       <div id="cur-add-row">
@@ -147,7 +134,24 @@
           <button class="btn" id="cur-close">Return to the gallery</button>
           <button class="btn" id="cur-rekey">Change key</button>
         </div>
+        <div class="cur-note" id="cur-migrate-status" aria-live="polite" hidden></div>
       </div>
+      <details id="cur-layout" hidden>
+        <summary id="cur-layout-summary">Gallery size</summary>
+        <div class="row" id="cur-wing" hidden>
+          <span class="sub">Rooms</span>
+          <button class="btn" id="cur-wing-minus" type="button" title="one room fewer — the works are laid again, snugly">−</button>
+          <span class="sub" id="cur-wing-n"></span>
+          <button class="btn" id="cur-wing-plus" type="button" title="one more room, empty, ready for new work">+</button>
+        </div>
+        <!-- Outward is not the only direction a gallery can grow. -->
+        <div class="row" id="cur-floors" hidden>
+          <span class="sub">Floors</span>
+          <button class="btn" id="cur-floor-minus" type="button" title="one storey fewer — the works come back down">−</button>
+          <span class="sub" id="cur-floor-n"></span>
+          <button class="btn" id="cur-floor-plus" type="button" title="one storey more — the works are shared out over the floors, joined by the stair">+</button>
+        </div>
+      </details>
       <div class="sub" id="cur-outbox" hidden></div>
       <div id="cur-grid"></div>
       <div class="cur-note" id="cur-hint">

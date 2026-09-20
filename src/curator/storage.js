@@ -51,6 +51,18 @@ export async function putLocalWork(db, record) {
   await done;
 }
 
+/** Keep the original blobs as recovery copies while remembering which cloud
+ * records they became. One transaction makes the mapping all-or-nothing. */
+export async function markLocalWorksSynced(db, records, owner) {
+  if (!db || !records.length) return;
+  const tx = db.transaction(STORE, 'readwrite');
+  const done = waitForTransaction(tx);
+  const store = tx.objectStore(STORE);
+  for (const { local, remote } of records)
+    store.put({ ...local, url: undefined, syncedTo: remote.id, syncedOwner: owner });
+  await done;
+}
+
 export async function deleteLocalWork(db, id) {
   const tx = db.transaction(STORE, 'readwrite');
   const done = waitForTransaction(tx);

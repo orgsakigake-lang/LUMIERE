@@ -16,7 +16,8 @@ import { ALGO_NAMES, ALGOS, makeTitle, finishArt, resetGrain,
          paintArt, scoreArt } from './art/algos.js';
 import { mat4, perspective, mulM, mulT, viewMatrix, extractPlanes, boxVisible } from './render/mat4.js';
 import { storageOK, persist, savePersist } from './persist.js';
-import { openCuratorDB, readLocalWorks, putLocalWork, deleteLocalWork } from './curator/storage.js';
+import { openCuratorDB, readLocalWorks, putLocalWork, deleteLocalWork,
+         markLocalWorksSynced } from './curator/storage.js';
 import { planArrangement } from './curator/arrange.js';
 import { flashHint, toggleLegend } from './ui/hint.js';
 import { initTouch, touchWalk } from './ui/touch.js';
@@ -32,7 +33,7 @@ import { THEMES, THEME_ORDER, DEFAULT_THEME, theme, themeName, setThemeName,
 import { cloud, setFetch, cloudSaveSess, cloudSendCode, cloudVerify, cloudPublicURL,
          cloudPassword, cloudSignUp, cloudAuthSettings, setAuthLost, cloudOAuth,
          cloudUploadBlob, cloudDeleteUpload, cloudUpdateUpload, cloudReplaceBlob,
-         cloudSetPlacement, cloudDelPlacement,
+         cloudSetPlacement, cloudInsertPlacement, cloudDelPlacement,
          cloudClaimSlug, cloudSetPublished, cloudSetTheme,
          cloudManageShareLink, cloudArtworkURL,
          cloudLoadMine, cloudLoadGallery, cloudBoot } from './cloud/client.js';
@@ -509,8 +510,10 @@ function gatherIntoWing(){
     const r = getRoom(gx, gz, gy);
     for (let i = 0; i < r.artworks.length; i++){
       const k = artJobKey(r, i);
+      const id = curator.placements.get(k);
       if (!curator.placements.delete(k)) continue;
-      if (cloud.sess && !cloud.viewing) enqueue('delPlacement', k, [k]);
+      if (cloud.sess && !cloud.viewing && curator.uploads.get(id)?.cloudRec)
+        enqueue('delPlacement', k, [k]);
     }
   }
   /* Works are unrepeatable: one still hanging in a far hall keeps its wall
@@ -530,7 +533,7 @@ function gatherIntoWing(){
   savePlacements();
   if (cloud.sess && !cloud.viewing)
     for (const [k, id] of curator.placements)
-      enqueue('setPlacement', k, [k, id]);
+      if (curator.uploads.get(id)?.cloudRec) enqueue('setPlacement', k, [k, id]);
   applyBounds(false);                    // the wall moves with the wing; the rebuild below cuts it
   rebuildWorld();
   goToRoom(WING_ORIGIN[0], WING_ORIGIN[1], 0);
@@ -558,10 +561,12 @@ function arrangementSlots(){
 
 function queuePlacementChanges(before, after){
   if (!cloud.sess || cloud.viewing) return;
-  for (const [key] of before)
-    if (!after.has(key)) enqueue('delPlacement', key, [key]);
+  for (const [key, id] of before)
+    if (!after.has(key) && curator.uploads.get(id)?.cloudRec)
+      enqueue('delPlacement', key, [key]);
   for (const [key, id] of after)
-    if (before.get(key) !== id) enqueue('setPlacement', key, [key, id]);
+    if (before.get(key) !== id && curator.uploads.get(id)?.cloudRec)
+      enqueue('setPlacement', key, [key, id]);
 }
 
 /** Fill empty frames in the collection wing while treating every existing
@@ -1617,6 +1622,11 @@ const curator = {
   uploadBatch: [],
   arrangeUndo: null,
   placing: false,
+  migrating: false,
+  migrationCancel: false,
+  syncIssue: '',
+  cloudPlacements: new Map(),
+  localToRemote: new Map(),
   db: null, mode: 'memory',
 };
 function curKey(){ try { return localStorage.getItem('lumiere_key') || 'curator'; } catch(e){ return 'curator'; } }
@@ -1628,33 +1638,22 @@ async function curatorBoot(){
   /* Anything that did not reach the cloud last time is still owed. */
   outboxLoad(); outboxUI();
   curator.mode = curator.db ? 'idb' : 'memory';
-  /* when a cloud session (or a guest visit) will drive placements,
-     the local ones stay parked — the cloud is the source of truth */
-  let cloudDriven = false;
-  if (cloud.on){
-    if (new URLSearchParams(location.search).has('gallery')) cloudDriven = true;
-    try { if (localStorage.getItem('lumiere_sess')) cloudDriven = true; } catch(e){}
-  }
-  if (storageOK && !cloudDriven){
-    try {
-      const p = JSON.parse(localStorage.getItem('lumiere_placements') || '[]');
-      /* Placements saved before works became unrepeatable may hold the same
-         work on several walls. First hung wins; the rest quietly come down. */
-      const seen = new Set();
-      for (const [k, id] of p){
-        if (seen.has(id)) continue;
-        seen.add(id);
-        curator.placements.set(k, id);
-      }
-    } catch(e){}
-  }
-  /* Whatever placements this browser holds, the boundary now knows about. */
-  applyBounds();
+  let rememberedOwner = null;
+  try { rememberedOwner = JSON.parse(localStorage.getItem('lumiere_sess') || 'null')?.uid || null; }
+  catch(e){}
   if (curator.db){
     try {
       for (const rec of await readLocalWorks(curator.db)){
         rec.url = URL.createObjectURL(rec.blob);
-        curator.uploads.set(rec.id, rec);
+        const remoteId = rememberedOwner && rec.syncedOwner === rememberedOwner && rec.syncedTo;
+        if (remoteId){
+          curator.localToRemote.set(rec.id, remoteId);
+          curator.uploads.set(remoteId, {
+            ...rec, id: remoteId, cloudRec: true, localBackupId: rec.id,
+          });
+          if (curator.fills.has(rec.id) && !curator.fills.has(remoteId))
+            curator.fills.set(remoteId, curator.fills.get(rec.id));
+        } else curator.uploads.set(rec.id, rec);
       }
       /* The wall is drawn around the works, and until this read completes the
          works do not exist yet. Ask again now that the collection is real. */
@@ -1666,10 +1665,37 @@ async function curatorBoot(){
       curator.mode = 'memory';
     }
   }
+  /* A remembered cloud session must not hide the local walls waiting to be
+     migrated. Load saved positions after the local records, filtering to
+     those records when cloud data will join them later. */
+  if (storageOK){
+    try {
+      const pairs = JSON.parse(localStorage.getItem('lumiere_placements') || '[]');
+      let hasSession = false;
+      try { hasSession = !!localStorage.getItem('lumiere_sess'); } catch(e){}
+      const seen = new Set();
+      for (const [k, id] of pairs){
+        const effectiveId = hasSession ? (curator.localToRemote.get(id) || id) : id;
+        if (hasSession && !curator.uploads.has(effectiveId)) continue;
+        if (seen.has(effectiveId)) continue;
+        seen.add(effectiveId);
+        curator.placements.set(k, effectiveId);
+      }
+    } catch(e){}
+  }
+  applyBounds();
+  curatorGrid();
+  syncArtJobs();
 }
 function savePlacements(){
-  if (!storageOK || cloud.sess || cloud.viewing) return;   // cloud owns its own truth
-  try { localStorage.setItem('lumiere_placements', JSON.stringify([...curator.placements])); } catch(e){}
+  if (!storageOK || cloud.viewing) return;
+  let pairs = [...curator.placements];
+  if (cloud.sess){
+    const hasLocalWorks = [...curator.uploads.values()].some((rec) => !rec.cloudRec);
+    if (!hasLocalWorks) return;             // keep the recovery copy after migration
+    pairs = pairs.filter(([, id]) => !curator.uploads.get(id)?.cloudRec);
+  }
+  try { localStorage.setItem('lumiere_placements', JSON.stringify(pairs)); } catch(e){}
 }
 /* ————— what gets stored —————
    The old path was original → 1280 px JPEG q0.88 → cover-crop → 512 px texture:
@@ -2127,6 +2153,7 @@ function noteShape(rec, shape){
   saveFills();
 }
 function curatorRemove(id){
+  if (!curatorCanEdit()) return;
   const rec = curator.uploads.get(id);
   if (!rec) return;
   for (const [k, uid] of [...curator.placements]) if (uid === id) curatorClearPlacement(k);
@@ -2141,14 +2168,23 @@ function curatorRemove(id){
     });
   }
   if (curator.sel === id) curator.sel = null;
+  if (rec.localBackupId && curator.db){
+    deleteLocalWork(curator.db, rec.localBackupId).catch((e) => {
+      console.warn('[curator] local recovery copy could not be removed', e);
+      flashHint('the cloud work was removed, but its recovery copy remains on this device');
+    });
+    curator.localToRemote.delete(rec.localBackupId);
+    curator.fills.delete(rec.localBackupId);
+  }
   curator.fills.delete(id); saveFills();
   savePlacements();
   curatorGrid();
 }
 function curatorClearPlacement(k){
   curator.arrangeUndo = null;
+  const id = curator.placements.get(k);
   curator.placements.delete(k);
-  if (cloud.sess && !cloud.viewing)
+  if (cloud.sess && !cloud.viewing && curator.uploads.get(id)?.cloudRec)
     enqueue('delPlacement', k, [k]);
   const o = curator.overrides.get(k);
   if (o){
@@ -2161,6 +2197,9 @@ function curatorClearPlacement(k){
     if (idx >= 0) setFixture(o.r, idx, false);    // the tungsten fixture returns with the painting
     curator.overrides.delete(k);
   }
+  const syncedId = curator.cloudPlacements.get(k);
+  if (syncedId && syncedId !== id && curator.uploads.has(syncedId))
+    curator.placements.set(k, syncedId);
   savePlacements();
   applyBounds();                                  // the wall may pull in behind it
   syncArtJobs();                                  // regenerate the seeded work if needed
@@ -2340,6 +2379,10 @@ function curatorOwnsWorkspace(){
   return !cloud.viewing && !guestVisit.requested && !guestWorld;
 }
 function curatorCanEdit(){
+  if (curator.migrating){
+    flashHint('sync is in progress — cancel it before changing the collection');
+    return false;
+  }
   if (curatorOwnsWorkspace()) return true;
   flashHint('you are a guest here — this collection is read-only');
   return false;
@@ -2380,7 +2423,7 @@ function curatorHang(){
   curator.arrangeUndo = null;
   curator.placements.set(k, curator.sel);
   savePlacements();
-  if (cloud.sess && !cloud.viewing)
+  if (cloud.sess && !cloud.viewing && curator.uploads.get(curator.sel)?.cloudRec)
     enqueue('setPlacement', k, [k, curator.sel]);
   applyBounds();                 // a first hanging is what raises the boundary at all
   applyPlacement(t.r, t.A, i);
@@ -2435,8 +2478,10 @@ function startManualPlacement(){
    Guests browse someone else's hanging — the sizer is not theirs to press. */
 function wingUI(){
   const row = document.getElementById('cur-wing');
+  const layout = document.getElementById('cur-layout');
   if (!row) return;
   row.hidden = !curator.uploads.size || !!cloud.viewing;
+  if (layout) layout.hidden = row.hidden;
   if (!row.hidden){
     const t = wingRoute(curator.uploads.size, wingExtra).length;
     const placed = new Set(curator.placements.values());
@@ -2444,7 +2489,9 @@ function wingUI(){
     for (const id of curator.uploads.keys()) if (!placed.has(id)) unhung++;
     document.getElementById('cur-wing-n').textContent =
       `${t} room${t === 1 ? '' : 's'}${wingExtra ? ` · ${wingExtra} kept empty` : ''}`
-      + (unhung ? ` · ${unhung} work${unhung === 1 ? ' has' : 's have'} no wall yet — Gather hangs everything` : '');
+      + (unhung ? ` · ${unhung} work${unhung === 1 ? ' has' : 's have'} no wall yet` : '');
+    const summary = document.getElementById('cur-layout-summary');
+    if (summary) summary.textContent = `Gallery size · ${t} room${t === 1 ? '' : 's'} · ${wingFloors === 1 ? 'one floor' : `${wingFloors} floors`}`;
   }
   /* How tall the gallery stands. Shown beside how wide it spreads, because
      they are the same decision asked along two axes. */
@@ -2587,7 +2634,7 @@ function showGuestOffice(){
      were curated under: the curator chose it and it travels with the hanging,
      so offering a visitor a switch to overrule it is offering to show them the
      wrong gallery. */
-  for (const id of ['cur-acct', 'cur-share', 'cur-sync', 'cur-workspace-status', 'cur-wing', 'cur-floors',
+  for (const id of ['cur-acct', 'cur-share', 'cur-sync', 'cur-workspace-status', 'cur-layout', 'cur-wing', 'cur-floors',
                     'cur-bound-row', 'cur-review', 'cur-add-row', 'cur-themes',
                     'cur-hint', 'cur-edit', 'cur-gather', 'cur-place', 'cur-arrange-undo', 'cur-migrate',
                     'cur-rekey', 'cur-outbox']){
@@ -2635,17 +2682,26 @@ function curatorRefresh(){
   else for (const id of ['cur-workspace-status', 'cur-themes', 'cur-hint', 'cur-add-row',
                          'cur-gather', 'cur-place'])
     { const el = document.getElementById(id); if (el) el.hidden = false; }
+  let localPending = 0;
+  for (const rec of curator.uploads.values()) if (!rec.cloudRec && rec.blob) localPending++;
+  const saving = !!(curator.migrating || (outbox.items.length && !outbox.tries));
+  const attention = !!(curator.syncIssue || localPending || outbox.tries);
+  const syncState = saving ? 'Saving' : attention ? 'Needs attention' : 'Synced';
   const state = guest ? 'guest of ' + (cloud.viewing?.slug || guestVisit.slug || 'an unavailable collection')
-    : cloud.sess ? 'Synced · ' + (cloud.sess.email || 'signed in')
+    : cloud.sess ? syncState + ' · ' + (cloud.sess.email || 'signed in')
     : curator.mode === 'idb' ? 'On this device' : 'This visit only';
   document.getElementById('cur-state').textContent = state;
   const storageLabel = document.getElementById('cur-storage-label');
   const storageDetail = document.getElementById('cur-storage-detail');
   if (!guest && storageLabel && storageDetail){
-    storageLabel.textContent = cloud.sess ? 'Synced'
+    storageLabel.textContent = cloud.sess ? syncState
       : curator.mode === 'idb' ? 'On this device' : 'This visit only';
     storageDetail.textContent = cloud.sess
-      ? 'Your collection is available anywhere you sign in.'
+      ? curator.migrating ? 'Your local works are being copied. You can cancel without losing them.'
+        : curator.syncIssue ? curator.syncIssue
+        : localPending ? `${localPending} local work${localPending === 1 ? ' is' : 's are'} ready to add to this account.`
+        : outbox.items.length ? `${outbox.items.length} cloud change${outbox.items.length === 1 ? ' is' : 's are'} waiting to finish.`
+        : 'Your collection is available anywhere you sign in.'
       : curator.mode === 'idb'
         ? 'Works and placements stay in this browser.'
         : 'This browser cannot keep files after you leave.';
@@ -2686,9 +2742,16 @@ function curatorRefresh(){
         linkEl.textContent = 'not published yet — the link will not open for anyone else';
         linkEl.style.cursor = ''; linkEl.onclick = null;
       }
-      let hasLocal = false;
-      for (const rec of curator.uploads.values()) if (!rec.cloudRec && rec.blob){ hasLocal = true; break; }
-      document.getElementById('cur-migrate').hidden = !hasLocal;
+      const migrate = document.getElementById('cur-migrate');
+      const migrationStatus = document.getElementById('cur-migrate-status');
+      migrate.hidden = !localPending && !curator.migrating;
+      migrate.textContent = curator.migrating ? 'Cancel sync'
+        : `Add ${localPending} local work${localPending === 1 ? '' : 's'} to this account`;
+      if (localPending && !curator.migrating && !curator.syncIssue
+          && !migrationStatus.textContent){
+        migrationStatus.hidden = false;
+        migrationStatus.textContent = `${localPending} local work${localPending === 1 ? '' : 's'} will be copied. Originals stay on this device until every image and placement is confirmed.`;
+      }
       if (privateRow) {
         privateRow.hidden = !cloud.privateSharing;
         const privateLink = document.getElementById('cur-private-link');
@@ -2945,7 +3008,7 @@ document.getElementById('curator').addEventListener('keydown', (e) => {
   document.getElementById('cur-wing-minus').addEventListener('click', () => {
     if (!curatorCanEdit()) return;
     if (!wingExtra){
-      flashHint('the wing is already as small as the works allow — Gather lays it snugly');
+      flashHint('the wing is already as small as the works allow — automatic arrangement lays it snugly');
       return;
     }
     wingExtra--; saveWingPrefs(); wingUI();
@@ -3016,7 +3079,7 @@ document.getElementById('curator').addEventListener('keydown', (e) => {
   const fileInput = document.getElementById('cur-file');
   const drop = document.getElementById('cur-drop');
   const acceptFiles = (files) => {
-    if (files && files.length) curatorAddFiles([...files]);
+    if (files && files.length && curatorCanEdit()) curatorAddFiles([...files]);
   };
   fileInput.addEventListener('change', (e) => {
     acceptFiles(e.target.files);
@@ -3196,30 +3259,128 @@ document.getElementById('curator').addEventListener('keydown', (e) => {
   document.getElementById('cur-private-create')?.addEventListener('click', () => privateAction('create'));
   document.getElementById('cur-private-rotate')?.addEventListener('click', () => privateAction('rotate'));
   document.getElementById('cur-private-revoke')?.addEventListener('click', () => privateAction('revoke'));
+
+  function setMigrationLock(on){
+    curator.migrating = on;
+    document.getElementById('cur-open').setAttribute('aria-busy', String(on));
+    document.getElementById('cur-drop').classList.toggle('locked', on);
+    for (const control of document.querySelectorAll('#cur-open button, #cur-open input'))
+      if (control.id !== 'cur-migrate') control.disabled = on;
+  }
+
+  async function cleanStagedMigration(staged){
+    const results = await Promise.allSettled(
+      staged.map(({ remote }) => cloudDeleteUpload(remote)));
+    const pending = [];
+    for (let i = 0; i < results.length; i++){
+      const result = results[i];
+      if (result.status === 'rejected' || !result.value?.ok) pending.push(staged[i].remote);
+    }
+    /* Delete retries use the durable outbox. A failed cleanup must survive a
+       reload instead of becoming an orphan the panel has forgotten. */
+    for (const remote of pending) enqueue('deleteUpload', remote.id, [remote]);
+    return pending.length;
+  }
+
+  /** Upload the whole local collection before changing a single local ID.
+   * A failed or cancelled batch cleans up anything staged in the cloud and
+   * leaves the browser collection exactly as it was. */
+  async function migrateLocalCollection(records, onProgress = () => {}){
+    const localIds = new Set(records.map((rec) => rec.id));
+    const placementPlan = [...curator.placements]
+      .filter(([, id]) => localIds.has(id));
+    const conflicts = placementPlan.filter(([key, id]) => {
+      const synced = curator.cloudPlacements.get(key);
+      return synced && synced !== id;
+    });
+    if (conflicts.length)
+      return { moved: 0, failed: records.length, conflicts, error: new Error('a synced work already occupies a local frame') };
+
+    const staged = [];
+    const cancelled = () => {
+      if (!curator.migrationCancel) return;
+      const error = new Error('sync cancelled'); error.cancelled = true; throw error;
+    };
+    try {
+      for (let i = 0; i < records.length; i++){
+        cancelled();
+        const local = records[i];
+        onProgress(`Uploading ${i + 1} of ${records.length} · ${local.name}`);
+        const remote = await cloudUploadBlob(local.name, local.blob, local.note || '');
+        staged.push({ local, remote });
+        cancelled();
+      }
+      const remoteByLocal = new Map(staged.map(({ local, remote }) => [local.id, remote]));
+      for (let i = 0; i < placementPlan.length; i++){
+        cancelled();
+        const [key, localId] = placementPlan[i];
+        const remote = remoteByLocal.get(localId);
+        onProgress(`Syncing placement ${i + 1} of ${placementPlan.length}`);
+        /* Insert-only closes the race between the conflict check above and
+           this write. A frame occupied on another device is never replaced. */
+        const result = await cloudInsertPlacement(key, remote.id);
+        if (!result?.ok) throw new Error('a placement could not be synced safely');
+        cancelled();
+      }
+      /* A remembered session can now reconcile the recovery blobs with their
+         new cloud IDs after reload. Keep this atomic so a partial mapping can
+         never duplicate half a collection. */
+      await markLocalWorksSynced(curator.db, staged, cloud.sess.uid);
+    } catch(error){
+      const cleanupPending = await cleanStagedMigration(staged);
+      return { moved: 0, failed: records.length, cleanupPending, cancelled: !!error.cancelled, error };
+    }
+
+    for (const { local, remote } of staged){
+      curator.uploads.delete(local.id);
+      curator.uploads.set(remote.id, {
+        ...local, ...remote, id: remote.id, cloudRec: true, localBackupId: local.id,
+      });
+      curator.localToRemote.set(local.id, remote.id);
+      for (const [key, id] of curator.placements)
+        if (id === local.id){
+          curator.placements.set(key, remote.id);
+          curator.cloudPlacements.set(key, remote.id);
+        }
+      if (curator.fills.has(local.id)) curator.fills.set(remote.id, curator.fills.get(local.id));
+      if (curator.sel === local.id) curator.sel = remote.id;
+    }
+    saveFills();
+    return { moved: staged.length, failed: 0 };
+  }
+
   document.getElementById('cur-migrate').addEventListener('click', async () => {
     if (!cloud.sess) return;
     const btn = document.getElementById('cur-migrate');
-    btn.textContent = 'Sending…';
-    let moved = 0;
-    for (const [oldId, rec] of [...curator.uploads]){
-      if (rec.cloudRec || !rec.blob) continue;
-      try {
-        const { id, path, bucket } = await cloudUploadBlob(rec.name, rec.blob, rec.note || '');
-        curator.uploads.delete(oldId);
-        curator.uploads.set(id, { id, name: rec.name, note: rec.note || '', blob: rec.blob, path, bucket,
-                                  cloudRec: true, url: rec.url });
-        for (const [k, uid] of [...curator.placements])
-          if (uid === oldId){
-            curator.placements.set(k, id);
-            cloudSetPlacement(k, id).catch(()=>{});
-          }
-        if (curator.sel === oldId) curator.sel = id;
-        moved++;
-      } catch(e){ console.warn('[curator] migration failed for', rec.name, e); }
+    const status = document.getElementById('cur-migrate-status');
+    if (curator.migrating){
+      curator.migrationCancel = true;
+      btn.textContent = 'Cancelling…';
+      status.textContent = 'Finishing the current request, then removing anything staged in the cloud…';
+      return;
     }
-    btn.textContent = 'Send local works to the cloud';
+    const records = [...curator.uploads.values()].filter((rec) => !rec.cloudRec && rec.blob);
+    if (!records.length) return;
+    curator.migrationCancel = false; curator.syncIssue = '';
+    setMigrationLock(true); status.hidden = false; curatorRefresh(); setMigrationLock(true);
+    const result = await migrateLocalCollection(records, (message) => { status.textContent = message; });
+    setMigrationLock(false);
+    if (result.failed){
+      console.warn('[curator] cloud migration left the local collection untouched', result.error);
+      curator.syncIssue = result.conflicts?.length
+        ? `${result.conflicts.length} local placement${result.conflicts.length === 1 ? '' : 's'} share a frame with a synced work. Move or take down the local work before syncing.`
+        : result.cleanupPending
+          ? 'Local works are safe. Cloud cleanup needs attention and will keep retrying.'
+          : result.cancelled ? 'Sync cancelled. Every local work remains on this device.'
+          : 'Sync stopped. Every local work remains on this device.';
+      status.textContent = curator.syncIssue;
+      flashHint('sync stopped — every local work is still safe on this device');
+    } else {
+      curator.syncIssue = '';
+      status.textContent = `${result.moved} work${result.moved === 1 ? '' : 's'} synced · local recovery copies remain on this device.`;
+      flashHint(`${result.moved} work${result.moved === 1 ? '' : 's'} now travel with you`);
+    }
     curatorRefresh();
-    flashHint(moved ? moved + ' work' + (moved===1?'':'s') + ' now travel with you' : 'nothing needed sending');
   });
 }
 
@@ -3260,7 +3421,13 @@ function enqueue(kind, key, args){
   const i = outbox.items.findIndex((it) => it.kind === kind && it.key === key);
   if (i >= 0) outbox.items.splice(i, 1);
   outbox.items.push({ kind, key, args });
-  if (outbox.items.length > OUTBOX_MAX) outbox.items.shift();
+  /* Cleanup is loss prevention, so it is never evicted. Bound only ordinary
+     coalesced writes; a 500-work rollback must retain all 500 deletions. */
+  const ordinary = outbox.items.filter((it) => it.kind !== 'deleteUpload').length;
+  if (ordinary > OUTBOX_MAX){
+    const drop = outbox.items.findIndex((it) => it.kind !== 'deleteUpload');
+    if (drop >= 0) outbox.items.splice(drop, 1);
+  }
   outboxSave();
   outboxUI();
   outboxFlush();
@@ -3274,6 +3441,21 @@ const OUTBOX_SEND = {
   deleteUpload: ([rec])   => cloudDeleteUpload(rec),
   updateUpload: ([id, patch]) => cloudUpdateUpload(id, patch),
 };
+function reconcileOutboxSuccess(it){
+  if (it.kind === 'setPlacement') curator.cloudPlacements.set(it.args[0], it.args[1]);
+  if (it.kind === 'delPlacement') curator.cloudPlacements.delete(it.args[0]);
+  if (it.kind !== 'deleteUpload') return;
+  const id = it.args[0]?.id || it.key;
+  const rec = curator.uploads.get(id);
+  if (rec?.cloudRec){
+    curator.uploads.delete(id);
+    if (curator.sel === id) curator.sel = null;
+  }
+  for (const [key, placedId] of [...curator.placements])
+    if (placedId === id) curator.placements.delete(key);
+  for (const [key, placedId] of [...curator.cloudPlacements])
+    if (placedId === id) curator.cloudPlacements.delete(key);
+}
 async function outboxFlush(){
   if (outbox.sending || !outbox.items.length) return;
   if (!cloud.on || !cloud.sess || cloud.viewing || guestVisit.requested) return;
@@ -3296,12 +3478,24 @@ async function outboxFlush(){
         outboxUI();
         return;
       }
+      reconcileOutboxSuccess(it);
       outbox.items.shift();
       outbox.tries = 0;
       outboxSave();
       outboxUI();
+      if (it.kind === 'deleteUpload'
+          && !outbox.items.some((pending) => pending.kind === 'deleteUpload')
+          && curator.syncIssue.startsWith('Local works are safe. Cloud cleanup')){
+        curator.syncIssue = '';
+        curatorRefresh();
+        applyBounds();
+        syncArtJobs();
+      }
     }
     outboxUI();
+    curatorRefresh();
+    applyBounds();
+    syncArtJobs();
   } finally {
     if (!outbox.timer) outbox.sending = false;
   }
@@ -3348,15 +3542,34 @@ setLoanProvider({
    an archived copy with no backend still run: the seeded gallery does not
    depend on any of this. */
 function applyCloudUploads(list){
-  for (const rec of list) if (!curator.uploads.has(rec.id)) curator.uploads.set(rec.id, rec);
+  const pendingDeletes = new Set(outbox.items
+    .filter((it) => it.kind === 'deleteUpload')
+    .map((it) => it.args[0]?.id || it.key));
+  for (const rec of list){
+    if (pendingDeletes.has(rec.id)) continue;
+    const local = curator.uploads.get(rec.id);
+    if (!local) curator.uploads.set(rec.id, rec);
+    else if (local.localBackupId) curator.uploads.set(rec.id, {
+      ...local, ...rec,
+      blob: local.blob,
+      url: local.url || rec.url,
+      localBackupId: local.localBackupId,
+    });
+  }
 }
-function applyCloudPlacements(pairs){
+function applyCloudPlacements(pairs, preserveLocal = false){
   /* Works are unrepeatable now: first hung wins, later copies come down.
      An owner's session also tells the cloud, so old duplicate rows converge
      to the one hanging that is actually shown. */
   const seen = new Set(curator.placements.values());
+  let conflicts = 0;
   for (const [k, id] of pairs){
     if (curator.placements.get(k) === id) continue;
+    const current = curator.placements.get(k);
+    if (preserveLocal && current && !curator.uploads.get(current)?.cloudRec){
+      conflicts++;
+      continue;
+    }
     if (seen.has(id)){
       if (cloud.sess && !cloud.viewing) enqueue('delPlacement', k, [k]);
       continue;
@@ -3364,12 +3577,16 @@ function applyCloudPlacements(pairs){
     seen.add(id);
     curator.placements.set(k, id);
   }
+  return conflicts;
 }
 async function loadMyCollection(){
   const data = await cloudLoadMine();
   if (!data) return;
   applyCloudUploads(data.uploads);
-  applyCloudPlacements(data.placements);
+  curator.cloudPlacements = new Map(data.placements);
+  const conflicts = applyCloudPlacements(data.placements, true);
+  if (conflicts)
+    curator.syncIssue = `${conflicts} local placement${conflicts === 1 ? '' : 's'} share a frame with a synced work. Move or take down the local work before syncing.`;
   syncArtJobs();
 }
 async function bootCloud(){
@@ -3423,7 +3640,10 @@ async function bootCloud(){
     else flashHint('the collection is offline — the seeded gallery is all yours tonight');
   } else if (mode === 'mine' && data){
     applyCloudUploads(data.uploads);
-    applyCloudPlacements(data.placements);
+    curator.cloudPlacements = new Map(data.placements);
+    const conflicts = applyCloudPlacements(data.placements, true);
+    if (conflicts)
+      curator.syncIssue = `${conflicts} local placement${conflicts === 1 ? '' : 's'} share a frame with a synced work. Move or take down the local work before syncing.`;
     /* The theme travels with the account now, so the gallery looks the same
        from every machine its curator opens it on. */
     if (data.theme && THEMES[data.theme] && data.theme !== themeName())
@@ -4384,10 +4604,15 @@ window.DBG = {
    *  next request goes through the refresh path, which is where the interesting
    *  behaviour lives. */
   cloudSessForTest(on, opts = {}){
-    cloud.sess = on ? { access_token: 'test', refresh_token: 'test-refresh',
-                        uid: 'test', email: 'test@example.com',
-                        expires_at: opts.expired ? Date.now() - 1000 : Date.now() + 3600_000,
-                        user: { id: 'test' } } : null;
+    const session = on ? { access_token: 'test', refresh_token: 'test-refresh',
+                           uid: 'test', email: 'test@example.com',
+                           expires_at: opts.expired ? Date.now() - 1000 : Date.now() + 3600_000,
+                           user: { id: 'test', email: 'test@example.com' } } : null;
+    if (opts.persist) cloudSaveSess(session && {
+      access_token: session.access_token, refresh_token: session.refresh_token,
+      expires_in: opts.expired ? -1 : 3600, user: session.user,
+    });
+    else cloud.sess = session;
     return !!cloud.sess;
   },
   /** Swap the handler called when a session is genuinely gone. */
@@ -4401,6 +4626,35 @@ window.DBG = {
     curator.uploads.set(id, { id, name, note, orientation, featured, blob: null, url: '' });
     if (where) curator.placements.set(where, id);
     return { uploads: curator.uploads.size, placed: !!where };
+  },
+  cloudWorkForTest(id, name = 'Synced work'){
+    curator.uploads.set(id, { id, name, note: '', cloudRec: true, path: `test/${id}.jpg`, bucket: 'loans' });
+    return id;
+  },
+  async localWorkForTest(id, name, where, orientation = 'landscape', fill = 'mount'){
+    const rec = {
+      id, name, note: '', orientation, featured: false,
+      blob: new Blob([name], { type: 'image/jpeg' }), url: '',
+    };
+    curator.uploads.set(id, rec);
+    curator.fills.set(id, fill); saveFills();
+    if (where){ curator.placements.set(where, id); savePlacements(); }
+    if (!curator.db) curator.db = await openCuratorDB();
+    if (curator.db) await putLocalWork(curator.db, { ...rec, url: undefined });
+    return id;
+  },
+  async localRecordsForTest(){
+    return curator.db ? (await readLocalWorks(curator.db)).map((rec) => rec.id) : [];
+  },
+  fillForTest(id){ return fillOf(id); },
+  cloudPlacementsForTest(pairs, apply = false){
+    curator.cloudPlacements = new Map(pairs);
+    return apply ? applyCloudPlacements(pairs, true) : 0;
+  },
+  collectionForTest(){
+    return [...curator.uploads.values()].map((rec) => ({
+      id: rec.id, name: rec.name, hasBlob: !!rec.blob, cloudRec: !!rec.cloudRec,
+    }));
   },
   /** Drive the entrance card without a backend, so what a visitor at somebody
    *  else's link is greeted with can be tested at all. */
