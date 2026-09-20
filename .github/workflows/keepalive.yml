@@ -1,5 +1,5 @@
-# Supabase free projects pause after 7 idle days. This pings yours twice a week
-# so the gallery never sleeps.
+# Supabase free projects pause after 7 idle days of low activity. Four small
+# database reads each day keep this project active even when nobody visits.
 #
 # It used to read the project URL and key from repository secrets, and that was
 # wrong twice over. It meant the workflow broke silently the moment the project
@@ -15,7 +15,7 @@
 name: keep-supabase-awake
 on:
   schedule:
-    - cron: "17 6 * * 1,4"   # Mondays and Thursdays, 06:17 UTC
+    - cron: "17 */6 * * *"   # every six hours, away from the top-of-hour queue
   workflow_dispatch:
 jobs:
   ping:
@@ -30,8 +30,18 @@ jobs:
             echo "no cloud project configured — nothing to keep awake"; exit 0
           fi
           echo "pinging ${URL}"
-          CODE=$(curl -s -o /dev/null -w '%{http_code}' \
-            "$URL/rest/v1/profiles?select=id&limit=1" -H "apikey: $KEY")
+          # A project that is resuming can answer 521 briefly, and DNS or the
+          # gateway can have a transient miss. Retry those instead of turning
+          # one short warm-up into a failed keepalive run.
+          if CODE=$(curl --silent --show-error --fail-with-body \
+            --output /dev/null --write-out '%{http_code}' \
+            --retry 5 --retry-all-errors --retry-delay 15 \
+            --connect-timeout 15 --max-time 30 \
+            "$URL/rest/v1/profiles?select=id&limit=1" -H "apikey: $KEY"); then
+            CURL_EXIT=0
+          else
+            CURL_EXIT=$?
+          fi
           echo "HTTP $CODE"
           # 200 is awake. 401/403 means the key is stale — worth failing on,
           # because a ping that cannot authenticate is not keeping anything
@@ -39,5 +49,6 @@ jobs:
           case "$CODE" in
             200) echo "the gallery is awake" ;;
             401|403) echo "::error::the key in src/config.js was rejected — is it the current project?"; exit 1 ;;
-            *) echo "::error::unexpected response $CODE from $URL"; exit 1 ;;
+            521|540) echo "::error::Supabase is still paused or resuming; retry this workflow after the project is ready"; exit 1 ;;
+            *) echo "::error::request failed after retries (curl $CURL_EXIT, HTTP ${CODE:-000}) from $URL"; exit 1 ;;
           esac

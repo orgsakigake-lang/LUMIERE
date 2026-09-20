@@ -114,3 +114,13 @@ test('workflows use Node 24 for project commands and JavaScript actions', () => 
     /actions\/(?:checkout|setup-node|upload-artifact)@v[1-4]\b/);
   assert.doesNotMatch(ci, /actions\/upload-pages-artifact@/);
 });
+
+test('Supabase keepalive generates daily database activity and survives gateway warm-up', () => {
+  const keepalive = readFileSync(
+    new URL('../../.github/workflows/keepalive.yml', import.meta.url), 'utf8');
+
+  assert.match(keepalive, /cron:\s*["']17 \*\/6 \* \* \*["']/);
+  assert.match(keepalive, /--retry 5/);
+  assert.match(keepalive, /--retry-all-errors/);
+  assert.match(keepalive, /--retry-delay 15/);
+});

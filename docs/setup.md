@@ -252,8 +252,9 @@ combined `site/` artifact, with the curated exhibition at its root.
 
 - **GitHub Pages** — push to a public repo, then Settings → Pages → set the source
   to **GitHub Actions**. The included CI workflow publishes `site/`, and
-  `.github/workflows/keepalive.yml` pings Supabase twice a
-  week so a free project never pauses for inactivity. It needs no secrets — it
+  `.github/workflows/keepalive.yml` performs a tiny database read every six
+  hours so a free project has regular activity. It retries temporary DNS and
+  gateway failures while a project is warming up. It needs no secrets — it
   reads the project URL and key straight out of `src/config.js`, which is where
   they already live and the only place to keep correct.
 
@@ -357,7 +358,7 @@ disk on a keypress.
 | signed in, but writes silently do nothing | the SQL did not apply — run `npm run verify:sql`, then re-run it in the dashboard |
 | sharing toggle says "public" unexpectedly | same cause |
 | no sign-in code arrives | Email provider disabled in Authentication → Sign In / Up |
-| project stopped responding after a week | free Supabase pauses on inactivity — arm the keepalive workflow |
+| project stopped responding after a week | resume it in Supabase, then run **keep-supabase-awake** once; the scheduled workflow now pings every six hours |
 | empty frames three rooms away | expected today; art is generated for the 3×3 around you, architecture for 5×5 |
 | a work hung upstairs never saves | `supabase-setup.sql` has not been re-run — the frame key carries a floor now, and the old CHECK constraint rejects it |
 | walled into one room with every door shut | fixed: the boundary is open for the curator by default. If an older browser still has `lumiere_bound` set, the office's **Boundary** switch reopens it — and walking into a shut door now offers to open it whether or not you are signed in |
