@@ -45,6 +45,15 @@ browser. Shared, dependency, workflow, and unknown executable changes fall back
 to every check. `workflow_dispatch` and the Sunday 02:17 UTC schedule always run
 the full suite. Run `npm run test:ci-scope` when changing that policy.
 
+## Graph navigation
+
+Install the local helper with `uv tool install graphifyy`, then generate the
+code-only graph with `graphify extract . --code-only`. The graph is ignored and
+local to the machine; rebuilding it uses tree-sitter and no model key. Use
+`graphify query`, `graphify path`, and `graphify explain` for broad navigation,
+then inspect source before changing it. CI selection remains the explicit policy
+in `tools/ci-scope.mjs`.
+
 `index.html` remains committed for reproducibility and archive-style hosting.
 GitHub Pages publishes the generated `site/` artifact through Actions: the curated
 exhibition is the root and the self-contained original gallery is `/endless/`.

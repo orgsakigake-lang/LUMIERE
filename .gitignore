@@ -11,3 +11,6 @@ dev/
 /site/
 .worktrees/
 .superpowers/
+
+# Local Graphify index; regenerate with graphify extract . --code-only
+graphify-out/
