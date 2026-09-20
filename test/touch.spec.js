@@ -244,7 +244,8 @@ test.describe.serial('in one hand', () => {
     await tapPill();
     await expect.poll(toast, { timeout: 10_000 }).toContain('choose a work');
 
-    // Sign in only to prove the same local action is also queued for sync.
+    // Sign in to prove a local work stays local until the curator explicitly
+    // migrates it. Sending its temporary id would create a broken cloud row.
     await page.evaluate(() => {
       // A synthetic login needs a synthetic transport too. A real network
       // failure otherwise replaces the hanging confirmation with an outbox
@@ -282,8 +283,10 @@ test.describe.serial('in one hand', () => {
     });
     await tapPill();
     await expect.poll(toast, { timeout: 10_000 }).toContain('hung');
-    await expect.poll(() => page.evaluate(() => window.__touchPlacements))
-      .toEqual([{ owner: 'test', k: expect.any(String), upload_id: 'touch-1' }]);
+    expect(await page.evaluate(() => window.DBG.placementsForTest()
+      .filter(([, id]) => id === 'touch-1')))
+      .toEqual([[expect.any(String), 'touch-1']]);
+    expect(await page.evaluate(() => window.__touchPlacements)).toEqual([]);
     console.log(`    hung from a thumb, standing at ${at.map((n) => n.toFixed ? +n.toFixed(1) : n)}`);
 
     // and put the gallery back the way the rest of the file expects it
