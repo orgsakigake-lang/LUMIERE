@@ -34,8 +34,9 @@ the test-only correction; application code was unchanged by it.
 
 ## Deployment boundaries
 
-- The combined `site/` artifact includes both galleries. Branch-based hosting
-  of the committed root file does not automatically publish `/curated/`.
+- GitHub Pages publishes the combined `site/` artifact through Actions. The
+  curated exhibition owns `/`, the original gallery is under `/endless/`, and
+  old `/curated/` links redirect to the root while preserving URL state.
 - Private uploads/link management remain disabled until the migration and Edge
   Functions are deployed and verified. No live database/storage migration ran.
   See [rollout instructions](../private-sharing-rollout.md).

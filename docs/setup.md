@@ -238,9 +238,10 @@ To take it back down, turn sharing off. The link stops resolving.
 
 ## Step 5 — Host it
 
-`index.html` is committed, so there is no build step on the server and no CI to
-configure. Run `npm run build` after changing anything in `src/`, and commit the
-result.
+`index.html` is committed, so hosts can still publish the original gallery with
+no server-side build. Run `npm run build` after changing anything in `src/`, and
+commit the result. The repository's GitHub Actions workflow instead builds the
+combined `site/` artifact, with the curated exhibition at its root.
 
 - **Cloudflare Pages** — unlimited static bandwidth:
 
@@ -249,8 +250,9 @@ result.
   npx wrangler pages deploy . --project-name lumiere
   ```
 
-- **GitHub Pages** — push to a public repo, then Settings → Pages → deploy from
-  branch. The included `.github/workflows/keepalive.yml` pings Supabase twice a
+- **GitHub Pages** — push to a public repo, then Settings → Pages → set the source
+  to **GitHub Actions**. The included CI workflow publishes `site/`, and
+  `.github/workflows/keepalive.yml` pings Supabase twice a
   week so a free project never pauses for inactivity. It needs no secrets — it
   reads the project URL and key straight out of `src/config.js`, which is where
   they already live and the only place to keep correct.

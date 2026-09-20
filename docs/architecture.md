@@ -8,7 +8,8 @@ what made the original 3843-line file hard to extend.
 
 ```sh
 npm run dev        # watch + server on :8000, unminified
-npm run build      # index.html, minified — what GitHub Pages serves
+npm run build      # index.html, minified — original gallery artifact
+npm run build:site # site/, the combined GitHub Pages artifact
 npm run archive    # archive/index.html, no backend — see docs/permanence.md
 npm run test:fast  # boot + cloud layer, ~2 min — use this while working
 npm test           # everything, 39 tests, 6-9 min — before committing
@@ -38,7 +39,9 @@ testing.
 modules: a `ReferenceError` at boot. Reach for the full suite at commits, and
 for a single test with `-g` when fixing that one test.
 
-`index.html` is committed, so the repo deploys with no CI and no tooling.
+`index.html` remains committed for reproducibility and archive-style hosting.
+GitHub Pages publishes the generated `site/` artifact through Actions: the curated
+exhibition is the root and the self-contained original gallery is `/endless/`.
 
 ## Layout
 

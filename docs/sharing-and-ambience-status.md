@@ -23,8 +23,8 @@
 - A guest visit skips local IndexedDB and the local outbox entirely.
 - Block shared entry while loading and after failure. Offer retry and a separate,
   explicit navigation to the endless museum; never silently substitute that museum.
-- Curator query links opened under `/curated/` route to the original full-gallery
-  entry with the same query. The reference exhibition is not their collection.
+- Curator query links opened at the curated root route to `/endless/` with the
+  same query. The reference exhibition is not their collection.
 - New-room Settings offers Silence, Nocturne, Glass, Rainfall, Vespers, and Rain
   on the roof, plus volume. Rain replaces music and softens/cools the room lighting.
   Existing note/reverb tails and the rain fade are retained during switching;

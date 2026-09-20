@@ -197,6 +197,25 @@ test('curator links open the full gallery with their identity intact, never the 
   expect(scenes).toEqual([]);
 });
 
+test('production build serves the curated exhibition from its public root', async ({ page }) => {
+  await page.goto('/site/');
+  await expect(page).toHaveTitle('A Study in Stillness — LUMIÈRE');
+  await expect(page.getByRole('heading', { name: 'The art of slowing down.' })).toBeVisible();
+  await expect(page.getByRole('link', { name: /Explore endlessly/ })).toHaveAttribute('href', './endless/');
+});
+
+test('old curated URLs redirect to the public root without losing their state', async ({ page }) => {
+  await page.goto('/site/curated/?debug#collection');
+  await expect(page).toHaveURL(/\/site\/\?debug#collection$/);
+  await expect(page).toHaveTitle('A Study in Stillness — LUMIÈRE');
+});
+
+test('curator links from the production root open the endless gallery with their identity intact', async ({ page }) => {
+  await page.route('**/site/endless/*', route => route.fulfill({ contentType: 'text/html', body: '<h1>Full gallery entry</h1>' }));
+  await page.goto('/site/?gallery=alice&q=0');
+  await expect(page).toHaveURL(/\/site\/endless\/\?gallery=alice&q=0$/);
+});
+
 test('unavailable audio leaves a usable, silent gallery', async ({ page }) => {
   await page.addInitScript(() => { window.AudioContext = undefined; window.webkitAudioContext = undefined; });
   await page.goto('/curated/?debug');

@@ -1,9 +1,9 @@
-# LUMIÈRE — The Endless Gallery
+# LUMIÈRE
 
-## Curated exhibition preview
+## A Study in Stillness
 
-The new **A Study in Stillness** experience is available as a local preview alongside
-the original gallery. It includes a light-filled reference room, six pre-generated works,
+The public entrance opens on **A Study in Stillness**, a light-filled reference room
+with six pre-generated works,
 guided viewpoints, free walking, a collection browser, and a full-size artwork
 viewer. The renderer loads only when you enter and stops drawing while idle or
 covered by a dialog.
@@ -25,11 +25,10 @@ existing local/cloud collections. Use **Explore endlessly** to reach the
 original experience.
 
 The generated `curated/` directory is ignored by git. Run `npm run build:site`
-to produce a deployable `site/` containing both entries. CI runs both browser
-suites and uploads this directory as the `gallery-site` artifact. The original
-entrance links to the Light Room in this combined build. Existing branch-based
-GitHub Pages hosting still serves only committed files; publish the combined
-artifact to make `/curated/` available. The standalone archive omits that link.
+to produce the deployable `site/`: the curated exhibition owns `/`, the original
+gallery lives at `/endless/`, and the former `/curated/` address redirects to `/`.
+CI tests and publishes this artifact through GitHub Pages. The standalone archive
+remains the original gallery without this route shell.
 
 Checks: `npm run typecheck`, `npm run test:unit`, `npm run test:curated`.
 The [implementation status](docs/performance/renderer-decision.md) distinguishes
@@ -55,14 +54,15 @@ Cloud mode (accounts, private loans, shareable galleries) talks to Supabase. Cle
 `CLOUD_URL` / `CLOUD_KEY` in `src/config.js` for a fully local, offline gallery — or run
 `npm run archive`, which builds exactly that.
 
-**Live:** https://orgsakigake-lang.github.io/LUMIERE/
+**Live:** https://orgsakigake-lang.github.io/LUMIERE/endless/
 
 ## Running it
 
 ```sh
 npm install
 npm run dev        # esbuild watch + a static server on localhost:8000
-npm run build      # index.html, minified — what GitHub Pages serves
+npm run build      # index.html, minified — the original gallery artifact
+npm run build:site # site/, the combined GitHub Pages artifact
 npm run archive    # archive/index.html — no backend, for permanent hosting
 npm test           # Playwright suite over the DBG surface
 ```
@@ -80,7 +80,8 @@ Edge, or Firefox.
 
 | path | what |
 |---|---|
-| `index.html` | the built artifact — committed, served by GitHub Pages |
+| `index.html` | the committed original-gallery artifact, deployed under `/endless/` |
+| `site/` | ignored combined artifact: curated root, `/endless/`, and compatibility redirect |
 | `src/main.js` | the parts not yet extracted — GL, scheduler, controls, frame loop |
 | `src/config.js`, `src/world/`, `src/art/`, `src/render/`, `src/cloud/` | the extracted modules |
 | `archive/index.html` | the no-backend permanent copy (`npm run archive`) |
