@@ -83,3 +83,9 @@ test('workflow keeps a stable required gate and full-run events', () => {
   assert.match(workflow, /^\s*pages:/m);
   assert.match(workflow, /needs:\s*\[scope, required\]/);
 });
+
+test('workflow expands renames so both old and new paths are classified', () => {
+  const workflow = readFileSync(new URL('../../.github/workflows/ci.yml', import.meta.url), 'utf8');
+  assert.match(workflow,
+    /git diff --name-only --no-renames --diff-filter=ACMRTD "\$BASE_SHA" "\$HEAD_SHA"/);
+});

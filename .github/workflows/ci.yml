@@ -44,7 +44,7 @@ jobs:
             CI_SCOPE_REASON="missing base commit" node tools/ci-scope.mjs --full
             exit 0
           fi
-          git diff --name-only --diff-filter=ACMRTD "$BASE_SHA" "$HEAD_SHA" | node tools/ci-scope.mjs
+          git diff --name-only --no-renames --diff-filter=ACMRTD "$BASE_SHA" "$HEAD_SHA" | node tools/ci-scope.mjs
 
   quick-checks:
     needs: scope
