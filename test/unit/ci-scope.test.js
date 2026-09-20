@@ -72,3 +72,14 @@ test('CLI treats hostile-looking filenames as data and writes stable outputs', (
   assert.match(readFileSync(summary, 'utf8'), /name with/);
   rmSync(dir, { recursive: true, force: true });
 });
+
+test('workflow keeps a stable required gate and full-run events', () => {
+  const workflow = readFileSync(new URL('../../.github/workflows/ci.yml', import.meta.url), 'utf8');
+  assert.match(workflow, /^\s*schedule:/m);
+  assert.match(workflow, /node tools\/ci-scope\.mjs --full/);
+  assert.match(workflow, /^\s*required:/m);
+  assert.match(workflow, /if:\s*\$\{\{ always\(\) \}\}/);
+  assert.match(workflow, /needs:\s*\[scope, quick-checks, legacy-browser, curated-browser, schema\]/);
+  assert.match(workflow, /^\s*pages:/m);
+  assert.match(workflow, /needs:\s*\[scope, required\]/);
+});

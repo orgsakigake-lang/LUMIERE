@@ -12,7 +12,7 @@ npm run build      # index.html, minified — original gallery artifact
 npm run build:site # site/, the combined GitHub Pages artifact
 npm run archive    # archive/index.html, no backend — see docs/permanence.md
 npm run test:fast  # boot + cloud layer, ~2 min — use this while working
-npm test           # everything, 39 tests, 6-9 min — before committing
+npm test           # complete legacy browser suite
 npm run verify:sql # apply supabase-setup.sql to a throwaway PostgreSQL in
                    # Docker and assert 13 row-level-security behaviours
 ```
@@ -36,8 +36,14 @@ two renderer tests opt back into full quality because that is what they are
 testing.
 
 `test:fast` catches the failure that actually happens when moving code between
-modules: a `ReferenceError` at boot. Reach for the full suite at commits, and
-for a single test with `-g` when fixing that one test.
+modules: a `ReferenceError` at boot. Use a single test with `-g` when fixing
+that one test.
+
+CI classifies changed paths into legacy, curated, database, Edge Function, and
+site domains. Documentation-only changes finish without installing Node or a
+browser. Shared, dependency, workflow, and unknown executable changes fall back
+to every check. `workflow_dispatch` and the Sunday 02:17 UTC schedule always run
+the full suite. Run `npm run test:ci-scope` when changing that policy.
 
 `index.html` remains committed for reproducibility and archive-style hosting.
 GitHub Pages publishes the generated `site/` artifact through Actions: the curated

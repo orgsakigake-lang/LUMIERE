@@ -1,11 +1,3 @@
-# LUMIÈRE — the checks that were missing
-#
-# index.html is committed, because that is what lets GitHub Pages serve the
-# museum with no build step. The cost of that decision is that the artifact
-# and its source can drift apart silently: a change to src/ that nobody
-# rebuilt deploys the *old* page, and looks exactly like the change not
-# working. Nothing checked for that until now — and it has already happened
-# once, when a watch build wrote an unminified 173 KB file over a 103 KB one.
 name: ci
 
 permissions:
@@ -15,33 +7,70 @@ on:
   push:
     branches: [main, next-level, 'feat/**']
   pull_request:
+  schedule:
+    - cron: '17 2 * * 0'
   workflow_dispatch:
 
 jobs:
-  build-matches-source:
+  scope:
+    runs-on: ubuntu-latest
+    outputs:
+      quick: ${{ steps.scope.outputs.quick }}
+      typecheck: ${{ steps.scope.outputs.typecheck }}
+      legacy: ${{ steps.scope.outputs.legacy }}
+      curated: ${{ steps.scope.outputs.curated }}
+      schema: ${{ steps.scope.outputs.schema }}
+      site: ${{ steps.scope.outputs.site }}
+      full: ${{ steps.scope.outputs.full }}
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+      - name: Select affected checks
+        id: scope
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BEFORE_SHA: ${{ github.event.before }}
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          if [[ "$EVENT_NAME" == workflow_dispatch || "$EVENT_NAME" == schedule ]]; then
+            CI_SCOPE_REASON="$EVENT_NAME" node tools/ci-scope.mjs --full
+            exit 0
+          fi
+          BASE_SHA="$BEFORE_SHA"
+          if [[ "$EVENT_NAME" == pull_request ]]; then BASE_SHA="$PR_BASE_SHA"; fi
+          if [[ -z "$BASE_SHA" || "$BASE_SHA" =~ ^0+$ ]] || ! git cat-file -e "${BASE_SHA}^{commit}"; then
+            CI_SCOPE_REASON="missing base commit" node tools/ci-scope.mjs --full
+            exit 0
+          fi
+          git diff --name-only --diff-filter=ACMRTD "$BASE_SHA" "$HEAD_SHA" | node tools/ci-scope.mjs
+
+  quick-checks:
+    needs: scope
+    if: needs.scope.outputs.quick == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with: { node-version: '22', cache: npm }
       - run: npm ci
-      # Rebuild from src/ and require the result to be byte-identical to what
-      # was committed. Cheap, and it is the whole guarantee behind shipping a
-      # built file.
+      - run: npm run test:unit
+      - if: needs.scope.outputs.typecheck == 'true'
+        run: npm run typecheck
       - name: index.html matches src/
+        if: needs.scope.outputs.legacy == 'true'
         run: |
           cp index.html /tmp/committed.html
           npm run build
-          if ! cmp -s /tmp/committed.html index.html; then
-            echo "::error::index.html is stale — run 'npm run build' and commit the result"
-            echo "committed: $(stat -c%s /tmp/committed.html) bytes"
-            echo "rebuilt:   $(stat -c%s index.html) bytes"
-            diff <(fold -w120 /tmp/committed.html) <(fold -w120 index.html) | head -20 || true
+          cmp -s /tmp/committed.html index.html || {
+            echo "::error::index.html is stale — run 'npm run build' and commit it"
             exit 1
-          fi
-          echo "index.html is current ($(stat -c%s index.html) bytes)"
+          }
 
-  tests:
+  legacy-browser:
+    needs: scope
+    if: needs.scope.outputs.legacy == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -49,31 +78,29 @@ jobs:
         with: { node-version: '22', cache: npm }
       - run: npm ci
       - run: npx playwright install --with-deps chromium
-      - run: npm run typecheck
-      - run: npm run test:unit
-      # The suite renders on SwiftShader, which is slow but real: it has caught
-      # every module-extraction mistake so far, usually on the boot test.
       - run: npm test
-      - run: npm run test:curated
-      - run: npm run build:site
-      - uses: actions/upload-artifact@v4
-        with:
-          name: gallery-site
-          path: site/
-          retention-days: 7
-      - name: Upload GitHub Pages artifact
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-        uses: actions/upload-pages-artifact@v4
-        with:
-          path: site/
       - uses: actions/upload-artifact@v4
         if: failure()
-        with:
-          name: playwright-report
-          path: test-results/
-          retention-days: 7
+        with: { name: legacy-playwright-report, path: test-results/, retention-days: 7 }
+
+  curated-browser:
+    needs: scope
+    if: needs.scope.outputs.curated == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: '22', cache: npm }
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+      - run: npm run test:curated
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with: { name: curated-playwright-report, path: test-results/, retention-days: 7 }
 
   schema:
+    needs: scope
+    if: needs.scope.outputs.schema == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -83,9 +110,26 @@ jobs:
       - name: row-level security actually applies
         run: npm run verify:sql
 
-  deploy:
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    needs: [build-matches-source, tests, schema]
+  required:
+    if: ${{ always() }}
+    needs: [scope, quick-checks, legacy-browser, curated-browser, schema]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require every selected check
+        env:
+          SCOPE: ${{ needs.scope.result }}
+          QUICK: ${{ needs.quick-checks.result }}
+          LEGACY: ${{ needs.legacy-browser.result }}
+          CURATED: ${{ needs.curated-browser.result }}
+          SCHEMA: ${{ needs.schema.result }}
+        run: |
+          for result in "$SCOPE" "$QUICK" "$LEGACY" "$CURATED" "$SCHEMA"; do
+            case "$result" in success|skipped) ;; *) exit 1 ;; esac
+          done
+
+  pages:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.scope.outputs.site == 'true' && needs.required.result == 'success'
+    needs: [scope, required]
     runs-on: ubuntu-latest
     concurrency:
       group: github-pages
@@ -94,9 +138,19 @@ jobs:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     permissions:
+      contents: read
       pages: write
       id-token: write
     steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: '22', cache: npm }
+      - run: npm ci
+      - run: npm run build:site
+      - uses: actions/upload-artifact@v4
+        with: { name: gallery-site, path: site/, retention-days: 7 }
+      - uses: actions/upload-pages-artifact@v4
+        with: { path: site/ }
       - name: Deploy to GitHub Pages
         id: deployment
         uses: actions/deploy-pages@v4
