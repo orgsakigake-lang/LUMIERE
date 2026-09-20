@@ -16,6 +16,7 @@ import { ALGO_NAMES, ALGOS, makeTitle, finishArt, resetGrain,
          paintArt, scoreArt } from './art/algos.js';
 import { mat4, perspective, mulM, mulT, viewMatrix, extractPlanes, boxVisible } from './render/mat4.js';
 import { storageOK, persist, savePersist } from './persist.js';
+import { openCuratorDB, readLocalWorks, putLocalWork, deleteLocalWork } from './curator/storage.js';
 import { flashHint, toggleLegend } from './ui/hint.js';
 import { initTouch, touchWalk } from './ui/touch.js';
 import { drawPlan } from './ui/plan.js';
@@ -1548,21 +1549,10 @@ const curator = {
   db: null, mode: 'memory',
 };
 function curKey(){ try { return localStorage.getItem('lumiere_key') || 'curator'; } catch(e){ return 'curator'; } }
-function idbOpen(){
-  return new Promise(res => {
-    try {
-      const rq = indexedDB.open('lumiere', 1);
-      rq.onupgradeneeded = () => { rq.result.createObjectStore('images', { keyPath: 'id' }); };
-      rq.onsuccess = () => res(rq.result);
-      rq.onerror = () => res(null);
-      rq.onblocked = () => res(null);
-    } catch(e){ res(null); }
-  });
-}
 async function curatorBoot(){
   // A shared visit never opens this browser's private collection or outbox.
   if (guestVisit.requested) { curator.mode = 'guest'; return; }
-  curator.db = await idbOpen();
+  curator.db = await openCuratorDB();
   loadFills();
   /* Anything that did not reach the cloud last time is still owed. */
   outboxLoad(); outboxUI();
@@ -1590,22 +1580,20 @@ async function curatorBoot(){
   /* Whatever placements this browser holds, the boundary now knows about. */
   applyBounds();
   if (curator.db){
-    const tx = curator.db.transaction('images', 'readonly');
-    tx.objectStore('images').getAll().onsuccess = (ev) => {
-      for (const rec of ev.target.result || []){
+    try {
+      for (const rec of await readLocalWorks(curator.db)){
         rec.url = URL.createObjectURL(rec.blob);
         curator.uploads.set(rec.id, rec);
       }
-      /* The wall is drawn around the works, and until this callback the works
-         did not exist yet: applyBounds ran above against an empty collection,
-         so the wing was sized for nothing and every placement looked stale.
-         Ask again now that the collection is real. Cheap when the answer has
-         not changed — applyBounds diffs the room set and only rebuilds when
-         the wall actually moved. */
+      /* The wall is drawn around the works, and until this read completes the
+         works do not exist yet. Ask again now that the collection is real. */
       applyBounds();
       curatorGrid();
-      syncArtJobs();           // wake any placements now that images exist
-    };
+      syncArtJobs();
+    } catch(e){
+      console.warn('[curator] local collection could not be read', e);
+      curator.mode = 'memory';
+    }
   }
 }
 function savePlacements(){
@@ -1759,7 +1747,8 @@ async function transformWork(rec, op){
   const src = await createImageBitmap(rec.blob);
   const c = turnBitmap(src, op);
   src.close();
-  const blob = await encodeUpload(c, looksLikeLineArt(c));
+  const lineArt = looksLikeLineArt(c);
+  const blob = await encodeUpload(c, lineArt);
   if (!blob) return false;
   if (rec.cloudRec){
     if (!cloud.sess){ flashHint('sign in again to edit a cloud work'); return false; }
@@ -1767,15 +1756,16 @@ async function transformWork(rec, op){
     if (!r.ok){ flashHint('the edit could not reach the cloud — nothing was changed'); return false; }
     rec.path = r.path;
   }
+  const orientation = orientationOf(c.width, c.height);
+  if (!rec.cloudRec && curator.db)
+    await putLocalWork(curator.db, {
+      id: rec.id, name: rec.name, note: rec.note || '', blob, orientation, lineArt,
+    });
   if (rec.bmp){ rec.bmp.close(); rec.bmp = null; }
   if (rec.url && rec.url.startsWith('blob:')) URL.revokeObjectURL(rec.url);
   rec.blob = blob;
   rec.url = URL.createObjectURL(blob);
-  rec.orientation = orientationOf(c.width, c.height);
-  if (!rec.cloudRec && curator.db){
-    try { curator.db.transaction('images', 'readwrite').objectStore('images')
-            .put({ id: rec.id, name: rec.name, note: rec.note || '', blob }); } catch(e){}
-  }
+  rec.orientation = orientation;
   refreshHung(new Set([rec.id]));   // a work already on a wall turns with it
   curatorGrid();
   return true;
@@ -1943,12 +1933,13 @@ async function curatorAddFiles(files){
       } else {
         const id = 'u' + Date.now().toString(36) + Math.floor(Math.random()*1e6).toString(36);
         const rec = { id, name, note: '', blob, url: URL.createObjectURL(blob) };
+        if (curator.db)
+          await putLocalWork(curator.db, {
+            id, name: rec.name, note: '', blob,
+            orientation: orientationOf(shape.w, shape.h), lineArt,
+          });
         curator.uploads.set(id, rec);
         noteShape(rec, shape); added.push(rec);
-        if (curator.db){
-          try { curator.db.transaction('images', 'readwrite').objectStore('images')
-                  .put({ id, name: rec.name, note: '', blob }); } catch(e){}
-        }
       }
     } catch(e){ console.warn('[curator] could not add image', f.name, e); flashHint('that image could not be added'); }
   }
@@ -1963,8 +1954,13 @@ function saveWorkText(rec){
   if (rec.cloudRec && cloud.sess){
     enqueue('updateUpload', rec.id, [rec.id, { name: rec.name, note: rec.note || '' }]);
   } else if (curator.db){
-    try { curator.db.transaction('images', 'readwrite').objectStore('images')
-            .put({ id: rec.id, name: rec.name, note: rec.note || '', blob: rec.blob }); } catch(e){}
+    putLocalWork(curator.db, {
+      id: rec.id, name: rec.name, note: rec.note || '', blob: rec.blob,
+      orientation: rec.orientation, lineArt: rec.lineArt,
+    }).catch((e) => {
+      console.warn('[curator] local text could not be saved', e);
+      flashHint('that edit could not be saved on this device');
+    });
   }
   /* A work already on a wall keeps its placard in sync with the sheet. The old
      plaque texture has to go back to the pool first, or the frame keeps
@@ -1980,6 +1976,7 @@ function saveWorkText(rec){
 /** Record what an upload's own proportions imply, and pre-fill its answer. */
 function noteShape(rec, shape){
   rec.orientation = orientationOf(shape.w, shape.h);
+  rec.lineArt = !!shape.lineArt;
   if (!curator.fills.has(rec.id))
     curator.fills.set(rec.id, suggestFill(shape.w, shape.h, shape.lineArt));
   saveFills();
@@ -1993,7 +1990,10 @@ function curatorRemove(id){
   if (rec.cloudRec && cloud.sess)
     enqueue('deleteUpload', rec.id, [rec]);
   else if (curator.db){
-    try { curator.db.transaction('images', 'readwrite').objectStore('images').delete(id); } catch(e){}
+    deleteLocalWork(curator.db, id).catch((e) => {
+      console.warn('[curator] local removal could not be saved', e);
+      flashHint('that removal could not be saved on this device');
+    });
   }
   if (curator.sel === id) curator.sel = null;
   curator.fills.delete(id); saveFills();
