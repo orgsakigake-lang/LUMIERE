@@ -2190,10 +2190,13 @@ async function applyPlacement(r, A, i){
   } catch(e){ console.warn('[curator] hang failed', e); }
   curator.applying.delete(k);
 }
+function curatorOwnsWorkspace(){
+  return !cloud.viewing && !guestVisit.requested && !guestWorld;
+}
 function curatorCanEdit(){
-  if (cloud.viewing){ flashHint('you are a guest here — this is <b>' + cloud.viewing.slug + '</b>’s hanging'); return false; }
-  if (!curator.unlocked && !cloud.sess){ flashHint('the curator’s office is locked — press <b>C</b>'); return false; }
-  return true;
+  if (curatorOwnsWorkspace()) return true;
+  flashHint('you are a guest here — this collection is read-only');
+  return false;
 }
 /* Where a work already hangs, if anywhere other than frame k. */
 function placementElsewhere(id, k){
@@ -2399,7 +2402,7 @@ function showGuestOffice(){
      were curated under: the curator chose it and it travels with the hanging,
      so offering a visitor a switch to overrule it is offering to show them the
      wrong gallery. */
-  for (const id of ['cur-acct', 'cur-share', 'cur-wing', 'cur-floors',
+  for (const id of ['cur-acct', 'cur-share', 'cur-sync', 'cur-workspace-status', 'cur-wing', 'cur-floors',
                     'cur-bound-row', 'cur-review', 'cur-add-row', 'cur-themes',
                     'cur-hint', 'cur-edit', 'cur-gather', 'cur-migrate',
                     'cur-rekey', 'cur-outbox']){
@@ -2423,9 +2426,11 @@ function showGuestOffice(){
 
 function curatorRefresh(){
   const guest = !!cloud.viewing || guestVisit.requested;
-  const open = !guest && (cloud.on ? !!cloud.sess : curator.unlocked);
-  document.getElementById('cur-lock').hidden = open || guest || cloud.on ? true : false;
-  const showCloudLock = cloud.on && !open && !guest;
+  const open = !guest;
+  document.getElementById('cur-lock').hidden = true;
+  const sync = document.getElementById('cur-sync');
+  sync.hidden = !cloud.on || guest;
+  const showCloudLock = cloud.on && !cloud.sess && !guest;
   document.getElementById('cur-cloud-lock').hidden = !showCloudLock;
   /* Ask the project what it will do before the visitor finds out by waiting. */
   if (showCloudLock && !document.getElementById('curator').hidden) warnAboutConfirmation();
@@ -2437,24 +2442,36 @@ function curatorRefresh(){
      walking through, which is the one thing in here that is genuinely for
      them — and every control that could change it is withheld rather than
      merely disabled. */
-  document.getElementById('cur-open').hidden = !open && !guest;
+  document.getElementById('cur-open').hidden = false;
   if (guest) showGuestOffice();
   /* And the way back. The guest view withholds these; an owner's office must
      put them back, or a session that has been both in one page load — which
      is exactly what the harness does — keeps a curator's own controls hidden. */
-  else for (const id of ['cur-themes', 'cur-hint', 'cur-add-row', 'cur-gather'])
+  else for (const id of ['cur-workspace-status', 'cur-themes', 'cur-hint', 'cur-add-row', 'cur-gather'])
     { const el = document.getElementById(id); if (el) el.hidden = false; }
-  document.getElementById('cur-state').textContent =
-    guest ? 'guest of ' + (cloud.viewing?.slug || guestVisit.slug || 'an unavailable collection')
-    : open ? (cloud.sess ? 'signed in · loans open everywhere' : 'unlocked · loans open')
-    : cloud.on ? 'signed out'
-    : (curator.rekey ? 'set a new key' : 'locked');
+  const state = guest ? 'guest of ' + (cloud.viewing?.slug || guestVisit.slug || 'an unavailable collection')
+    : cloud.sess ? 'Synced · ' + (cloud.sess.email || 'signed in')
+    : curator.mode === 'idb' ? 'On this device' : 'This visit only';
+  document.getElementById('cur-state').textContent = state;
+  const storageLabel = document.getElementById('cur-storage-label');
+  const storageDetail = document.getElementById('cur-storage-detail');
+  if (!guest && storageLabel && storageDetail){
+    storageLabel.textContent = cloud.sess ? 'Synced'
+      : curator.mode === 'idb' ? 'On this device' : 'This visit only';
+    storageDetail.textContent = cloud.sess
+      ? 'Your collection is available anywhere you sign in.'
+      : curator.mode === 'idb'
+        ? 'Works and placements stay in this browser.'
+        : 'This browser cannot keep files after you leave.';
+  }
   if (open){
     const acct = document.getElementById('cur-acct');
     const share = document.getElementById('cur-share');
     acct.hidden = !cloud.sess;
     share.hidden = !cloud.sess;
-    document.getElementById('cur-rekey').hidden = !!cloud.sess;
+    document.getElementById('cur-rekey').hidden = true;
+    const privateRow = document.getElementById('cur-private-share');
+    if (privateRow) privateRow.hidden = true;
     if (cloud.sess){
       document.getElementById('cur-who').textContent = 'signed in as ' + (cloud.sess.email || 'you');
       const slugIn = document.getElementById('cur-slug');
@@ -2486,7 +2503,6 @@ function curatorRefresh(){
       let hasLocal = false;
       for (const rec of curator.uploads.values()) if (!rec.cloudRec && rec.blob){ hasLocal = true; break; }
       document.getElementById('cur-migrate').hidden = !hasLocal;
-      const privateRow = document.getElementById('cur-private-share');
       if (privateRow) {
         privateRow.hidden = !cloud.privateSharing;
         const privateLink = document.getElementById('cur-private-link');
@@ -2523,7 +2539,7 @@ function curatorToggle(){
   if (!p.hidden){
     releaseInput(); releasePointer(); inspectOff();
     curatorRefresh();
-    if (!curator.unlocked) setTimeout(focusFirstField, 50);
+    setTimeout(() => document.getElementById('cur-title')?.focus(), 50);
   } else { canvas.focus(); tryPointerLock(); }
 }
 /* The visitor's guide. It never opens over the office or the enlarged view —
@@ -3227,7 +3243,7 @@ let lastFaced = null, aimEl = null;
 let hangEl = null, hangState = '';
 function hangPill(A){
   if (!document.body.classList.contains('touch')) return;   // a keyboard has H
-  const open = !cloud.viewing && !guestWorld && (curator.unlocked || !!cloud.sess);
+  const open = curatorOwnsWorkspace();
   const state = (A && open) ? (A.overrideKey ? 'down' : 'up') : '';
   if (state === hangState) return;
   hangState = state;

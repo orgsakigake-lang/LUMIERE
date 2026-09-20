@@ -50,9 +50,9 @@
   </div>
 </div>
 
-<div class="plate" id="curator" hidden role="dialog" aria-label="The Curator’s Office">
+<div class="plate" id="curator" hidden role="dialog" aria-labelledby="cur-title">
   <div class="panel">
-    <h2>The Curator’s Office</h2>
+    <h2 id="cur-title" tabindex="-1">The Curator’s Office</h2>
     <div class="sub" id="cur-state">locked</div>
     <hr class="rule">
     <div id="cur-lock">
@@ -64,47 +64,53 @@
       </div>
       <div class="cur-note">First visit? The key is <b class="key">curator</b> — change it once inside.</div>
     </div>
-    <div id="cur-cloud-lock" hidden>
-      <div class="sub">This gallery keeps its collection in the cloud. Sign in with your
-        email and a password.</div>
-      <div class="row">
-        <input type="email" id="cur-email" placeholder="you@example.com" autocomplete="email">
-        <input type="password" id="cur-pw" placeholder="password" autocomplete="current-password">
-      </div>
-      <div class="row" id="cur-oauth" hidden>
-        <button class="btn oauth" id="cur-google" type="button">
-          <span class="g">G</span> Continue with Google</button>
-        <span class="sub oauth-or">or</span>
-      </div>
-      <div class="row">
-        <button class="btn" id="cur-signin">Sign in</button>
-        <button class="btn" id="cur-signup">Create account</button>
-        <button class="btn" id="cur-send">Email me a code instead</button>
-      </div>
-      <div class="row" id="cur-code-row" hidden>
-        <input type="text" id="cur-code" placeholder="six-digit code" inputmode="numeric" autocomplete="one-time-code" maxlength="8">
-        <button class="btn" id="cur-verify">Enter</button>
-      </div>
-      <div id="cur-cloud-note" class="sub"></div>
-    </div>
     <div id="cur-open" hidden>
-      <div class="row" id="cur-acct" hidden>
-        <span class="sub" id="cur-who"></span>
-        <button class="btn" id="cur-signout">Sign out</button>
+      <div class="cur-workspace-status" id="cur-workspace-status" aria-live="polite">
+        <strong id="cur-storage-label">On this device</strong>
+        <span id="cur-storage-detail">Works and placements stay in this browser.</span>
       </div>
-      <div class="row" id="cur-share" hidden>
-        <input type="text" id="cur-slug" placeholder="gallery-name" maxlength="32">
-        <button class="btn" id="cur-slug-save">Claim name</button>
-        <button class="sw" id="cur-publish" type="button">visible to anyone with the link</button>
-        <span class="sub" id="cur-share-link"></span>
-      </div>
-      <div class="row" id="cur-private-share" hidden>
-        <p class="sharing-explanation">New uploads stay private. A private link shares your full collection. The legacy public link includes only older public works.</p>
-        <button class="btn" id="cur-private-create" type="button">Create private link</button>
-        <button class="btn" id="cur-private-rotate" type="button" hidden>Rotate private link</button>
-        <button class="btn" id="cur-private-revoke" type="button" hidden>Revoke private link</button>
-        <span class="sub" id="cur-private-link"></span>
-      </div>
+      <details id="cur-sync">
+        <summary>Sync &amp; share</summary>
+        <div id="cur-cloud-lock" hidden>
+          <div class="sub">Keep this collection available on your other devices and share it with visitors.</div>
+          <div class="row">
+            <input type="email" id="cur-email" placeholder="you@example.com" autocomplete="email">
+            <input type="password" id="cur-pw" placeholder="password" autocomplete="current-password">
+          </div>
+          <div class="row" id="cur-oauth" hidden>
+            <button class="btn oauth" id="cur-google" type="button">
+              <span class="g">G</span> Continue with Google</button>
+            <span class="sub oauth-or">or</span>
+          </div>
+          <div class="row">
+            <button class="btn" id="cur-signin">Sign in</button>
+            <button class="btn" id="cur-signup">Create account</button>
+            <button class="btn" id="cur-send">Email me a code instead</button>
+          </div>
+          <div class="row" id="cur-code-row" hidden>
+            <input type="text" id="cur-code" placeholder="six-digit code" inputmode="numeric" autocomplete="one-time-code" maxlength="8">
+            <button class="btn" id="cur-verify">Enter</button>
+          </div>
+          <div id="cur-cloud-note" class="sub"></div>
+        </div>
+        <div class="row" id="cur-acct" hidden>
+          <span class="sub" id="cur-who"></span>
+          <button class="btn" id="cur-signout">Sign out</button>
+        </div>
+        <div class="row" id="cur-share" hidden>
+          <input type="text" id="cur-slug" placeholder="gallery-name" maxlength="32">
+          <button class="btn" id="cur-slug-save">Claim name</button>
+          <button class="sw" id="cur-publish" type="button">visible to anyone with the link</button>
+          <span class="sub" id="cur-share-link"></span>
+        </div>
+        <div class="row" id="cur-private-share" hidden>
+          <p class="sharing-explanation">New uploads stay private. A private link shares your full collection. The legacy public link includes only older public works.</p>
+          <button class="btn" id="cur-private-create" type="button">Create private link</button>
+          <button class="btn" id="cur-private-rotate" type="button" hidden>Rotate private link</button>
+          <button class="btn" id="cur-private-revoke" type="button" hidden>Revoke private link</button>
+          <span class="sub" id="cur-private-link"></span>
+        </div>
+      </details>
       <div class="row cur-themes" id="cur-themes" role="group" aria-label="Gallery theme"></div>
       <div id="cur-review" hidden></div>
       <div class="row" id="cur-wing" hidden>

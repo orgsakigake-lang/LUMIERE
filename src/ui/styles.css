@@ -363,6 +363,20 @@
                 line-height:1; color:var(--brass); font-weight:700;}
   .oauth-or{align-self:center; opacity:.5; letter-spacing:.2em;}
   #curator .rule{margin:1.2rem 0;}
+  .cur-workspace-status{display:flex; align-items:flex-start; justify-content:space-between;
+                       gap:1rem; margin-bottom:.9rem; padding:.85rem 1rem;
+                       border:1px solid rgba(201,169,106,.22); background:rgba(201,169,106,.035);}
+  .cur-workspace-status strong{color:var(--bone); font-size:.82rem; font-weight:400;}
+  .cur-workspace-status span{color:var(--bone-dim); font-size:.72rem; line-height:1.5;
+                             text-align:right;}
+  #cur-sync{margin-bottom:1rem; border:1px solid rgba(201,169,106,.2);}
+  #cur-sync summary{display:flex; align-items:center; min-height:44px; padding:0 1rem;
+                    color:var(--brass); cursor:pointer; font-size:.72rem;
+                    letter-spacing:.18em; text-transform:uppercase;}
+  #cur-sync summary:hover, #cur-sync summary:focus-visible{background:rgba(201,169,106,.08);
+                    outline:1px solid var(--brass); outline-offset:2px;}
+  #cur-sync[open] summary{border-bottom:1px solid rgba(201,169,106,.18);}
+  #cur-sync > div{padding:0 1rem 1rem;}
   /* every input, not just password/text — the sign-in field is type=email and
      was rendering as a stock white browser box in the middle of the panel. */
   #curator input:not([type=file]){
