@@ -535,12 +535,12 @@ test.describe.serial('inside the gallery — light and loans', () => {
     expect(h.lo).toBeLessThan(40);             // and so do the blacks
   });
 
-  test('the office opens with the visible field focused', async () => {
+  test('the office opens with its visible heading focused', async () => {
     await page.keyboard.press('KeyC');
     await expect(page.locator('#curator')).toBeVisible();
-    // Regression: focus went to #cur-pass, which lives inside #cur-lock —
-    // permanently hidden whenever cloud mode is on — so nothing was focused.
-    await expect(page.locator('#cur-email')).toBeFocused();
+    // The local workspace opens first. Email is optional and collapsed under
+    // Sync & share, so the dialog heading is the stable accessible target.
+    await expect(page.locator('#cur-title')).toBeFocused();
   });
 
   test('the sign-in field is themed, not a stock browser box', async () => {
@@ -555,11 +555,11 @@ test.describe.serial('inside the gallery — light and loans', () => {
     await expect(page.locator('#cur-code-row')).toBeHidden();
   });
 
-  test('Esc closes the office even with a field focused', async () => {
+  test('Esc closes the office while focus is inside it', async () => {
     // Self-sufficient rather than leaning on a previous test in this group.
     if (await page.locator('#curator').isHidden()) await page.keyboard.press('KeyC');
     await expect(page.locator('#curator')).toBeVisible();
-    await expect(page.locator('#cur-email')).toBeFocused();
+    await expect(page.locator('#cur-title')).toBeFocused();
     // The fields stopPropagation so WASD cannot leak into the world, which
     // also stops C reaching the window handler — Esc is the way out.
     await page.keyboard.press('Escape');
