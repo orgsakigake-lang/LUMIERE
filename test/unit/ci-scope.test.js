@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { closeSync, mkdtempSync, openSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -59,13 +59,17 @@ test('CLI treats hostile-looking filenames as data and writes stable outputs', (
   const dir = mkdtempSync(join(tmpdir(), 'lumiere-scope-'));
   const output = join(dir, 'outputs');
   const summary = join(dir, 'summary');
+  const input = join(dir, 'changed-paths');
   const suspicious = 'docs/name with $(touch should-not-run) `ticks` [link].md\n';
+  writeFileSync(input, suspicious);
+  const inputFd = openSync(input, 'r');
   const run = spawnSync(process.execPath, ['tools/ci-scope.mjs'], {
     cwd: fileURLToPath(new URL('../..', import.meta.url)),
-    input: suspicious,
+    stdio: [inputFd, 'pipe', 'pipe'],
     encoding: 'utf8',
     env: { ...process.env, GITHUB_OUTPUT: output, GITHUB_STEP_SUMMARY: summary },
   });
+  closeSync(inputFd);
   assert.equal(run.status, 0, run.stderr);
   assert.match(readFileSync(output, 'utf8'), /^legacy=false$/m);
   assert.match(readFileSync(output, 'utf8'), /^site=false$/m);
