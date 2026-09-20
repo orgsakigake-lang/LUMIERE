@@ -56,7 +56,7 @@ test.describe('the cloud layer', () => {
       document.getElementById('sw-curator').click();
     });
 
-    await page.locator('#cur-sync summary').click();
+    await expect(page.locator('#cur-sync')).toHaveAttribute('open', '');
     await expect(page.locator('#cur-share')).toBeVisible();
     await page.locator('#cur-slug').fill('silent-nope');
     await page.locator('#cur-slug-save').click();
