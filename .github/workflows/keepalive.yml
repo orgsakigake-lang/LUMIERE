@@ -21,7 +21,7 @@ jobs:
   ping:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: ping the gallery's database
         run: |
           URL=$(grep -oP "CLOUD_URL = '\K[^']+" src/config.js || true)

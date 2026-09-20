@@ -23,7 +23,7 @@ jobs:
       site: ${{ steps.scope.outputs.site }}
       full: ${{ steps.scope.outputs.full }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with: { fetch-depth: 0 }
       - name: Select affected checks
         id: scope
@@ -51,9 +51,9 @@ jobs:
     if: needs.scope.outputs.quick == 'true'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with: { node-version: '22', cache: npm }
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with: { node-version-file: '.nvmrc', cache: npm }
       - run: npm ci
       - run: npm run test:unit
       - if: needs.scope.outputs.typecheck == 'true'
@@ -73,13 +73,13 @@ jobs:
     if: needs.scope.outputs.legacy == 'true'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with: { node-version: '22', cache: npm }
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with: { node-version-file: '.nvmrc', cache: npm }
       - run: npm ci
       - run: npx playwright install --with-deps chromium
       - run: npm test
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: failure()
         with: { name: legacy-playwright-report, path: test-results/, retention-days: 7 }
 
@@ -88,13 +88,13 @@ jobs:
     if: needs.scope.outputs.curated == 'true'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with: { node-version: '22', cache: npm }
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with: { node-version-file: '.nvmrc', cache: npm }
       - run: npm ci
       - run: npx playwright install --with-deps chromium
       - run: npm run test:curated
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: failure()
         with: { name: curated-playwright-report, path: test-results/, retention-days: 7 }
 
@@ -103,7 +103,7 @@ jobs:
     if: needs.scope.outputs.schema == 'true'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       # supabase-setup.sql once failed to parse and applied nothing at all,
       # silently, leaving a gallery that was world-readable while its owner
       # believed otherwise. Reading the file is not evidence; executing it is.
@@ -142,15 +142,31 @@ jobs:
       pages: write
       id-token: write
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with: { node-version: '22', cache: npm }
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with: { node-version-file: '.nvmrc', cache: npm }
       - run: npm ci
       - run: npm run build:site
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with: { name: gallery-site, path: site/, retention-days: 7 }
-      - uses: actions/upload-pages-artifact@v4
-        with: { path: site/ }
+      # upload-pages-artifact@v4 still embeds a Node 20 action. This is the
+      # same archive format, uploaded by the Node 24-native artifact action.
+      - name: Archive Pages artifact
+        run: |
+          tar \
+            --dereference --hard-dereference \
+            --directory site \
+            -cvf "$RUNNER_TEMP/artifact.tar" \
+            --exclude=.git \
+            --exclude=.github \
+            --exclude=".[^/]*" \
+            .
+      - uses: actions/upload-artifact@v7
+        with:
+          name: github-pages
+          path: ${{ runner.temp }}/artifact.tar
+          retention-days: 1
+          if-no-files-found: error
       - name: Deploy to GitHub Pages
         id: deployment
-        uses: actions/deploy-pages@v4
+        uses: actions/deploy-pages@v5

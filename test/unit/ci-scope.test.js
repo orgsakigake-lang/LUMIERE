@@ -89,3 +89,24 @@ test('workflow expands renames so both old and new paths are classified', () => 
   assert.match(workflow,
     /git diff --name-only --no-renames --diff-filter=ACMRTD "\$BASE_SHA" "\$HEAD_SHA"/);
 });
+
+test('workflows use Node 24 for project commands and JavaScript actions', () => {
+  const ci = readFileSync(new URL('../../.github/workflows/ci.yml', import.meta.url), 'utf8');
+  const keepalive = readFileSync(
+    new URL('../../.github/workflows/keepalive.yml', import.meta.url), 'utf8');
+  const nodeVersion = readFileSync(new URL('../../.nvmrc', import.meta.url), 'utf8').trim();
+  const packageJson = JSON.parse(
+    readFileSync(new URL('../../package.json', import.meta.url), 'utf8'));
+  const workflows = `${ci}\n${keepalive}`;
+
+  assert.equal(nodeVersion, '24');
+  assert.equal(packageJson.engines.node, '24.x');
+  assert.match(ci, /actions\/setup-node@v7/);
+  assert.match(ci, /node-version-file:\s*['"]?\.nvmrc/);
+  assert.match(workflows, /actions\/checkout@v7/);
+  assert.match(ci, /actions\/upload-artifact@v7/);
+  assert.match(ci, /actions\/deploy-pages@v5/);
+  assert.doesNotMatch(workflows,
+    /actions\/(?:checkout|setup-node|upload-artifact)@v[1-4]\b/);
+  assert.doesNotMatch(ci, /actions\/upload-pages-artifact@/);
+});

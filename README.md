@@ -12,6 +12,9 @@ Room Settings now includes the original synthesized music programmes, rain-on-th
 audio with overcast lighting, and volume. Sound is opt-in. Curator-specific links
 opened under this preview route to the original full gallery, preserving their identity.
 
+Development and CI use Node.js 24. If you use nvm, run `nvm use` to read the
+committed `.nvmrc` before installing dependencies.
+
 ```sh
 npm install
 npm run dev:curated
