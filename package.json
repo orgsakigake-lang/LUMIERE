@@ -9,6 +9,7 @@
     "dev:curated": "node tools/build-curated.mjs --serve",
     "art:curated": "node tools/export-curated-art.mjs",
     "test:curated": "playwright test --config playwright.curated.config.js",
+    "test:ci-scope": "node --test test/unit/ci-scope.test.js",
     "test:unit": "node --test test/unit/*.test.js test/unit/*.test.ts",
     "build:site": "npm run build && npm run build:curated && node tools/build-site.mjs",
     "typecheck": "tsc -p tsconfig.curated.json",
