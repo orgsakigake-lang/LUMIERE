@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test';
-import { boot, enter, hashes, WORKS, ROOMS, ENTER_MS } from './helpers.js';
+import { bootCurator as boot, enter, hashes, WORKS, ROOMS, ENTER_MS } from './helpers.js';
 
 test.describe('the cloud layer', () => {
   test('the archive stub answers every call the real client does', async () => {

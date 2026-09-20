@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test';
-import { boot, enter, hashes, WORKS, ROOMS, ENTER_MS } from './helpers.js';
+import { bootCurator as boot, enter, hashes, WORKS, ROOMS, ENTER_MS } from './helpers.js';
 
 test.describe.serial('inside the gallery — light and loans', () => {
   /** @type {import('@playwright/test').Page} */

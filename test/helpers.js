@@ -19,6 +19,13 @@ export async function boot(page, query = '?q=0') {
   await page.waitForFunction(() => typeof window.DBG?.stats === 'function', null, { timeout: 60_000 });
 }
 
+/** Existing editor tests explicitly choose the workspace before installing
+ * fixtures. Entrance/privacy tests use boot() and exercise the real choices. */
+export async function bootCurator(page, query = '?q=0') {
+  await boot(page, query);
+  await page.evaluate(() => window.DBG.openWorkspaceForTest());
+}
+
 /** Enter the gallery. Deliberately does NOT wait for the art queue to drain:
  *  generation is budgeted at 3.5ms per rendered frame, and under SwiftShader
  *  rAF is slow enough that the queue never empties. Nothing below needs a

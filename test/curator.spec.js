@@ -1,6 +1,6 @@
 import { test, expect } from '@playwright/test';
 import { readFileSync } from 'node:fs';
-import { boot, enter } from './helpers.js';
+import { bootCurator as boot, enter } from './helpers.js';
 
 const image = readFileSync(new URL('../preview.jpg', import.meta.url));
 
@@ -226,7 +226,7 @@ test.describe('the local-first curator', () => {
     }, { remoteIds: state.remoteIds });
     await page.reload();
     await page.waitForFunction(() => typeof window.DBG?.cloudReady === 'function');
-    await page.evaluate(() => window.DBG.cloudReady());
+    await page.evaluate(() => window.DBG.openWorkspaceForTest());
     const recovered = await page.evaluate(async () => ({
       works: window.DBG.collectionForTest(),
       placements: window.DBG.placementsForTest(),

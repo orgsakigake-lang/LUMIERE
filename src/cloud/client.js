@@ -565,12 +565,12 @@ export async function cloudArtworkURL(record) {
   try { return await renewal; } finally { renewingArt.delete(record); }
 }
 
-/** Restore a session and load whatever this URL asks for.
- *  Returns {mode, data} — 'guest', 'mine', 'none', 'off', 'missing' when a
+/** Restore authentication; owner data requires an explicit curator choice.
+ *  Returns {mode, data} — 'guest', 'mine', 'session', 'none', 'off', 'missing' when a
  *  ?gallery= name matched nothing, or 'unreachable' when the network failed.
  *  Never throws: the seeded gallery does not need any of this, and an outage
  *  must not stop the Curator's Office from initialising. */
-export async function cloudBoot(){
+export async function cloudBoot({ loadOwner = false } = {}){
   cloud.viewing = null;
   const link = galleryLink(location.search, location.hash);
   const shareToken = link.private ? link.token : cloud.shareToken;
@@ -601,6 +601,9 @@ export async function cloudBoot(){
   if (!viaRedirect){
     try { const s = JSON.parse(localStorage.getItem('lumiere_sess') || 'null'); if (s) cloud.sess = s; } catch(e){}
   }
+  // Authentication identifies an account; it does not choose an activity.
+  // The entrance and explorer must never read the owner's collection.
+  if (!loadOwner) return { mode: cloud.sess ? 'session' : 'none', data: null };
 
   try {
     if (cloud.sess && Date.now() > cloud.sess.expires_at) await cloudRefresh();

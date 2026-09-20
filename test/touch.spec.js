@@ -193,6 +193,7 @@ test.describe.serial('in one hand', () => {
   });
 
   test('a curator with no keyboard can still hang a work', async () => {
+    await page.evaluate(() => window.DBG.openWorkspaceForTest());
     /* The dead end this closes: a phone visitor can unlock the office, add
        works to a collection from the photo picker, and then find there is no
        H key to hang any of them with. The pill is that key — same gate, same

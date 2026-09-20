@@ -416,7 +416,7 @@ test.describe('the card at the door', () => {
        printed to the one visitor who is looking at works somebody else chose
        and sent them the key to. */
     await boot(page, '?q=0');
-    expect((await card(page)).hook).toContain('No one else will ever see');
+    expect((await card(page)).hook).toContain('What would you like to do?');
 
     await page.evaluate(() => window.DBG.introForTest(
       { mode: 'guest', slug: 'marguerite', works: 12, halls: 4 }));

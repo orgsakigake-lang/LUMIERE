@@ -11,6 +11,19 @@ beforeEach(() => {
   globalThis.localStorage = { getItem: () => null, removeItem() {}, setItem() {} };
 });
 
+test('restoring sign-in does not open the owner collection without a curator choice', async () => {
+  location.search = '';
+  localStorage.getItem = key => key === 'lumiere_sess'
+    ? JSON.stringify({ uid: 'alice', expires_at: 9999999999999 }) : null;
+  const requests = [];
+  setFetch(async url => { requests.push(url); return reply([]); });
+  assert.equal((await cloudBoot()).mode, 'session');
+  assert.equal(cloud.sess.uid, 'alice');
+  assert.equal(requests.length, 0);
+  assert.equal((await cloudBoot({ loadOwner: true })).mode, 'mine');
+  assert.ok(requests.some(url => url.includes('/uploads?')));
+});
+
 test('a failed profile read is unavailable, not a missing gallery', async () => {
   setFetch(async () => reply({}, 503));
   assert.equal((await cloudBoot()).mode, 'unreachable');

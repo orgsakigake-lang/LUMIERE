@@ -584,4 +584,17 @@
 .curated-invitation:hover { background: rgba(201,169,106,.12); }
 .curated-invitation:focus-visible { outline: 2px solid var(--brass); outline-offset: 4px; }
 #intro { overflow-y: auto; }
+#intro .card { width: min(100%, 40rem); max-width: 40rem; box-sizing: border-box; }
+.entry-actions { text-align: left; margin-top: 1.4rem; }
+.entry-actions #enter, .entry-curate { width: 100%; margin-top: .5rem; padding: 1rem; letter-spacing: .08em; }
+.entry-detail { font-size: .83rem; line-height: 1.55; color: var(--bone-dim); margin: .5rem 0 1.1rem; }
+#entry-visit { border-top: 1px solid rgba(192,163,110,.25); padding-top: 1rem; }
+#entry-visit summary { cursor: pointer; color: var(--brass); padding: .5rem 0; }
+#entry-visit-form label { display: block; margin: .8rem 0 .4rem; font-size: .85rem; }
+.entry-link-row { display: flex; gap: .5rem; flex-wrap: wrap; }
+.entry-link-row input { flex: 1; min-width: 10rem; background: var(--ink); color: var(--bone); border: 1px solid var(--brass); padding: .75rem; font: inherit; }
+.entry-link-row .btn { min-height: 44px; }
+#entry-link-error { color: #efb7a6; font-size: .85rem; }
+#entry-account { margin-top: 1.2rem; }
+#intro:has(#entry-choices:not([hidden])) .legend { display: none; }
 @media (max-height: 640px) { #intro { align-items: flex-start; } #intro .card { padding-top: 1.5rem; padding-bottom: 1.5rem; } }

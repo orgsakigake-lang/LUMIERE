@@ -44,6 +44,7 @@ test('a shared visit leaves local images parked outside the guest collection', a
     await window.DBG.cloudReady();
     await new Promise((resolve, reject) => {
       const open = indexedDB.open('lumiere', 1);
+      open.onupgradeneeded = () => open.result.createObjectStore('images', { keyPath: 'id' });
       open.onsuccess = () => {
         const tx = open.result.transaction('images', 'readwrite');
         tx.objectStore('images').put({ id: 'local-secret', name: 'Private local work', blob: new Blob(['image']) });

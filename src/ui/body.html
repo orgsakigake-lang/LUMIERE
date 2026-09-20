@@ -282,13 +282,32 @@
          else's link is arriving somewhere else, and introVoice() says so —
          including that the line below about nobody else ever seeing these
          works is, for them, exactly wrong. -->
-    <div class="kicker" id="intro-kicker">Open nightly · Admission free</div>
+    <div class="kicker" id="intro-kicker">A place to explore. A space to make your own.</div>
     <h1>LUMI<span class="dot">È</span>RE</h1>
     <div class="kicker" id="intro-sub" style="letter-spacing:.5em">The Endless Gallery</div>
     <hr class="rule">
-    <p class="hook" id="intro-hook">Every artwork here is painted into being the moment you approach it —
-      seeded, singular, unrepeatable. <em>No one else will ever see these works.</em></p>
-    <button id="enter" autofocus>Enter the gallery</button>
+    <p class="hook" id="intro-hook">What would you like to do? Explore an ever-changing museum,
+      work on your collection, or visit a gallery someone shared with you.</p>
+    <div class="entry-actions">
+      <button id="enter" autofocus>Explore the generated gallery</button>
+      <div id="entry-choices">
+        <p class="entry-detail">Just look around. No sign-in needed.</p>
+        <button class="btn entry-curate" id="entry-curate">Curate my collection</button>
+        <p class="entry-detail">Add, edit and arrange your art. Work on this device or sign in to sync.</p>
+        <details id="entry-visit">
+          <summary>Visit a shared gallery</summary>
+          <form id="entry-visit-form">
+            <label for="entry-gallery">Gallery name or share link</label>
+            <div class="entry-link-row">
+              <input id="entry-gallery" required autocomplete="off" spellcheck="false" placeholder="Gallery name or pasted link" aria-describedby="entry-link-error">
+              <button class="btn" type="submit">Visit</button>
+            </div>
+            <p id="entry-link-error" role="alert"></p>
+          </form>
+        </details>
+        <p id="entry-account" class="entry-detail" role="status">Your saved collection opens only when you choose Curate.</p>
+      </div>
+    </div>
     <div class="collection-recovery">
       <button id="retry-collection" hidden>Retry collection</button>
       <a id="leave-collection" hidden>Open a separate endless museum</a>
@@ -302,7 +321,7 @@
       <b>drag</b> to look · the <b>ring</b> walks<br>
       <b>tap</b> a work to see it larger
     </div>
-    <div class="fine" id="intro-fine">Wings without number · every visit hangs anew</div>
+    <div class="fine" id="intro-fine">Explore freely · curate deliberately · share by invitation</div>
     <div id="intro-note"></div>
     <!-- CURATED_LINK_START -->
     <a class="curated-invitation" id="curated-invitation" href="./curated/"><span>A different pace</span>Visit the Light Room <span aria-hidden="true">↗</span></a>

@@ -641,6 +641,9 @@ function undoArrangement(){
    what a visitor sees. */
 let boundOn = false;                // the curator's switch
 const guestVisit = galleryLink(location.search, location.hash);
+// Activity is deliberately not persisted. Every generic visit starts at the
+// entrance, independent of remembered authentication and browser storage.
+const visit = { mode: guestVisit.requested ? 'guest' : 'entrance', workspace: null, ready: false };
 if (guestVisit.requested) document.getElementById('curated-invitation')?.setAttribute('hidden', '');
 let guestWorld = guestVisit.requested; // guest isolation starts before the network answers
 const boundExtra = new Set();       // rooms opened by hand, door by door
@@ -1632,7 +1635,7 @@ const curator = {
 function curKey(){ try { return localStorage.getItem('lumiere_key') || 'curator'; } catch(e){ return 'curator'; } }
 async function curatorBoot(){
   // A shared visit never opens this browser's private collection or outbox.
-  if (guestVisit.requested) { curator.mode = 'guest'; return; }
+  if (visit.mode !== 'curate') return;
   curator.db = await openCuratorDB();
   loadFills();
   /* Anything that did not reach the cloud last time is still owed. */
@@ -2283,7 +2286,7 @@ function applyTheme(name, quiet, fromCloud){
   if (!cloud.viewing){ persist.theme = themeName(); savePersist(); }
   /* The theme is part of the hanging, so it travels with the account — a
      guest at the shared link sees the gallery the way it was curated. */
-  if (!fromCloud && cloud.sess && !cloud.viewing)
+  if (!fromCloud && cloud.sess && curatorOwnsWorkspace())
     enqueue('setTheme', 'theme', [themeName()]);
   rebuildWorld();
   themeUI();
@@ -2391,7 +2394,7 @@ async function applyPlacement(r, A, i){
   curator.applying.delete(k);
 }
 function curatorOwnsWorkspace(){
-  return !cloud.viewing && !guestVisit.requested && !guestWorld;
+  return visit.mode === 'curate' && visit.ready && !cloud.viewing && !guestVisit.requested && !guestWorld;
 }
 function curatorCanEdit(){
   if (curator.migrating){
@@ -2399,6 +2402,10 @@ function curatorCanEdit(){
     return false;
   }
   if (curatorOwnsWorkspace()) return true;
+  if (!guestVisit.requested && !cloud.viewing && !guestWorld){
+    flashHint(visit.mode === 'curate' ? 'your collection is still opening' : 'choose Curate to work on your collection');
+    return false;
+  }
   flashHint('you are a guest here — this collection is read-only');
   return false;
 }
@@ -2803,8 +2810,11 @@ function focusFirstField(){
     .find((el) => el.offsetParent !== null);
   if (field) field.focus();
 }
-function curatorToggle(){
+async function curatorToggle(){
   const p = document.getElementById('curator');
+  if (p.hidden && !guestVisit.requested && !cloud.viewing){
+    if (!await openCuratorWorkspace()) return;
+  }
   p.hidden = !p.hidden;
   if (!p.hidden){
     stopManualPlacement(true);
@@ -3494,7 +3504,7 @@ function reconcileOutboxSuccess(it){
 }
 async function outboxFlush(){
   if (outbox.sending || !outbox.items.length) return;
-  if (!cloud.on || !cloud.sess || cloud.viewing || guestVisit.requested) return;
+  if (!cloud.on || !cloud.sess || !curatorOwnsWorkspace()) return;
   outbox.sending = true;
   clearTimeout(outbox.timer); outbox.timer = 0;
   try {
@@ -3616,6 +3626,7 @@ function applyCloudPlacements(pairs, preserveLocal = false){
   return conflicts;
 }
 async function loadMyCollection(){
+  if (!curatorOwnsWorkspace()) return;
   const data = await cloudLoadMine();
   if (!data) return;
   applyCloudUploads(data.uploads);
@@ -3625,8 +3636,8 @@ async function loadMyCollection(){
     curator.syncIssue = `${conflicts} local placement${conflicts === 1 ? '' : 's'} share a frame with a synced work. Move or take down the local work before syncing.`;
   syncArtJobs();
 }
-async function bootCloud(){
-  const { mode, data } = await cloudBoot();
+async function bootCloud({ loadOwner = false } = {}){
+  const { mode, data } = await cloudBoot({ loadOwner });
   if (mode === 'off') {
     if (guestVisit.requested) {
       introVoice({ mode: 'unreachable', slug: arrivingAt() });
@@ -3637,7 +3648,7 @@ async function bootCloud(){
   /* A signed-in session is the first moment there is anywhere to send what
      the outbox is holding — including anything left over from a previous
      visit that ended before the network came back. */
-  if (cloud.sess) outboxFlush();
+  if (cloud.sess && curatorOwnsWorkspace()) outboxFlush();
   if (mode === 'guest'){
     guestWorld = true;                     // a shared gallery has a far wall
     curator.uploads.clear();               // install one collection, never merge visitors
@@ -5217,6 +5228,7 @@ if (DBG_FULL) Object.assign(window.DBG, {
 let cloudSettled = () => {};
 const cloudReadyPromise = new Promise((res) => { cloudSettled = res; });
 window.DBG.cloudReady = () => cloudReadyPromise;
+window.DBG.openWorkspaceForTest = () => openCuratorWorkspace();
 
 /* The browser telling us the network is back is a better trigger than any
    timer, and costs nothing while it is not. */
@@ -5279,6 +5291,7 @@ function arrivingAt(){
    somebody else composed, and the entrance card is not the place to find out
    what happens when it contains markup. */
 function introVoice(state){
+  document.getElementById('entry-choices').hidden = true;
   const set = (id, text) => { const el = document.getElementById(id); if (el) el.textContent = text; };
   /* Checked here as well as at the URL, because a name can also arrive from
      the backend's answer, and this is the boundary where it becomes something
@@ -5332,6 +5345,85 @@ document.getElementById('retry-collection').addEventListener('click', async () =
 });
 
 const introEl = document.getElementById('intro');
+document.getElementById('intro-note').setAttribute('role', 'status');
+document.getElementById('intro-note').setAttribute('aria-live', 'polite');
+function entryAccount(){
+  document.getElementById('entry-account').textContent = cloud.sess
+    ? 'You’re signed in. Choose Curate to open your collection.'
+    : 'You’re not signed in. You can explore or curate on this device.';
+}
+
+// This is the only transition into the owner workspace. Local reads, owner
+// fetches and the outbox start together, only after an explicit curator action.
+async function openCuratorWorkspace(){
+  if (guestVisit.requested || cloud.viewing) return false;
+  if (visit.workspace) return visit.workspace;
+  visit.mode = 'curate';
+  const button = document.getElementById('entry-curate');
+  button.disabled = true;
+  button.textContent = 'Opening your collection…';
+  document.getElementById('enter').disabled = true;
+  visit.workspace = (async () => {
+    await cloudReadyPromise;
+    await curatorBoot();
+    await bootCloud({ loadOwner: true });
+    visit.ready = true;
+    outboxFlush();
+    document.getElementById('intro-sub').textContent = 'Your collection';
+    document.getElementById('intro-hook').textContent = 'Add your works, arrange the frames, and decide when your gallery is ready to share.';
+    document.getElementById('enter').textContent = 'View my collection';
+    document.getElementById('intro-note').textContent = 'Your curator workspace is ready';
+    document.getElementById('entry-choices').hidden = true;
+    curatorRefresh();
+    return true;
+  })().catch((error) => {
+    console.warn('[entry] workspace could not open', error);
+    visit.workspace = null;
+    visit.ready = false;
+    document.getElementById('intro-note').textContent = 'Could not open your collection. Please try Curate again.';
+    return false;
+  }).finally(() => {
+    button.disabled = false;
+    button.textContent = 'Curate my collection';
+    document.getElementById('enter').disabled = !visit.workspace;
+  });
+  return visit.workspace;
+}
+document.getElementById('entry-curate').addEventListener('click', async () => {
+  if (!await openCuratorWorkspace()) return;
+  enterGallery(false);
+  await curatorToggle();
+});
+document.getElementById('entry-visit-form').addEventListener('submit', (event) => {
+  event.preventDefault();
+  const value = document.getElementById('entry-gallery').value.trim();
+  const error = document.getElementById('entry-link-error');
+  error.textContent = '';
+  let search = '', hash = '';
+  if (SLUG_SHAPE.test(value.toLowerCase())) search = '?gallery=' + value.toLowerCase();
+  else {
+    try {
+      const url = new URL(value, location.href);
+      if (url.origin !== location.origin || url.pathname !== location.pathname) throw new Error('wrong gallery');
+      ({ search, hash } = url);
+    } catch {
+      error.textContent = 'Enter a gallery name or a share link for this gallery.';
+      return;
+    }
+  }
+  const link = galleryLink(search, hash);
+  if (!link.requested || !(link.slug || link.token)) {
+    error.textContent = 'This link does not name a shared gallery. Check the link with its curator.';
+    return;
+  }
+  // Reconstruct only the supported destination; never navigate to pasted code
+  // or carry unrelated URL parameters/auth fragments into a shared visit.
+  const destination = new URL(location.pathname + (link.private ? '#share=' + link.token : '?gallery=' + link.slug), location.href);
+  const fragmentOnly = destination.search === location.search;
+  location.assign(destination.href);
+  // Hash navigation alone would keep the current world and skip guest boot.
+  if (fragmentOnly) location.reload();
+});
 {
   const noteEl = document.getElementById('intro-note');
   const noteTimer = setInterval(() => {
@@ -5344,14 +5436,16 @@ const introEl = document.getElementById('intro');
       if (!arrivalAnswered) noteEl.textContent = 'fetching the collection…';
       return;
     }
+    if (visit.mode !== 'explore') return;
     noteEl.textContent =
       g > 0 ? `the first wing is being hung · ${g} work${g===1?'':'s'} remain` :
       (storageOK && persist.visits > 1 ? `the gallery remembers you · visit ${persist.visits}`
                                        : 'the first wing is ready');
   }, 350);
 }
-document.getElementById('enter').addEventListener('click', ()=>{
+function enterGallery(pointer = true){
   if (guestVisit.requested && (!arrivalAnswered || !cloud.viewing)) return;
+  if (visit.mode === 'entrance') visit.mode = 'explore';
   entered = true; setAudioActive(true);
   initAudio();               // inside the gesture — autoplay policy satisfied
   document.body.classList.add('entered');
@@ -5365,14 +5459,18 @@ document.getElementById('enter').addEventListener('click', ()=>{
   introEl.style.pointerEvents = 'none';
   setTimeout(()=>{ introEl.hidden = true; }, REDUCED ? 0 : 1100);
   canvas.focus();
-  tryPointerLock();          // inside the gesture; drag-look if it declines
+  if (pointer) tryPointerLock(); // only request capture for a walking gesture
   setTimeout(() => toggleLegend(false), 11000);   // ? brings it back
-});
+}
+document.getElementById('enter').addEventListener('click', () => enterGallery());
 /* Back out to the entrance — the ← at the upper left, or Esc once the cursor
    is free. The world stays warm behind the plate; entering again resumes
    exactly where the visitor stood. */
 function leaveGallery(){
   if (!entered) return;
+  // A fresh document discards textures, pending loads and editor state. No
+  // late owner response can populate the next explorer or guest visit.
+  if (!guestVisit.requested){ location.assign(location.pathname + location.search); return; }
   if (document.pointerLockElement) document.exitPointerLock();
   releaseInput();
   if (inspect.on) inspectOff();
@@ -5419,14 +5517,13 @@ if (gl){
   /* Booting with no network used to throw an unhandled rejection here and
      leave the Curator's Office in its default state, because curatorRefresh()
      sat past the throw. The gallery itself needs nothing from the network. */
-  curatorBoot()
-    .then(bootCloud)
+  bootCloud()
     .catch((e) => {
       console.warn('[boot] cloud unreachable — the seeded gallery is unaffected', e);
       if (guestVisit.requested) introVoice({ mode: 'unreachable', slug: arrivingAt() });
       curatorRefresh();
     })
-    .finally(() => { cloudSettled(); });
+    .finally(() => { entryAccount(); cloudSettled(); });
   requestAnimationFrame((t)=>{ lastT = t; requestAnimationFrame(frame); });
 }
 document.getElementById('sw-lights').addEventListener('click', () => setLights(!lightsOn));
