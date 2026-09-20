@@ -72,16 +72,24 @@ jobs:
     needs: scope
     if: needs.scope.outputs.legacy == 'true'
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4, 5, 6]
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
         with: { node-version-file: '.nvmrc', cache: npm }
       - run: npm ci
       - run: npx playwright install --with-deps chromium
-      - run: npm test
+      - run: npm run archive
+      - run: npx playwright test --shard=${{ matrix.shard }}/6
       - uses: actions/upload-artifact@v7
         if: failure()
-        with: { name: legacy-playwright-report, path: test-results/, retention-days: 7 }
+        with:
+          name: legacy-playwright-report-${{ matrix.shard }}
+          path: test-results/
+          retention-days: 7
 
   curated-browser:
     needs: scope
