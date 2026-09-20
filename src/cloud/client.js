@@ -423,14 +423,20 @@ export async function cloudSetTheme(name){
 }
 
 export async function cloudClaimSlug(slug){
+  if (!cloud.sess) throw new Error('sign in before claiming a gallery name');
   const rs = await cfetch('/rest/v1/profiles', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json',
-               Prefer: 'resolution=merge-duplicates,return=minimal' },
+               Prefer: 'resolution=merge-duplicates,return=representation' },
     body: JSON.stringify({ id: cloud.sess.uid, slug }),
   });
-  if (!rs.ok) throw new Error('that name is taken or invalid (a–z, 0–9, dashes)');
+  let rows = [];
+  try { rows = await rs.json(); } catch(e){}
+  const row = Array.isArray(rows) && rows.length === 1 ? rows[0] : null;
+  if (!rs.ok || !row || row.id !== cloud.sess.uid || row.slug !== slug)
+    throw new Error('that name is taken or invalid (a–z, 0–9, dashes)');
   cloud.slug = slug;
+  cloud.published = !!row.published;
 }
 
 /* ————— reads —————

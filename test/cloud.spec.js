@@ -46,6 +46,25 @@ test.describe('the cloud layer', () => {
     expect(result.seen.some((u) => u.includes('/rest/v1/profiles?slug=eq.somebody'))).toBe(true);
   });
 
+  test('claim name reports a zero-row cloud write inline', async ({ page }) => {
+    await boot(page);
+    await page.evaluate(() => window.DBG.cloudReady());
+    await page.evaluate(() => {
+      const reply = (body) => Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve(body) });
+      window.DBG.cloudSessForTest(true);
+      window.DBG.cloudFetch(() => reply([]));
+      document.getElementById('sw-curator').click();
+    });
+
+    await page.locator('#cur-sync summary').click();
+    await expect(page.locator('#cur-share')).toBeVisible();
+    await page.locator('#cur-slug').fill('silent-nope');
+    await page.locator('#cur-slug-save').click();
+    await expect(page.locator('#cur-share-link')).toContainText('taken or invalid');
+
+    await page.evaluate(() => { window.DBG.cloudFetch(null); window.DBG.cloudSessForTest(false); });
+  });
+
   test('a write that changed nothing is not reported as success', async ({ page }) => {
     /* The bug this exists for, found against the real project: `uploads` had
        policies for select, insert and delete but none for UPDATE. With RLS on

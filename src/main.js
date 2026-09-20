@@ -3228,10 +3228,26 @@ document.getElementById('curator').addEventListener('keydown', (e) => {
     location.reload();               // cleanest way back to the local collection
   });
   document.getElementById('cur-slug-save').addEventListener('click', async () => {
-    const slug = document.getElementById('cur-slug').value.trim().toLowerCase();
-    if (!/^[a-z0-9-]{3,32}$/.test(slug)){ flashHint('names are 3–32 letters, digits, dashes'); return; }
-    try { await cloudClaimSlug(slug); curatorRefresh(); flashHint('the gallery answers to <b>' + slug + '</b> now'); enqueue.claimed = slug; }
-    catch(e){ flashHint(String(e.message || e)); }
+    const slugInput = document.getElementById('cur-slug');
+    const linkEl = document.getElementById('cur-share-link');
+    const slug = slugInput.value.trim().toLowerCase();
+    if (!/^[a-z0-9-]{3,32}$/.test(slug)){
+      linkEl.textContent = 'names are 3–32 letters, digits, dashes';
+      flashHint('names are 3–32 letters, digits, dashes');
+      return;
+    }
+    linkEl.textContent = 'claiming ' + slug + '…';
+    try {
+      await cloudClaimSlug(slug);
+      slugInput.value = slug;
+      curatorRefresh();
+      flashHint('the gallery answers to <b>' + slug + '</b> now');
+      enqueue.claimed = slug;
+    } catch(e){
+      const msg = String(e.message || e);
+      linkEl.textContent = msg;
+      flashHint(msg);
+    }
   });
   document.getElementById('cur-publish').addEventListener('click', async () => {
     if (!cloud.sess || !cloud.slug) return;

@@ -1,7 +1,7 @@
 import { test, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 globalThis.location = { hostname: 'localhost', search: '', hash: '' };
-const { cloud, setFetch, cloudBoot, cloudLoadGallery, cloudLoadMine, cloudSetPublished, cloudManageShareLink, cloudReplaceBlob, cloudDeleteUpload, cloudUploadBlob } = await import('../../src/cloud/client.js');
+const { cloud, setFetch, cloudBoot, cloudLoadGallery, cloudLoadMine, cloudSetPublished, cloudClaimSlug, cloudManageShareLink, cloudReplaceBlob, cloudDeleteUpload, cloudUploadBlob } = await import('../../src/cloud/client.js');
 
 const reply = (body, status = 200) => ({ ok: status >= 200 && status < 300, status, json: async () => body });
 beforeEach(() => {
@@ -59,6 +59,26 @@ test('publishing must confirm a changed row before reporting success', async () 
   });
   await cloudSetPublished(true);
   assert.equal(cloud.published, true);
+});
+
+
+test('claiming a gallery name verifies the returned profile row', async () => {
+  cloud.sess = { uid: 'alice', expires_at: Infinity };
+  cloud.slug = 'old-name';
+  cloud.published = true;
+
+  setFetch(async (_url, options) => {
+    assert.equal(options.headers.Prefer, 'resolution=merge-duplicates,return=representation');
+    return reply([]);
+  });
+  await assert.rejects(cloudClaimSlug('new-name'));
+  assert.equal(cloud.slug, 'old-name');
+  assert.equal(cloud.published, true);
+
+  setFetch(async () => reply([{ id: 'alice', slug: 'new-name', published: false }]));
+  await cloudClaimSlug('new-name');
+  assert.equal(cloud.slug, 'new-name');
+  assert.equal(cloud.published, false);
 });
 
 test('gallery slugs resolve with the schema-compatible shape and owner filters', async () => {
