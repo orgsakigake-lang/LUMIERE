@@ -136,7 +136,9 @@ jobs:
           done
 
   pages:
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.scope.outputs.site == 'true' && needs.required.result == 'success'
+    # `always()` prevents intentionally skipped, unrelated suites from
+    # propagating a hidden skip through the required aggregate.
+    if: ${{ always() && github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.scope.outputs.site == 'true' && needs.required.result == 'success' }}
     needs: [scope, required]
     runs-on: ubuntu-latest
     concurrency:
