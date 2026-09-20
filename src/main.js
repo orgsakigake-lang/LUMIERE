@@ -17,6 +17,7 @@ import { ALGO_NAMES, ALGOS, makeTitle, finishArt, resetGrain,
 import { mat4, perspective, mulM, mulT, viewMatrix, extractPlanes, boxVisible } from './render/mat4.js';
 import { storageOK, persist, savePersist } from './persist.js';
 import { openCuratorDB, readLocalWorks, putLocalWork, deleteLocalWork } from './curator/storage.js';
+import { planArrangement } from './curator/arrange.js';
 import { flashHint, toggleLegend } from './ui/hint.js';
 import { initTouch, touchWalk } from './ui/touch.js';
 import { drawPlan } from './ui/plan.js';
@@ -497,6 +498,7 @@ loadWingPrefs();
 function gatherIntoWing(){
   const works = [...curator.uploads.keys()];
   if (!works.length){ flashHint('the collection is empty'); return null; }
+  curator.arrangeUndo = null;
   const route = wingRoute(works.length, wingExtra);
   /* The previous gather may have reached further than this one will — a
      shrink must sweep the whole footprint it ever held, and tell the cloud,
@@ -537,6 +539,71 @@ function gatherIntoWing(){
   flashHint(`${n} work${n===1?'':'s'} hung across ${rooms2} room${rooms2===1?'':'s'} — this is the wing`
     + (kept ? ` · ${kept} kept ${kept===1?'its wall':'their walls'} elsewhere` : ''));
   return { hung: n, rooms: rooms2, left: toHang.length - n };
+}
+
+function arrangementSlots(){
+  const slots = [];
+  for (const [roomPriority, { gx, gz, gy }] of wingRoute(curator.uploads.size, wingExtra).entries()){
+    const r = getRoom(gx, gz, gy);
+    for (let i = 0; i < r.artworks.length; i++){
+      slots.push({
+        key: artJobKey(r, i),
+        aspect: r.artworks[i].asp,
+        priority: roomPriority * 100 + i,
+      });
+    }
+  }
+  return slots;
+}
+
+function queuePlacementChanges(before, after){
+  if (!cloud.sess || cloud.viewing) return;
+  for (const [key] of before)
+    if (!after.has(key)) enqueue('delPlacement', key, [key]);
+  for (const [key, id] of after)
+    if (before.get(key) !== id) enqueue('setPlacement', key, [key, id]);
+}
+
+/** Fill empty frames in the collection wing while treating every existing
+ * placement as a curator decision. */
+function arrangeUnplaced(){
+  if (!curatorCanEdit()) return null;
+  if (!curator.uploads.size){ flashHint('the collection is empty — add works first'); return null; }
+  const before = new Map(curator.placements);
+  const result = planArrangement([...curator.uploads.values()], arrangementSlots(), before);
+  if (!result.added){
+    flashHint(result.unplaced.length
+      ? `${result.unplaced.length} work${result.unplaced.length === 1 ? ' has' : 's have'} no open frame`
+      : 'every work already has a wall');
+    return result;
+  }
+  curator.arrangeUndo = before;
+  curator.placements = result.placements;
+  queuePlacementChanges(before, curator.placements);
+  wingPrev = Math.max(wingPrev, wingRoute(curator.uploads.size, wingExtra).length);
+  wingPrevFloors = Math.max(wingPrevFloors, wingFloors);
+  saveWingPrefs(); savePlacements();
+  applyBounds(false);
+  rebuildWorld();
+  goToRoom(WING_ORIGIN[0], WING_ORIGIN[1], 0);
+  curatorGrid();
+  const left = result.unplaced.length;
+  flashHint(`${result.added} work${result.added === 1 ? '' : 's'} arranged automatically`
+    + (left ? ` · ${left} still need${left === 1 ? 's' : ''} a frame` : ' · every manual placement was kept'));
+  return result;
+}
+
+function undoArrangement(){
+  if (!curatorCanEdit() || !curator.arrangeUndo) return false;
+  const before = new Map(curator.placements);
+  const restored = curator.arrangeUndo;
+  curator.arrangeUndo = null;
+  curator.placements = new Map(restored);
+  queuePlacementChanges(before, curator.placements);
+  savePlacements(); applyBounds(false); rebuildWorld(); curatorGrid();
+  document.getElementById('cur-arrange-undo').hidden = true;
+  flashHint('automatic arrangement undone — your earlier walls are restored');
+  return true;
 }
 
 /* ————— the boundary —————
@@ -841,7 +908,8 @@ addEventListener('keydown', (e)=>{
      hears it, so an Esc that *does* arrive means the cursor was already free —
      the second press, and it steps out to the entrance. */
   if (e.key === 'Escape'){
-    if (inspect.on) inspectOff();
+    if (curator.placing) stopManualPlacement();
+    else if (inspect.on) inspectOff();
     else if (!locked) leaveGallery();
     return;
   }
@@ -1547,6 +1615,8 @@ const curator = {
   fills: new Map(),          // upload id → 'mount' | 'bleed'
   applying: new Set(),
   uploadBatch: [],
+  arrangeUndo: null,
+  placing: false,
   db: null, mode: 'memory',
 };
 function curKey(){ try { return localStorage.getItem('lumiere_key') || 'curator'; } catch(e){ return 'curator'; } }
@@ -2076,6 +2146,7 @@ function curatorRemove(id){
   curatorGrid();
 }
 function curatorClearPlacement(k){
+  curator.arrangeUndo = null;
   curator.placements.delete(k);
   if (cloud.sess && !cloud.viewing)
     enqueue('delPlacement', k, [k]);
@@ -2306,13 +2377,15 @@ function curatorHang(){
     if (o){ gl.deleteTexture(o.tex); curator.overrides.delete(k); }
     t.A.override = null;
   }
+  curator.arrangeUndo = null;
   curator.placements.set(k, curator.sel);
   savePlacements();
   if (cloud.sess && !cloud.viewing)
     enqueue('setPlacement', k, [k, curator.sel]);
   applyBounds();                 // a first hanging is what raises the boundary at all
   applyPlacement(t.r, t.A, i);
-  flashHint('hung — a private loan to the endless gallery');
+  if (curator.placing) advanceManualPlacement();
+  else flashHint('hung — a private loan to the endless gallery');
 }
 function curatorUnhang(){
   if (!curatorCanEdit()) return;
@@ -2320,6 +2393,43 @@ function curatorUnhang(){
   if (!t || !t.A.overrideKey){ flashHint('no loan hangs in this frame'); return; }
   curatorClearPlacement(t.A.overrideKey);
   flashHint('taken down — the seeded work returns');
+}
+function firstUnplacedWork(){
+  const placed = new Set(curator.placements.values());
+  for (const id of curator.uploads.keys()) if (!placed.has(id)) return id;
+  return null;
+}
+function stopManualPlacement(quiet = false){
+  if (!curator.placing) return false;
+  curator.placing = false;
+  document.body.classList.remove('placing');
+  hangPill(null);
+  if (!quiet) flashHint('manual placement finished');
+  return true;
+}
+function advanceManualPlacement(){
+  const next = firstUnplacedWork();
+  if (!next){
+    stopManualPlacement(true);
+    flashHint('every work has a wall');
+    return;
+  }
+  curator.sel = next;
+  hangState = '';
+  flashHint(`<b>${curator.uploads.get(next)?.name || 'Next work'}</b> is ready — face an empty frame`);
+}
+function startManualPlacement(){
+  if (!curatorCanEdit()) return false;
+  if (!curator.uploads.size){ flashHint('the collection is empty — add works first'); return false; }
+  const placed = new Set(curator.placements.values());
+  if (!curator.sel || placed.has(curator.sel)) curator.sel = firstUnplacedWork();
+  if (!curator.sel){ flashHint('every work already has a wall'); return false; }
+  curator.placing = true;
+  document.body.classList.add('placing');
+  hangState = '';
+  if (!document.getElementById('curator').hidden) curatorToggle();
+  flashHint(`<b>${curator.uploads.get(curator.sel)?.name || 'The selected work'}</b> — face a frame and choose Hang here · Esc finishes`);
+  return true;
 }
 /* The wing row: how many rooms the next gather will take, and for whom.
    Guests browse someone else's hanging — the sizer is not theirs to press. */
@@ -2479,7 +2589,7 @@ function showGuestOffice(){
      wrong gallery. */
   for (const id of ['cur-acct', 'cur-share', 'cur-sync', 'cur-workspace-status', 'cur-wing', 'cur-floors',
                     'cur-bound-row', 'cur-review', 'cur-add-row', 'cur-themes',
-                    'cur-hint', 'cur-edit', 'cur-gather', 'cur-migrate',
+                    'cur-hint', 'cur-edit', 'cur-gather', 'cur-place', 'cur-arrange-undo', 'cur-migrate',
                     'cur-rekey', 'cur-outbox']){
     const el = document.getElementById(id);
     if (el) el.hidden = true;
@@ -2522,7 +2632,8 @@ function curatorRefresh(){
   /* And the way back. The guest view withholds these; an owner's office must
      put them back, or a session that has been both in one page load — which
      is exactly what the harness does — keeps a curator's own controls hidden. */
-  else for (const id of ['cur-workspace-status', 'cur-themes', 'cur-hint', 'cur-add-row', 'cur-gather'])
+  else for (const id of ['cur-workspace-status', 'cur-themes', 'cur-hint', 'cur-add-row',
+                         'cur-gather', 'cur-place'])
     { const el = document.getElementById(id); if (el) el.hidden = false; }
   const state = guest ? 'guest of ' + (cloud.viewing?.slug || guestVisit.slug || 'an unavailable collection')
     : cloud.sess ? 'Synced · ' + (cloud.sess.email || 'signed in')
@@ -2595,6 +2706,7 @@ function curatorRefresh(){
       }
     }
     curatorGrid();
+    document.getElementById('cur-arrange-undo').hidden = !curator.arrangeUndo;
   }
   /* Outside the `open` branch: the boundary belongs to the browser, so it is
      answerable while the collection is still behind a sign-in. */
@@ -2612,6 +2724,7 @@ function curatorToggle(){
   const p = document.getElementById('curator');
   p.hidden = !p.hidden;
   if (!p.hidden){
+    stopManualPlacement(true);
     releaseInput(); releasePointer(); inspectOff();
     curatorRefresh();
     setTimeout(() => document.getElementById('cur-title')?.focus(), 50);
@@ -2800,9 +2913,10 @@ document.getElementById('curator').addEventListener('keydown', (e) => {
     setTimeout(() => document.getElementById('cur-pass').focus(), 50);
   });
   document.getElementById('cur-gather').addEventListener('click', () => {
-    if (!curatorCanEdit()) return;
-    if (gatherIntoWing()) curatorToggle();     // step out and look at it
+    if (arrangeUnplaced()?.added) curatorToggle();     // step out and look at it
   });
+  document.getElementById('cur-place').addEventListener('click', startManualPlacement);
+  document.getElementById('cur-arrange-undo').addEventListener('click', undoArrangement);
   /* The wing sizer. + reaches one room further and walks the curator into
      it, ready to hang new work; − pulls the wing in and lays the works
      again, snugly. The fit itself is automatic: a gather never takes more
@@ -3339,15 +3453,24 @@ let lastFaced = null, aimEl = null;
    nothing to anyone the office is shut to, which is nearly everyone. */
 let hangEl = null, hangState = '';
 function hangPill(A){
-  if (!document.body.classList.contains('touch')) return;   // a keyboard has H
+  const offered = document.body.classList.contains('touch') || curator.placing;
   const open = curatorOwnsWorkspace();
-  const state = (A && open) ? (A.overrideKey ? 'down' : 'up') : '';
+  const action = (A && open && offered) ? (A.overrideKey ? 'down' : 'up') : '';
+  const rec = curator.sel && curator.uploads.get(curator.sel);
+  const state = action + (action === 'up' ? ':' + (rec?.id || '') : '');
   if (state === hangState) return;
   hangState = state;
   const el = hangEl || (hangEl = document.getElementById('hang-btn'));
   if (!el) return;
-  el.hidden = !state;
-  if (state) el.textContent = state === 'down' ? 'take it down' : 'hang here';
+  el.hidden = !action;
+  if (action === 'down'){
+    el.textContent = 'take it down';
+    el.setAttribute('aria-label', 'Take this work down');
+  } else if (action === 'up'){
+    const name = rec?.name || 'selected work';
+    el.textContent = curator.placing ? `hang here · ${name}` : 'hang here';
+    el.setAttribute('aria-label', `Hang ${name} here`);
+  }
 }
 /* The yaw the paint queue was last ordered against. */
 let lastSyncYaw = 0;
@@ -4274,8 +4397,8 @@ window.DBG = {
   /** Put a work into the collection without a file picker, then read back what
    *  the gallery would say about it. `where` is a frame key, so the caption can
    *  be checked on the wall rather than only in the office. */
-  loanForTest(id, name, note, where){
-    curator.uploads.set(id, { id, name, note, blob: null, url: '' });
+  loanForTest(id, name, note, where, orientation = 'landscape', featured = false){
+    curator.uploads.set(id, { id, name, note, orientation, featured, blob: null, url: '' });
     if (where) curator.placements.set(where, id);
     return { uploads: curator.uploads.size, placed: !!where };
   },
@@ -4399,6 +4522,7 @@ if (DBG_FULL) Object.assign(window.DBG, {
    *  Deliberately raw — no one-wall rule here, so a test can fabricate any
    *  state, including the duplicates the UI refuses to make. */
   placeForTest(k, uploadId){ curator.placements.set(k, uploadId); return curator.placements.size; },
+  placementsForTest(){ return [...curator.placements]; },
   /** Hang through the same gate the H key uses, so the one-wall rule and the
    *  wing sizer are testable without a pointer. */
   hangForTest(k, uploadId){

@@ -136,9 +136,13 @@
           <input type="file" id="cur-file" accept="image/*" multiple hidden>
         </div>
         <div id="cur-upload-list" aria-live="polite"></div>
+        <div class="row cur-placement-actions">
+          <button class="btn primary" id="cur-gather">Arrange automatically</button>
+          <button class="btn" id="cur-place">Place manually</button>
+          <button class="btn" id="cur-arrange-undo" hidden>Undo arrangement</button>
+        </div>
         <div class="row cur-add-actions">
           <button class="btn" id="cur-edit" hidden>Edit works…</button>
-          <button class="btn" id="cur-gather">Gather into a wing</button>
           <button class="btn" id="cur-migrate" hidden>Send local works to the cloud</button>
           <button class="btn" id="cur-close">Return to the gallery</button>
           <button class="btn" id="cur-rekey">Change key</button>
@@ -147,7 +151,8 @@
       <div class="sub" id="cur-outbox" hidden></div>
       <div id="cur-grid"></div>
       <div class="cur-note" id="cur-hint">
-        Select a work above, walk to any frame, and press <b class="key">H</b> to hang it ·
+        Arrange every unplaced work automatically, or select a work and place it manually ·
+        at any frame, press <b class="key">H</b> to hang it ·
         <b class="key">U</b> takes it down · the cross removes it from the collection ·
         a work hangs on one wall at a time<br>
         <span id="cur-store"></span>

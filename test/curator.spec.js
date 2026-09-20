@@ -1,6 +1,6 @@
 import { test, expect } from '@playwright/test';
 import { readFileSync } from 'node:fs';
-import { boot } from './helpers.js';
+import { boot, enter } from './helpers.js';
 
 const image = readFileSync(new URL('../preview.jpg', import.meta.url));
 
@@ -45,5 +45,61 @@ test.describe('the local-first curator', () => {
     await page.evaluate(() => document.getElementById('sw-curator').click());
     await expect(page.locator('#cur-grid .cur-item')).toHaveCount(1);
     await expect(page.locator('#cur-grid .cur-item .nm')).toHaveText('sunrise');
+  });
+
+  test('automatic arrangement preserves manual work and undo restores the exact map', async ({ page }) => {
+    await boot(page);
+    const original = await page.evaluate(() => {
+      const [gx, gz, gy] = window.DBG.wingRoute(4)[0];
+      const frame = window.DBG.frameKeyForTest(gx, gz, gy, 0);
+      window.DBG.loanForTest('manual', 'Kept by hand', '', frame, 'portrait');
+      window.DBG.loanForTest('wide', 'Wide horizon', '', null, 'landscape');
+      window.DBG.loanForTest('square', 'Square study', '', null, 'square');
+      window.DBG.loanForTest('portrait', 'Tall figure', '', null, 'portrait');
+      return window.DBG.placementsForTest();
+    });
+    await page.evaluate(() => document.getElementById('sw-curator').click());
+
+    await expect(page.locator('#cur-gather')).toHaveText('Arrange automatically');
+    await page.evaluate(() => document.getElementById('cur-gather').click());
+    const arranged = await page.evaluate(() => window.DBG.placementsForTest());
+
+    expect(arranged).toContainEqual(original[0]);
+    expect(new Set(arranged.map(([, id]) => id)).size).toBe(4);
+    expect(arranged).toHaveLength(4);
+
+    await page.evaluate(() => document.getElementById('sw-curator').click());
+    await expect(page.locator('#cur-arrange-undo')).toBeVisible();
+    await page.locator('#cur-arrange-undo').click();
+    expect(await page.evaluate(() => window.DBG.placementsForTest())).toEqual(original);
+  });
+
+  test('manual placement names the selected work and Escape cancels without moving it', async ({ page }) => {
+    await boot(page);
+    await page.evaluate(() => {
+      window.DBG.loanForTest('next', 'Summer Window', '', null, 'landscape');
+      window.DBG.selectForTest('next');
+    });
+    await enter(page);
+    await page.evaluate(() => document.getElementById('sw-curator').click());
+    const before = await page.evaluate(() => window.DBG.placementsForTest());
+
+    await page.locator('#cur-place').click();
+    await expect(page.locator('#curator')).toBeHidden();
+    await expect(page.locator('body')).toHaveClass(/placing/);
+    await page.evaluate(() => {
+      const A = window.DBG.art(0, 0)[0];
+      const IN = 7 - 0.24 - 2;
+      const p = { e: [ IN, A.u,  Math.PI/2], w: [-IN, A.u, -Math.PI/2],
+                  n: [ A.u,  IN, Math.PI  ], s: [ A.u, -IN, 0        ] }[A.wall];
+      window.DBG.pos(p[0], p[1], p[2], 0);
+      window.DBG.frame(8, 16.7);
+    });
+    await expect(page.locator('#hang-btn')).toBeVisible();
+    await expect(page.locator('#hang-btn')).toHaveAttribute('aria-label', /Hang Summer Window here/);
+
+    await page.evaluate(() => dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', code: 'Escape' })));
+    await expect(page.locator('body')).not.toHaveClass(/placing/);
+    expect(await page.evaluate(() => window.DBG.placementsForTest())).toEqual(before);
   });
 });

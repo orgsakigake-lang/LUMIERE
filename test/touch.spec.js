@@ -217,7 +217,17 @@ test.describe.serial('in one hand', () => {
       await t.up();
     };
 
-    // stand before a frame, office shut: nothing offered
+    /* This test is also useful on its own via -g. The serial suite normally
+       enters in its first test, but a focused run should verify the same flow
+       instead of silently depending on an excluded sibling. */
+    if (!await page.evaluate(() => document.body.classList.contains('entered'))){
+      await page.locator('#enter').tap({ timeout: ENTER_MS });
+      await page.waitForFunction(() => document.body.classList.contains('entered'),
+                                 null, { timeout: ENTER_MS });
+      await page.evaluate(() => document.exitPointerLock && document.exitPointerLock());
+    }
+
+    // Local curation needs no account: face a frame and the touch action exists.
     const at = await page.evaluate(() => {
       const A = window.DBG.art(0, 0)[0];
       const IN = 7 - 0.24 - 2;
@@ -227,9 +237,14 @@ test.describe.serial('in one hand', () => {
       window.DBG.frame(8, 16.7);
       return p;
     });
-    await expect(pill, 'a pill was offered to a visitor with no office').toBeHidden();
+    await expect(pill).toBeVisible();
+    expect((await pill.textContent()).trim()).toBe('hang here');
 
-    // open the office to them, and it appears
+    // With nothing chosen it refuses, in words, exactly as H does.
+    await tapPill();
+    await expect.poll(toast, { timeout: 10_000 }).toContain('choose a work');
+
+    // Sign in only to prove the same local action is also queued for sync.
     await page.evaluate(() => {
       // A synthetic login needs a synthetic transport too. A real network
       // failure otherwise replaces the hanging confirmation with an outbox
@@ -259,10 +274,6 @@ test.describe.serial('in one hand', () => {
     });
     console.log(`    the pill over a second of standing still: ${steady}`);
     expect(steady, 'the pill blinked while the visitor stood still').not.toContain('H');
-
-    // with nothing chosen it refuses, in words, exactly as H does
-    await tapPill();
-    await expect.poll(toast, { timeout: 10_000 }).toContain('choose a work');
 
     // choose one, and the same pill hangs it
     await page.evaluate(() => {
